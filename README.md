@@ -1,2 +1,3 @@
-# mass-spectrometry-traits
-Rust crate providing algorithms and data structures primarely for work in mass spectrometry
+# Mass Spectrometry
+
+A crate for traits and data structures for mass spectrometry.
