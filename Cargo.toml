@@ -1,0 +1,16 @@
+[package]
+name = "mass_spectrometry"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits" }
+num-traits = "0.2"
+multi_ranged = "0.1.1"
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "exact_cosine"
+harness = false
