@@ -1,24 +1,223 @@
-//! Submodule to test execution of the exact algorithm with cosine
-//! similarity.
+//! Tests for the ExactCosine similarity implementation.
+//!
+//! Reference values are computed with matchms CosineHungarian
+//! (tolerance=0.1, mz_power=1.0, intensity_power=1.0).
 
 use mass_spectrometry::prelude::{
-    CocaineSpectrum, ExactCosine, GenericSpectrum, GlucoseSpectrum, ScalarSimilarity, Spectrum,
+    AspirinSpectrum, CocaineSpectrum, ExactCosine, GenericSpectrum, GlucoseSpectrum,
+    HydroxyCholesterolSpectrum, PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, Spectrum,
 };
 
+fn cosine() -> ExactCosine<f32, f32> {
+    ExactCosine::new(1.0, 1.0, 0.1)
+}
+
+fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
+    let (sim, peaks) = cosine().similarity(spectrum, spectrum);
+    // f32 self-similarity may not be exactly 1.0 because sqrt(x)*sqrt(x) != x
+    // in floating point; 1 - sim should be within f32 machine epsilon (~1.2e-7).
+    assert!(
+        (1.0_f32 - sim).abs() < 1e-6,
+        "{name} self-similarity: expected ~1.0, got {sim}"
+    );
+    assert_eq!(peaks, spectrum.len() as u16);
+}
+
+// ---------- self-similarity (score must be ~1.0, matches = #peaks) ----------
+
 #[test]
-/// Test the exact algorithm with cosine similarity.
-pub fn test_exact_cosine() {
+fn self_similarity_cocaine() {
+    assert_self_similarity("cocaine", &GenericSpectrum::cocaine());
+}
+
+#[test]
+fn self_similarity_glucose() {
+    assert_self_similarity("glucose", &GenericSpectrum::glucose());
+}
+
+#[test]
+fn self_similarity_aspirin() {
+    assert_self_similarity("aspirin", &GenericSpectrum::aspirin());
+}
+
+#[test]
+fn self_similarity_hydroxy_cholesterol() {
+    assert_self_similarity(
+        "hydroxy_cholesterol",
+        &GenericSpectrum::hydroxy_cholesterol(),
+    );
+}
+
+#[test]
+fn self_similarity_salicin() {
+    assert_self_similarity("salicin", &GenericSpectrum::salicin());
+}
+
+#[test]
+fn self_similarity_phenylalanine() {
+    assert_self_similarity("phenylalanine", &GenericSpectrum::phenylalanine());
+}
+
+// ---------- cross-similarity (matchms CosineHungarian reference) ----------
+
+#[test]
+fn cocaine_vs_glucose() {
     let cocaine = GenericSpectrum::cocaine();
     let glucose = GenericSpectrum::glucose();
-    let cosine = ExactCosine::new(1.0, 1.0, 0.1);
-    let (similarity, number_of_shared_peaks) = cosine.similarity(&cocaine, &glucose);
-    assert!(similarity <= 0.01, "Similarity: {similarity}");
-    assert_eq!(number_of_shared_peaks, 0);
+    let (sim, peaks) = cosine().similarity(&cocaine, &glucose);
+    assert!(sim < 1e-9, "cocaine vs glucose: {sim}");
+    assert_eq!(peaks, 0);
+}
 
-    let (self_cocaine_similarity, number_of_shared_peaks) = cosine.similarity(&cocaine, &cocaine);
-    assert_eq!(self_cocaine_similarity, 1.0);
-    assert_eq!(number_of_shared_peaks, cocaine.len() as u16);
-    let (self_glucose_similarity, number_of_shared_peaks) = cosine.similarity(&glucose, &glucose);
-    assert_eq!(self_glucose_similarity, 1.0);
-    assert_eq!(number_of_shared_peaks, glucose.len() as u16);
+#[test]
+fn cocaine_vs_aspirin() {
+    let cocaine = GenericSpectrum::cocaine();
+    let aspirin = GenericSpectrum::aspirin();
+    let (sim, peaks) = cosine().similarity(&cocaine, &aspirin);
+    assert!(
+        (sim - 0.000_183_533_03).abs() < 1e-6,
+        "cocaine vs aspirin: {sim}"
+    );
+    assert_eq!(peaks, 1);
+}
+
+#[test]
+fn cocaine_vs_hydroxy_cholesterol() {
+    let cocaine = GenericSpectrum::cocaine();
+    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let (sim, peaks) = cosine().similarity(&cocaine, &hc);
+    assert!(sim < 1e-9, "cocaine vs hydroxycholesterol: {sim}");
+    assert_eq!(peaks, 0);
+}
+
+#[test]
+fn cocaine_vs_salicin() {
+    let cocaine = GenericSpectrum::cocaine();
+    let salicin = GenericSpectrum::salicin();
+    let (sim, peaks) = cosine().similarity(&cocaine, &salicin);
+    assert!(sim < 1e-9, "cocaine vs salicin: {sim}");
+    assert_eq!(peaks, 0);
+}
+
+#[test]
+fn cocaine_vs_phenylalanine() {
+    let cocaine = GenericSpectrum::cocaine();
+    let phe = GenericSpectrum::phenylalanine();
+    let (sim, peaks) = cosine().similarity(&cocaine, &phe);
+    assert!(sim < 1e-9, "cocaine vs phenylalanine: {sim}");
+    assert_eq!(peaks, 0);
+}
+
+#[test]
+fn glucose_vs_aspirin() {
+    let glucose = GenericSpectrum::glucose();
+    let aspirin = GenericSpectrum::aspirin();
+    let (sim, peaks) = cosine().similarity(&glucose, &aspirin);
+    assert!(
+        (sim - 0.003_525_189).abs() < 1e-6,
+        "glucose vs aspirin: {sim}"
+    );
+    assert_eq!(peaks, 1);
+}
+
+#[test]
+fn glucose_vs_hydroxy_cholesterol() {
+    let glucose = GenericSpectrum::glucose();
+    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let (sim, peaks) = cosine().similarity(&glucose, &hc);
+    assert!(
+        (sim - 0.001_299_261_3).abs() < 1e-6,
+        "glucose vs hydroxycholesterol: {sim}"
+    );
+    assert_eq!(peaks, 6);
+}
+
+#[test]
+fn glucose_vs_salicin() {
+    let glucose = GenericSpectrum::glucose();
+    let salicin = GenericSpectrum::salicin();
+    let (sim, peaks) = cosine().similarity(&glucose, &salicin);
+    assert!(sim < 1e-9, "glucose vs salicin: {sim}");
+    assert_eq!(peaks, 0);
+}
+
+#[test]
+fn glucose_vs_phenylalanine() {
+    let glucose = GenericSpectrum::glucose();
+    let phe = GenericSpectrum::phenylalanine();
+    let (sim, peaks) = cosine().similarity(&glucose, &phe);
+    assert!(
+        (sim - 0.000_116_421_776).abs() < 1e-6,
+        "glucose vs phenylalanine: {sim}"
+    );
+    assert_eq!(peaks, 2);
+}
+
+#[test]
+fn aspirin_vs_hydroxy_cholesterol() {
+    let aspirin = GenericSpectrum::aspirin();
+    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let (sim, peaks) = cosine().similarity(&aspirin, &hc);
+    assert!(
+        (sim - 0.000_772_552_33).abs() < 1e-6,
+        "aspirin vs hydroxycholesterol: {sim}"
+    );
+    assert_eq!(peaks, 8);
+}
+
+#[test]
+fn aspirin_vs_salicin() {
+    let aspirin = GenericSpectrum::aspirin();
+    let salicin = GenericSpectrum::salicin();
+    let (sim, peaks) = cosine().similarity(&aspirin, &salicin);
+    assert!(
+        (sim - 0.000_015_375_54).abs() < 1e-6,
+        "aspirin vs salicin: {sim}"
+    );
+    assert_eq!(peaks, 1);
+}
+
+#[test]
+fn aspirin_vs_phenylalanine() {
+    let aspirin = GenericSpectrum::aspirin();
+    let phe = GenericSpectrum::phenylalanine();
+    let (sim, peaks) = cosine().similarity(&aspirin, &phe);
+    assert!(
+        (sim - 0.044_286_36).abs() < 1e-6,
+        "aspirin vs phenylalanine: {sim}"
+    );
+    assert_eq!(peaks, 3);
+}
+
+#[test]
+fn hydroxy_cholesterol_vs_salicin() {
+    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let salicin = GenericSpectrum::salicin();
+    let (sim, peaks) = cosine().similarity(&hc, &salicin);
+    assert!(sim < 1e-9, "hydroxycholesterol vs salicin: {sim}");
+    assert_eq!(peaks, 0);
+}
+
+#[test]
+fn hydroxy_cholesterol_vs_phenylalanine() {
+    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let phe = GenericSpectrum::phenylalanine();
+    let (sim, peaks) = cosine().similarity(&hc, &phe);
+    assert!(
+        (sim - 0.000_014_375_056).abs() < 1e-6,
+        "hydroxycholesterol vs phenylalanine: {sim}"
+    );
+    assert_eq!(peaks, 3);
+}
+
+#[test]
+fn salicin_vs_phenylalanine() {
+    let salicin = GenericSpectrum::salicin();
+    let phe = GenericSpectrum::phenylalanine();
+    let (sim, peaks) = cosine().similarity(&salicin, &phe);
+    assert!(
+        (sim - 0.000_002_544_149_5).abs() < 1e-6,
+        "salicin vs phenylalanine: {sim}"
+    );
+    assert_eq!(peaks, 1);
 }

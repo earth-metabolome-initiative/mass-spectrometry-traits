@@ -7,6 +7,7 @@ edition = "2024"
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits" }
 num-traits = "0.2"
 multi_ranged = "0.1.1"
+csv = "1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
