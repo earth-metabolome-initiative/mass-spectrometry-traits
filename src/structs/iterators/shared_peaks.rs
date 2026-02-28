@@ -114,7 +114,12 @@ where
     RightSpectrum: Spectrum<Mz = LeftSpectrum::Mz>,
 {
     fn default() -> Self {
-        Self { left: None, right: None, tolerance: None, right_shift: LeftSpectrum::Mz::zero() }
+        Self {
+            left: None,
+            right: None,
+            tolerance: None,
+            right_shift: LeftSpectrum::Mz::zero(),
+        }
     }
 }
 

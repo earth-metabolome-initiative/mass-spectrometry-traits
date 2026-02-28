@@ -31,7 +31,8 @@ pub trait SpectralPipeline {
             .into_iter()
             .filter(|spectrum| self.filters().all(|filter| filter.filter(spectrum)))
             .map(|spectrum| {
-                self.processors().fold(spectrum, |spectrum, processor| processor.process(&spectrum))
+                self.processors()
+                    .fold(spectrum, |spectrum, processor| processor.process(&spectrum))
             })
     }
 }

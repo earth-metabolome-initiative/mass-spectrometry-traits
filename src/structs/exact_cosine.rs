@@ -1,11 +1,11 @@
 //! Implementation of the cosine distance for mass spectra.
 
 use geometric_traits::prelude::{
-    Finite, GenericImplicitValuedMatrix2D, Number, RangedCSR2D, ScalarSimilarity, SparseMatrix,
-    SparseLAPMOD, TotalOrd,
+    Crouse, Finite, GenericImplicitValuedMatrix2D, Number, RangedCSR2D, ScalarSimilarity,
+    SparseMatrix, TotalOrd,
 };
 use multi_ranged::SimpleRange;
-use num_traits::{Float, One, Pow, Zero};
+use num_traits::{Float, One, Pow, ToPrimitive, Zero};
 
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 
@@ -33,7 +33,11 @@ impl<EXP: Number, MZ: Number> ExactCosine<EXP, MZ> {
     ///
     /// A new instance of the Hungarian cosine distance.
     pub fn new(mz_power: EXP, intensity_power: EXP, mz_tolerance: MZ) -> Self {
-        Self { mz_power, intensity_power, mz_tolerance }
+        Self {
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+        }
     }
 
     /// Returns the tolerance for the mass-shift of the mass/charge ratio.
@@ -81,38 +85,95 @@ where
         let left_peak_norm: S1::Mz = left_peak_squared_sums.sqrt();
         let right_peak_norm: S1::Mz = right_peak_squared_sums.sqrt();
 
-        let map: GenericImplicitValuedMatrix2D<RangedCSR2D<u16, u16, SimpleRange<u16>>, _, S1::Mz> =
-            GenericImplicitValuedMatrix2D::new(
-                left.matching_peaks(right, self.mz_tolerance),
-                |(i, j)| {
-                    S1::Mz::one()
-                        / (S1::Mz::one()
-                            + left_peak_products[i as usize] * right_peak_products[j as usize])
-                },
-            );
+        // Promote peak products to f64 for the LAP computation.
+        // With f32, the normalized affine cost 1+ε−(wᵢ/max_l)·(wⱼ/max_r)
+        // has only ~7 significant digits. When the weight dynamic range is
+        // large (e.g. mz_pow=0 where weights = intensities spanning 1e3–1e9),
+        // many cost entries collapse to the same f32 value, causing the LAP
+        // solver to return a suboptimal assignment.
+        let left_f64: Vec<f64> = left_peak_products
+            .iter()
+            .map(|p| p.to_f64().unwrap())
+            .collect();
+        let right_f64: Vec<f64> = right_peak_products
+            .iter()
+            .map(|p| p.to_f64().unwrap())
+            .collect();
+
+        let max_left: f64 = left_f64.iter().cloned().fold(0.0f64, f64::max);
+        let max_right: f64 = right_f64.iter().cloned().fold(0.0f64, f64::max);
+
+        if max_left == 0.0 || max_right == 0.0 {
+            return (S1::Mz::zero(), 0);
+        }
+
+        // Sort spectra so the smaller one is on the row side of the bipartite
+        // graph. Crouse requires nr ≤ nc; placing the smaller spectrum on
+        // rows avoids an internal transpose in the solver.
+        let (matching, row_f64, col_f64, row_products, col_products, max_row, max_col) =
+            if left.len() <= right.len() {
+                let matching = left.matching_peaks(right, self.mz_tolerance);
+                (
+                    matching,
+                    &left_f64,
+                    &right_f64,
+                    &left_peak_products,
+                    &right_peak_products,
+                    max_left,
+                    max_right,
+                )
+            } else {
+                let matching = right.matching_peaks(left, self.mz_tolerance);
+                (
+                    matching,
+                    &right_f64,
+                    &left_f64,
+                    &right_peak_products,
+                    &left_peak_products,
+                    max_right,
+                    max_left,
+                )
+            };
+
+        let map: GenericImplicitValuedMatrix2D<RangedCSR2D<u32, u16, SimpleRange<u16>>, _, f64> =
+            GenericImplicitValuedMatrix2D::new(matching, |(i, j)| {
+                1.0f64 + f64::EPSILON
+                    - (row_f64[i as usize] / max_row) * (col_f64[j as usize] / max_col)
+            });
 
         if map.is_empty() {
             return (S1::Mz::zero(), 0);
         }
 
-        let padding_cost: S1::Mz = num_traits::cast(2.0f64).expect("Failed to cast 2.0");
-        let max_cost: S1::Mz = num_traits::cast(10.0f64).expect("Failed to cast 10.0");
+        // Use Crouse rectangular LAPJV: compactifies the sparse matrix, builds
+        // a dense rectangular matrix with non_edge_cost for missing entries,
+        // then solves with Crouse 2016 augmentation-only LAPJV.  Unlike the
+        // Jaqaman expansion (which charges η > 2×max per unmatched peak and
+        // forces suboptimal matches), this charges only 1+ε per unmatched
+        // entry, correctly leaving peaks unmatched when that yields a better
+        // overall assignment.
+        let non_edge_cost: f64 = 1.0f64 + f64::EPSILON;
+        let max_cost: f64 = non_edge_cost + 1.0;
 
-        let matching: Vec<(u16, u16)> = map
-            .sparse_lapmod(padding_cost, max_cost)
-            .expect("Failed to compute the Hungarian algorithm");
+        let assignments: Vec<(u16, u16)> = map
+            .crouse(non_edge_cost, max_cost)
+            .expect("Crouse rectangular LAPJV failed");
 
-        let cost = matching
-            .iter()
-            .map(|&(i, j)| left_peak_products[i as usize] * right_peak_products[j as usize])
-            .fold(S1::Mz::zero(), |acc, x| acc + x);
+        // All returned assignments are real within-tolerance edges (non-edge
+        // assignments are already filtered by Crouse).
+        let mut score_sum = S1::Mz::zero();
+        let mut n_matches: u16 = 0;
+        for &(i, j) in &assignments {
+            score_sum += row_products[i as usize] * col_products[j as usize];
+            n_matches += 1;
+        }
 
-        let similarity = cost / (left_peak_norm * right_peak_norm);
+        let similarity = score_sum / (left_peak_norm * right_peak_norm);
 
         if similarity > S1::Mz::one() {
-            (S1::Mz::one(), matching.len() as u16)
+            (S1::Mz::one(), n_matches)
         } else {
-            (similarity, matching.len() as u16)
+            (similarity, n_matches)
         }
     }
 }

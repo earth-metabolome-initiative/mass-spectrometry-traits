@@ -95,11 +95,11 @@ pub trait Spectrum {
         &self,
         other: &S,
         mz_tolerance: Self::Mz,
-    ) -> RangedCSR2D<u16, u16, SimpleRange<u16>> {
+    ) -> RangedCSR2D<u32, u16, SimpleRange<u16>> {
         let mut matching_peaks = RangedCSR2D::default();
         let mut lowest_other_index = 0;
         for (i, mz) in self.mz().enumerate() {
-            let mut lowest_other_index_tmp = lowest_other_index;
+            let mut new_lowest = lowest_other_index;
             for (j, other_mz) in other
                 .mz_from(lowest_other_index)
                 .enumerate()
@@ -112,13 +112,17 @@ pub trait Spectrum {
                     break;
                 }
                 if other_mz < mz - mz_tolerance {
+                    // This peak is below the tolerance window. Since both
+                    // spectra are sorted by m/z, no future left peak (with
+                    // higher m/z) can match this right peak either, so we
+                    // can safely skip past it for all subsequent iterations.
+                    new_lowest = j + 1;
                     continue;
                 }
                 MatrixMut::add(&mut matching_peaks, (i as u16, j as u16))
                     .expect("The peak matching graph should not contain duplicate edges.");
-                lowest_other_index_tmp = j;
             }
-            lowest_other_index = lowest_other_index_tmp;
+            lowest_other_index = new_lowest;
         }
 
         matching_peaks

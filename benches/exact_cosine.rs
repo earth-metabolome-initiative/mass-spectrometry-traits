@@ -25,7 +25,10 @@ fn bench_exact_cosine(c: &mut Criterion) {
     });
     c.bench_function("cosine_hydroxy_cholesterol_hydroxy_cholesterol", |b| {
         b.iter(|| {
-            cosine.similarity(black_box(&hydroxy_cholesterol), black_box(&hydroxy_cholesterol))
+            cosine.similarity(
+                black_box(&hydroxy_cholesterol),
+                black_box(&hydroxy_cholesterol),
+            )
         })
     });
     c.bench_function("cosine_salicin_salicin", |b| {
