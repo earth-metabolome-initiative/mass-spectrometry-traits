@@ -62,8 +62,9 @@ where
             HYDROXY_CHOLESTEROL_PRECURSOR_MZ.into(),
             HYDROXY_CHOLESTEROL_MZ.len(),
         );
-        for (&mz, &intensity) in
-            HYDROXY_CHOLESTEROL_MZ.iter().zip(HYDROXY_CHOLESTEROL_INTENSITIES.iter())
+        for (&mz, &intensity) in HYDROXY_CHOLESTEROL_MZ
+            .iter()
+            .zip(HYDROXY_CHOLESTEROL_INTENSITIES.iter())
         {
             spectrum
                 .add_peak(mz.into(), intensity.into())

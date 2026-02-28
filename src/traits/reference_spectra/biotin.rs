@@ -1,0 +1,87 @@
+//! Submodule providing data for biotin.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of biotin.
+pub trait BiotinSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of biotin.
+    fn biotin() -> Self;
+}
+
+/// The precursor mass over charge value for biotin.
+pub const BIOTIN_PRECURSOR_MZ: f32 = 245.098;
+
+/// The mass over charge values for biotin.
+pub const BIOTIN_MZ: [f32; 46] = [
+    51.276215, 53.037777, 55.054779, 61.041203, 64.204727, 67.056, 72.211189, 73.012924, 76.024055,
+    81.072227, 82.031563, 85.013573, 97.039581, 100.024445, 105.073616, 107.089188, 108.057144,
+    109.067917, 111.030624, 113.045746, 115.061554, 121.068718, 123.031425, 125.046349, 133.068878,
+    139.06427, 142.960922, 145.175888, 149.048813, 150.097397, 151.088577, 156.092545, 166.078796,
+    167.062485, 181.10733, 182.072678, 184.091156, 185.076874, 192.059509, 193.108917, 199.10405,
+    209.086716, 210.071671, 227.101807, 228.103989, 245.115768,
+];
+/// The intensities for biotin.
+pub const BIOTIN_INTENSITIES: [f32; 46] = [
+    201696.0625,
+    225606.234375,
+    646806.875,
+    1477762.0,
+    184112.484375,
+    241819.09375,
+    417286.28125,
+    262306.34375,
+    815235.5,
+    272668.0,
+    301566.71875,
+    354831.40625,
+    10153285.0,
+    240158.125,
+    288796.375,
+    260646.625,
+    593619.375,
+    204804.546875,
+    428553.9375,
+    1001457.375,
+    372717.125,
+    857933.8125,
+    3773334.5,
+    967188.0,
+    270554.4375,
+    2022508.625,
+    1089258.25,
+    213863.984375,
+    1487220.625,
+    1467432.5,
+    729665.0625,
+    499511.8125,
+    7334065.5,
+    9927721.0,
+    243857.3125,
+    969712.5625,
+    8018583.0,
+    700747.0,
+    1678574.125,
+    1650377.5,
+    8294302.0,
+    15202032.0,
+    569506.3125,
+    926290944.0,
+    2256213.0,
+    179656880.0,
+];
+
+impl<S: SpectrumAlloc> BiotinSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn biotin() -> Self {
+        let mut spectrum = Self::with_capacity(BIOTIN_PRECURSOR_MZ.into(), BIOTIN_MZ.len());
+        for (&mz, &intensity) in BIOTIN_MZ.iter().zip(BIOTIN_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add biotin peak to spectrum");
+        }
+        spectrum
+    }
+}

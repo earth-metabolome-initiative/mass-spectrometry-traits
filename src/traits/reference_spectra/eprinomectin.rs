@@ -1,0 +1,93 @@
+//! Submodule providing data for eprinomectin.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of eprinomectin.
+pub trait EprinomectinSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of eprinomectin.
+    fn eprinomectin() -> Self;
+}
+
+/// The precursor mass over charge value for eprinomectin.
+pub const EPRINOMECTIN_PRECURSOR_MZ: f32 = 912.512;
+
+/// The mass over charge values for eprinomectin.
+pub const EPRINOMECTIN_MZ: [f32; 50] = [
+    81.034363, 83.013634, 83.05011, 84.021606, 84.045303, 85.029388, 85.030838, 93.034653,
+    95.050278, 97.029602, 97.065895, 107.050392, 108.045898, 109.029716, 110.061485, 111.045517,
+    116.050995, 121.029892, 123.045479, 124.077194, 125.060982, 126.056526, 134.061539, 135.045639,
+    137.06105, 152.072144, 161.060837, 171.081696, 173.060883, 176.072098, 179.071793, 179.087128,
+    183.082535, 184.098236, 194.082687, 197.097397, 199.11348, 223.076492, 225.092926, 258.147888,
+    270.13501, 296.151581, 409.374512, 455.281403, 541.56134, 547.305908, 565.317749, 689.169434,
+    894.499878, 916.670166,
+];
+/// The intensities for eprinomectin.
+pub const EPRINOMECTIN_INTENSITIES: [f32; 50] = [
+    6386.875977,
+    780.200623,
+    4464.611816,
+    34195.917969,
+    786.301147,
+    87067.3125,
+    945.02179,
+    847.675537,
+    972.812805,
+    2416.973145,
+    16716.263672,
+    3640.13623,
+    5474.79248,
+    22188.960938,
+    25363.357422,
+    3731.209473,
+    725.45636,
+    2474.108398,
+    2500.696289,
+    1357.783081,
+    758.492676,
+    987.080139,
+    2486.980225,
+    12519.865234,
+    4276.069824,
+    28374.525391,
+    1160.6073,
+    776.401184,
+    944.018921,
+    9988.049805,
+    1367.532715,
+    1319.787354,
+    764.663269,
+    4515.608887,
+    4833.083984,
+    4655.712402,
+    824.01886,
+    3020.0354,
+    840.372253,
+    724.046753,
+    89597.65625,
+    792.222656,
+    770.0448,
+    1012.101562,
+    712.359009,
+    824.931091,
+    4186.590332,
+    724.769043,
+    924.128967,
+    789.730835,
+];
+
+impl<S: SpectrumAlloc> EprinomectinSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn eprinomectin() -> Self {
+        let mut spectrum =
+            Self::with_capacity(EPRINOMECTIN_PRECURSOR_MZ.into(), EPRINOMECTIN_MZ.len());
+        for (&mz, &intensity) in EPRINOMECTIN_MZ.iter().zip(EPRINOMECTIN_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add eprinomectin peak to spectrum");
+        }
+        spectrum
+    }
+}

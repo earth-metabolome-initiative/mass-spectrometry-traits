@@ -1,0 +1,98 @@
+//! Submodule providing data for prothioconazole.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of prothioconazole.
+pub trait ProthioconazoleSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of prothioconazole.
+    fn prothioconazole() -> Self;
+}
+
+/// The precursor mass over charge value for prothioconazole.
+pub const PROTHIOCONAZOLE_PRECURSOR_MZ: f32 = 342.024;
+
+/// The mass over charge values for prothioconazole.
+pub const PROTHIOCONAZOLE_MZ: [f32; 50] = [
+    71.990753, 72.986069, 87.146202, 98.989372, 99.997299, 100.024094, 102.928947, 108.527939,
+    110.036003, 111.127708, 111.997559, 114.013115, 118.041168, 119.024933, 120.056686, 122.036072,
+    123.997589, 125.006592, 125.016548, 134.036148, 146.036026, 146.038376, 147.043732, 148.051849,
+    152.029037, 153.000473, 153.013046, 156.024017, 158.988098, 162.18541, 178.00882, 180.023941,
+    181.032272, 182.851898, 183.004364, 216.00032, 219.033325, 220.053864, 247.06488, 250.021469,
+    264.036957, 266.016724, 270.069885, 274.075409, 278.016479, 306.048065, 335.996277, 340.618744,
+    342.024384, 342.192444,
+];
+/// The intensities for prothioconazole.
+pub const PROTHIOCONAZOLE_INTENSITIES: [f32; 50] = [
+    143136.203125,
+    15931.84082,
+    15112.969727,
+    1113589.75,
+    6699155.0,
+    20124.384766,
+    14248.405273,
+    13965.160156,
+    107279.617188,
+    14068.426758,
+    22485.164062,
+    277329.09375,
+    18756.462891,
+    25793.625,
+    58009.5625,
+    511130.0,
+    20517.410156,
+    146178.625,
+    3236929.75,
+    21809.953125,
+    115150.945312,
+    16063.694336,
+    253482.515625,
+    21365.673828,
+    49544.539062,
+    23750.044922,
+    67550.21875,
+    81282.046875,
+    14664.501953,
+    14888.950195,
+    15972.186523,
+    1990491.875,
+    13807.030273,
+    14040.6875,
+    354331.625,
+    666310.1875,
+    82592.460938,
+    20065.478516,
+    87251.046875,
+    30729.103516,
+    1121122.0,
+    48744.914062,
+    17457.476562,
+    32066.310547,
+    245873.390625,
+    1785387.125,
+    16050.592773,
+    15602.793945,
+    9468700.0,
+    16998.355469,
+];
+
+impl<S: SpectrumAlloc> ProthioconazoleSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn prothioconazole() -> Self {
+        let mut spectrum = Self::with_capacity(
+            PROTHIOCONAZOLE_PRECURSOR_MZ.into(),
+            PROTHIOCONAZOLE_MZ.len(),
+        );
+        for (&mz, &intensity) in PROTHIOCONAZOLE_MZ
+            .iter()
+            .zip(PROTHIOCONAZOLE_INTENSITIES.iter())
+        {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add prothioconazole peak to spectrum");
+        }
+        spectrum
+    }
+}

@@ -1,0 +1,89 @@
+//! Submodule providing data for fludioxinil.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of fludioxinil.
+pub trait FludioxinilSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of fludioxinil.
+    fn fludioxinil() -> Self;
+}
+
+/// The precursor mass over charge value for fludioxinil.
+pub const FLUDIOXINIL_PRECURSOR_MZ: f32 = 247.032;
+
+/// The mass over charge values for fludioxinil.
+pub const FLUDIOXINIL_MZ: [f32; 47] = [
+    70.99353, 73.614944, 76.303444, 76.869888, 77.298065, 78.827194, 81.785019, 85.08197, 88.37851,
+    88.513817, 89.014435, 92.208992, 96.258842, 114.981377, 126.035103, 127.03035, 127.153343,
+    132.278809, 141.046097, 144.045578, 151.030319, 152.037888, 153.046295, 154.030167, 159.74231,
+    160.577194, 169.040695, 172.020477, 179.025208, 180.033112, 181.040909, 183.036682, 195.020172,
+    197.035828, 199.031464, 207.019897, 227.026428, 227.043457, 235.898346, 246.924911, 246.932281,
+    247.022476, 247.032608, 247.137085, 262.890991, 265.333771, 269.780609,
+];
+/// The intensities for fludioxinil.
+pub const FLUDIOXINIL_INTENSITIES: [f32; 47] = [
+    70056.257812,
+    87521.171875,
+    58474.828125,
+    61482.414062,
+    60323.289062,
+    52338.851562,
+    59959.617188,
+    55873.488281,
+    57245.605469,
+    65275.601562,
+    469170.75,
+    69625.375,
+    58560.882812,
+    55561.804688,
+    2685993.75,
+    89871.929688,
+    62805.84375,
+    63243.832031,
+    65265.699219,
+    97921.820312,
+    1080215.625,
+    94791.390625,
+    1235443.75,
+    112430.203125,
+    59839.027344,
+    56863.894531,
+    809635.3125,
+    68525.414062,
+    1312163.5,
+    5754412.5,
+    6413524.0,
+    331299.59375,
+    100133.695312,
+    1177083.875,
+    1034737.25,
+    292264.21875,
+    328926.3125,
+    90036.898438,
+    66706.46875,
+    238243.953125,
+    221601.359375,
+    956067.125,
+    182163856.0,
+    474370.59375,
+    72567.023438,
+    67100.78125,
+    103181.8125,
+];
+
+impl<S: SpectrumAlloc> FludioxinilSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn fludioxinil() -> Self {
+        let mut spectrum =
+            Self::with_capacity(FLUDIOXINIL_PRECURSOR_MZ.into(), FLUDIOXINIL_MZ.len());
+        for (&mz, &intensity) in FLUDIOXINIL_MZ.iter().zip(FLUDIOXINIL_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add fludioxinil peak to spectrum");
+        }
+        spectrum
+    }
+}

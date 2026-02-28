@@ -1,0 +1,92 @@
+//! Submodule providing data for nitenpyram.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of nitenpyram.
+pub trait NitenpyramSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of nitenpyram.
+    fn nitenpyram() -> Self;
+}
+
+/// The precursor mass over charge value for nitenpyram.
+pub const NITENPYRAM_PRECURSOR_MZ: f32 = 269.081;
+
+/// The mass over charge values for nitenpyram.
+pub const NITENPYRAM_MZ: [f32; 50] = [
+    83.024925, 85.040688, 101.035774, 101.037292, 104.984825, 110.036308, 111.99633, 116.996201,
+    119.025543, 121.547775, 123.514496, 125.059982, 127.657387, 132.979691, 144.991089, 151.007172,
+    163.346512, 164.997467, 165.994568, 167.002274, 169.05426, 172.886627, 172.977219, 174.165863,
+    177.022827, 177.541153, 178.018372, 179.002472, 183.033783, 184.646851, 185.003769, 191.026123,
+    192.033768, 193.041306, 198.994263, 203.014206, 205.041641, 206.01355, 206.049774, 207.021103,
+    210.044739, 220.06546, 221.024536, 222.080856, 236.239853, 244.162247, 251.070969, 262.439789,
+    269.081879, 279.285004,
+];
+/// The intensities for nitenpyram.
+pub const NITENPYRAM_INTENSITIES: [f32; 50] = [
+    2286.040527,
+    7712.203125,
+    32562.253906,
+    1806.483154,
+    2106.62915,
+    12512.858398,
+    21775.757812,
+    3031.433838,
+    1549.736572,
+    1595.015991,
+    1520.087402,
+    2095.236572,
+    1575.767944,
+    5737.225586,
+    1787.039795,
+    16581.931641,
+    1520.174072,
+    2770.925049,
+    2495.322266,
+    2131.789795,
+    2270.569092,
+    1778.508911,
+    1750.742798,
+    1550.928345,
+    2676.262939,
+    1691.815308,
+    2734.958008,
+    3053.208008,
+    3640.597412,
+    1532.098999,
+    2732.586914,
+    10580.866211,
+    15813.931641,
+    10814.629883,
+    1761.947632,
+    5302.355469,
+    5921.751953,
+    2885.323486,
+    37759.390625,
+    13625.307617,
+    1593.993652,
+    8174.585449,
+    13276.310547,
+    39409.222656,
+    2234.260254,
+    1532.943481,
+    9891.462891,
+    1521.33313,
+    63220.917969,
+    1650.996216,
+];
+
+impl<S: SpectrumAlloc> NitenpyramSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn nitenpyram() -> Self {
+        let mut spectrum = Self::with_capacity(NITENPYRAM_PRECURSOR_MZ.into(), NITENPYRAM_MZ.len());
+        for (&mz, &intensity) in NITENPYRAM_MZ.iter().zip(NITENPYRAM_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add nitenpyram peak to spectrum");
+        }
+        spectrum
+    }
+}

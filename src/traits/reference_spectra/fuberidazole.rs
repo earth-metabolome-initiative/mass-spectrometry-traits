@@ -1,0 +1,93 @@
+//! Submodule providing data for fuberidazole.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of fuberidazole.
+pub trait FuberidazoleSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of fuberidazole.
+    fn fuberidazole() -> Self;
+}
+
+/// The precursor mass over charge value for fuberidazole.
+pub const FUBERIDAZOLE_PRECURSOR_MZ: f32 = 183.057;
+
+/// The mass over charge values for fuberidazole.
+pub const FUBERIDAZOLE_MZ: [f32; 50] = [
+    70.786774, 72.976173, 73.493057, 73.515923, 75.004799, 82.050003, 82.620819, 82.860512,
+    89.454147, 94.881096, 94.917038, 94.918587, 94.993851, 102.743492, 106.645241, 106.876747,
+    109.907501, 112.186974, 112.985817, 113.004906, 115.000427, 115.333664, 116.995949, 117.046104,
+    117.763412, 122.933907, 125.587662, 126.956421, 133.029556, 133.420456, 133.435806, 136.894592,
+    138.90712, 138.965378, 141.046158, 142.99292, 142.995346, 146.785355, 154.053802, 154.951416,
+    154.992584, 155.061676, 163.001526, 170.366013, 182.987579, 183.007996, 183.056702, 183.121933,
+    190.211334, 202.308212,
+];
+/// The intensities for fuberidazole.
+pub const FUBERIDAZOLE_INTENSITIES: [f32; 50] = [
+    213.612045,
+    241.782242,
+    210.330109,
+    211.937332,
+    313.5,
+    216.289841,
+    261.580231,
+    222.143372,
+    229.945343,
+    219.268311,
+    10964.588867,
+    462.001892,
+    322.640625,
+    237.246567,
+    249.806686,
+    269.230896,
+    269.221008,
+    237.601974,
+    2100.576172,
+    236.479034,
+    1164.228882,
+    267.86319,
+    5871.84668,
+    1942.958862,
+    227.911606,
+    268.506836,
+    259.168152,
+    319.40094,
+    431.949585,
+    231.658493,
+    278.857513,
+    413.464294,
+    4373.975098,
+    330.018127,
+    365.30246,
+    855.966187,
+    1030.517456,
+    272.870209,
+    3683.994141,
+    443.910065,
+    1055.799194,
+    147161.03125,
+    2383.76001,
+    283.286346,
+    1709.164062,
+    5187.443359,
+    285898.9375,
+    448.362885,
+    244.807159,
+    327.976257,
+];
+
+impl<S: SpectrumAlloc> FuberidazoleSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn fuberidazole() -> Self {
+        let mut spectrum =
+            Self::with_capacity(FUBERIDAZOLE_PRECURSOR_MZ.into(), FUBERIDAZOLE_MZ.len());
+        for (&mz, &intensity) in FUBERIDAZOLE_MZ.iter().zip(FUBERIDAZOLE_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add fuberidazole peak to spectrum");
+        }
+        spectrum
+    }
+}

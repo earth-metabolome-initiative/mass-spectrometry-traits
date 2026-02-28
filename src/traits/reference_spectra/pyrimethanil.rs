@@ -1,0 +1,93 @@
+//! Submodule providing data for pyrimethanil.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of pyrimethanil.
+pub trait PyrimethanilSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of pyrimethanil.
+    fn pyrimethanil() -> Self;
+}
+
+/// The precursor mass over charge value for pyrimethanil.
+pub const PYRIMETHANIL_PRECURSOR_MZ: f32 = 341.026;
+
+/// The mass over charge values for pyrimethanil.
+pub const PYRIMETHANIL_MZ: [f32; 50] = [
+    92.99556, 108.990814, 111.996147, 112.985802, 142.992889, 154.992996, 155.986099, 166.993057,
+    178.992813, 192.989578, 197.002365, 204.989304, 205.008926, 206.987442, 212.997665, 214.99379,
+    216.989792, 222.999863, 224.861664, 228.022537, 228.989792, 232.984711, 233.003265, 236.995789,
+    240.991867, 241.008728, 250.994583, 251.075699, 252.990311, 254.98671, 256.984711, 257.002289,
+    260.980011, 260.998291, 268.851044, 271.000549, 272.979034, 272.995911, 280.984985, 281.003906,
+    292.984375, 293.002228, 300.99115, 301.010559, 320.978027, 320.99704, 321.017731, 340.984375,
+    341.003387, 341.026062,
+];
+/// The intensities for pyrimethanil.
+pub const PYRIMETHANIL_INTENSITIES: [f32; 50] = [
+    3929.714844,
+    1125.365601,
+    77453.195312,
+    618.158936,
+    639.917114,
+    2405.884521,
+    15856.251953,
+    1243.193726,
+    548.065918,
+    737.311035,
+    1139.467529,
+    8203.842773,
+    1187.636963,
+    589.875977,
+    1781.320068,
+    1772.285278,
+    9890.202148,
+    573.539246,
+    1475.318115,
+    5528.91748,
+    1327.19165,
+    527.390747,
+    1705.244751,
+    5585.973145,
+    1946.057617,
+    718.036865,
+    1225.663696,
+    1974.68335,
+    8216.430664,
+    11023.587891,
+    633.944031,
+    1364.832764,
+    1464.522949,
+    2589.915283,
+    671.967773,
+    708.945007,
+    1341.746826,
+    4493.916016,
+    9493.414062,
+    2682.179199,
+    1298.502197,
+    659.17804,
+    10034.841797,
+    2633.195557,
+    6199.258789,
+    9032.280273,
+    693.987122,
+    3178.500977,
+    7485.448242,
+    42703.347656,
+];
+
+impl<S: SpectrumAlloc> PyrimethanilSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn pyrimethanil() -> Self {
+        let mut spectrum =
+            Self::with_capacity(PYRIMETHANIL_PRECURSOR_MZ.into(), PYRIMETHANIL_MZ.len());
+        for (&mz, &intensity) in PYRIMETHANIL_MZ.iter().zip(PYRIMETHANIL_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add pyrimethanil peak to spectrum");
+        }
+        spectrum
+    }
+}

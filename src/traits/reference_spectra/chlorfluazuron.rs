@@ -1,0 +1,96 @@
+//! Submodule providing data for chlorfluazuron.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of chlorfluazuron.
+pub trait ChlorfluazuronSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of chlorfluazuron.
+    fn chlorfluazuron() -> Self;
+}
+
+/// The precursor mass over charge value for chlorfluazuron.
+pub const CHLORFLUAZURON_PRECURSOR_MZ: f32 = 537.956;
+
+/// The mass over charge values for chlorfluazuron.
+pub const CHLORFLUAZURON_MZ: [f32; 50] = [
+    93.014473, 104.686234, 110.041191, 113.020851, 120.560463, 136.020569, 155.240372, 156.026779,
+    158.211777, 173.952362, 174.959961, 179.983841, 180.05658, 186.881439, 187.267944, 194.626816,
+    195.978882, 199.955582, 199.95961, 201.057053, 211.109894, 219.540726, 225.886993, 236.346619,
+    260.37915, 261.921295, 262.527496, 282.989349, 284.987823, 293.977234, 294.96109, 318.966492,
+    338.974304, 354.942871, 364.468842, 366.029388, 379.937714, 395.536469, 401.272736, 402.007721,
+    402.991852, 445.99704, 473.959595, 474.944519, 481.972229, 494.950806, 517.95166, 517.971008,
+    537.478149, 545.672913,
+];
+/// The intensities for chlorfluazuron.
+pub const CHLORFLUAZURON_INTENSITIES: [f32; 50] = [
+    46047.585938,
+    3774.529297,
+    15217.682617,
+    264999.71875,
+    3984.24292,
+    28083.068359,
+    3765.404053,
+    125964.5625,
+    3805.086914,
+    42897.851562,
+    1388672.125,
+    42243.011719,
+    3903.905273,
+    3816.999023,
+    4270.926758,
+    3906.626221,
+    213054.984375,
+    92918.703125,
+    3950.148682,
+    4203.204102,
+    4233.100098,
+    3872.95874,
+    3748.057617,
+    3944.770996,
+    5035.790039,
+    3737.178223,
+    3870.143555,
+    9243.869141,
+    23197.347656,
+    27421.484375,
+    23950.089844,
+    66927.398438,
+    46938.941406,
+    877385.75,
+    3956.247803,
+    4644.686035,
+    159831.921875,
+    3834.003174,
+    4589.171387,
+    104937.414062,
+    3871.106445,
+    121495.1875,
+    7311.916016,
+    37810.460938,
+    30874.28125,
+    8020.021484,
+    464485.8125,
+    9207.316406,
+    4024.640137,
+    4143.660645,
+];
+
+impl<S: SpectrumAlloc> ChlorfluazuronSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn chlorfluazuron() -> Self {
+        let mut spectrum =
+            Self::with_capacity(CHLORFLUAZURON_PRECURSOR_MZ.into(), CHLORFLUAZURON_MZ.len());
+        for (&mz, &intensity) in CHLORFLUAZURON_MZ
+            .iter()
+            .zip(CHLORFLUAZURON_INTENSITIES.iter())
+        {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add chlorfluazuron peak to spectrum");
+        }
+        spectrum
+    }
+}

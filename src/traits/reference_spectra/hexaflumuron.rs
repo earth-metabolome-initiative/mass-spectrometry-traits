@@ -1,0 +1,93 @@
+//! Submodule providing data for hexaflumuron.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of hexaflumuron.
+pub trait HexaflumuronSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of hexaflumuron.
+    fn hexaflumuron() -> Self;
+}
+
+/// The precursor mass over charge value for hexaflumuron.
+pub const HEXAFLUMURON_PRECURSOR_MZ: f32 = 458.975;
+
+/// The mass over charge values for hexaflumuron.
+pub const HEXAFLUMURON_MZ: [f32; 50] = [
+    93.014267, 94.994682, 96.99041, 110.041183, 113.020851, 116.996803, 136.020233, 140.159714,
+    156.026749, 160.449387, 173.951813, 174.896851, 174.959946, 175.020874, 175.653473, 185.95195,
+    198.857819, 199.954956, 201.94693, 210.013641, 215.942322, 235.949112, 240.998016, 255.95517,
+    258.000305, 261.928314, 275.961304, 284.987823, 293.977539, 294.960907, 300.947723, 300.95636,
+    301.990356, 302.998444, 307.334351, 320.964447, 338.974365, 357.556183, 359.001892, 371.561371,
+    394.558929, 394.979279, 395.962677, 402.991821, 415.968109, 422.999207, 427.456482, 438.875671,
+    438.969452, 458.975616,
+];
+/// The intensities for hexaflumuron.
+pub const HEXAFLUMURON_INTENSITIES: [f32; 50] = [
+    140923.75,
+    34601.6875,
+    502143.9375,
+    95987.984375,
+    702869.0,
+    383072.3125,
+    107598.085938,
+    16246.461914,
+    499341.0,
+    17552.105469,
+    94797.828125,
+    19283.285156,
+    12065792.0,
+    27527.769531,
+    16393.521484,
+    998245.8125,
+    18412.634766,
+    392079.4375,
+    188655.765625,
+    17221.335938,
+    32929.851562,
+    124696.320312,
+    27425.371094,
+    844376.5,
+    200307.171875,
+    27891.583984,
+    5978440.0,
+    277691.25,
+    143127.828125,
+    170701.53125,
+    23420.568359,
+    780346.5,
+    943787.875,
+    33821.648438,
+    16402.861328,
+    23263.361328,
+    53017.261719,
+    16916.185547,
+    34777.929688,
+    16724.712891,
+    18799.355469,
+    18961.248047,
+    152691.046875,
+    783459.0625,
+    73530.359375,
+    224032.484375,
+    17222.720703,
+    17487.960938,
+    3784278.5,
+    25052.765625,
+];
+
+impl<S: SpectrumAlloc> HexaflumuronSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn hexaflumuron() -> Self {
+        let mut spectrum =
+            Self::with_capacity(HEXAFLUMURON_PRECURSOR_MZ.into(), HEXAFLUMURON_MZ.len());
+        for (&mz, &intensity) in HEXAFLUMURON_MZ.iter().zip(HEXAFLUMURON_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add hexaflumuron peak to spectrum");
+        }
+        spectrum
+    }
+}

@@ -1,0 +1,92 @@
+//! Submodule providing data for ethirimol.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of ethirimol.
+pub trait EthirimolSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of ethirimol.
+    fn ethirimol() -> Self;
+}
+
+/// The precursor mass over charge value for ethirimol.
+pub const ETHIRIMOL_PRECURSOR_MZ: f32 = 208.146;
+
+/// The mass over charge values for ethirimol.
+pub const ETHIRIMOL_MZ: [f32; 50] = [
+    71.903069, 74.565865, 75.419785, 75.420715, 79.322105, 81.058884, 81.059921, 83.45752,
+    84.528267, 86.351273, 92.452217, 95.990242, 106.570053, 106.702705, 116.140869, 116.142654,
+    117.28965, 120.383957, 123.893204, 130.336121, 130.338242, 136.051483, 136.747696, 137.059555,
+    137.100647, 137.108337, 141.643066, 142.949112, 143.439148, 150.852173, 151.942841, 157.029755,
+    161.026917, 161.910004, 165.090988, 180.049164, 180.114502, 192.114746, 197.080978, 197.226151,
+    197.768494, 206.130005, 208.065033, 208.137634, 208.145477, 208.224548, 208.229523, 209.14888,
+    213.269943, 218.565918,
+];
+/// The intensities for ethirimol.
+pub const ETHIRIMOL_INTENSITIES: [f32; 50] = [
+    39399.351562,
+    39830.527344,
+    55834.15625,
+    71159.726562,
+    38838.90625,
+    40530.277344,
+    48577.4375,
+    41203.632812,
+    39586.296875,
+    38611.460938,
+    38294.820312,
+    92145.148438,
+    53114.925781,
+    42545.476562,
+    61245.355469,
+    67739.328125,
+    37859.773438,
+    45378.859375,
+    38152.121094,
+    56825.75,
+    60485.324219,
+    307359.3125,
+    40896.804688,
+    80814.570312,
+    43069.527344,
+    777120.1875,
+    38762.253906,
+    38497.933594,
+    52425.859375,
+    42170.492188,
+    41567.382812,
+    43027.011719,
+    46130.046875,
+    41794.46875,
+    2226220.75,
+    55104.726562,
+    27596034.0,
+    224911.171875,
+    568919.75,
+    41919.910156,
+    44439.527344,
+    834511.75,
+    238614.5625,
+    498277.71875,
+    84760936.0,
+    98067.421875,
+    68634.640625,
+    60740.429688,
+    43549.753906,
+    42055.011719,
+];
+
+impl<S: SpectrumAlloc> EthirimolSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn ethirimol() -> Self {
+        let mut spectrum = Self::with_capacity(ETHIRIMOL_PRECURSOR_MZ.into(), ETHIRIMOL_MZ.len());
+        for (&mz, &intensity) in ETHIRIMOL_MZ.iter().zip(ETHIRIMOL_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add ethirimol peak to spectrum");
+        }
+        spectrum
+    }
+}

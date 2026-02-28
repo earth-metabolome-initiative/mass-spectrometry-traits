@@ -12,8 +12,28 @@ pub mod spectrum_annotation;
 pub mod spectrum_mut;
 
 pub use reference_spectra::{
-    AspirinSpectrum, CocaineSpectrum, EpimeloscineSpectrum, GlucoseSpectrum,
-    HydroxyCholesterolSpectrum, PhenylalanineSpectrum, SalicinSpectrum,
+    AcephateSpectrum, AcetylCoenzymeASpectrum, AdenineSpectrum, Adenosine5DiphosphateSpectrum,
+    Adenosine5MonophosphateSpectrum, AdenosineSpectrum, AlanineSpectrum, ArachidicAcidSpectrum,
+    ArachidonicAcidSpectrum, ArginineSpectrum, AscorbicAcidSpectrum, AsparticAcidSpectrum,
+    AspirinSpectrum, AvermectinSpectrum, BiotinSpectrum, BoscalidSpectrum,
+    ChlorantraniliproleSpectrum, ChlorfluazuronSpectrum, ChlorotoluronSpectrum, CitricAcidSpectrum,
+    ClothianidinSpectrum, CocaineSpectrum, CyazofamidSpectrum, CymoxanilSpectrum, CysteineSpectrum,
+    Cytidine5DiphosphateSpectrum, Cytidine5TriphosphateSpectrum, CytidineSpectrum,
+    DesmosterolSpectrum, DiflubenzuronSpectrum, DihydrosphingosineSpectrum, DiniconazoleSpectrum,
+    DinotefuranSpectrum, DiuronSpectrum, DoramectinSpectrum, ElaidicAcidSpectrum,
+    EpimeloscineSpectrum, EprinomectinSpectrum, EthiproleSpectrum, EthirimolSpectrum,
+    FipronilSpectrum, FlonicamidSpectrum, FluazinamSpectrum, FludioxinilSpectrum,
+    FlufenoxuronSpectrum, FluometuronSpectrum, FlutolanilSpectrum, FolicAcidSpectrum,
+    ForchlorfenuronSpectrum, FuberidazoleSpectrum, GlucoseSpectrum, HalofenozideSpectrum,
+    HexaflumuronSpectrum, HydramethylnonSpectrum, HydroxyCholesterolSpectrum, IvermectinSpectrum,
+    LufenuronSpectrum, MetaflumizoneSpectrum, N1OleoylSnGlycero3PhosphocholineSpectrum,
+    N1PalmitoylSnGlycero3PhosphocholineSpectrum, N4AminobenzoicAcidSpectrum,
+    N4Cholesten3OneSpectrum, N12DierucoylSnGlycero3PhosphocholineSpectrum,
+    N12DioleoylRacGlycerolSpectrum, N25DihydroxybenzoicAcidSpectrum, NeburonSpectrum,
+    NitenpyramSpectrum, NovaluronSpectrum, PhenylalanineSpectrum, ProthioconazoleSpectrum,
+    PymetrozineSpectrum, PyrimethanilSpectrum, SalicinSpectrum, SulfentrazoneSpectrum,
+    TebufenozideSpectrum, TeflubenzuronSpectrum, ThidiazuronSpectrum, ThiophanateSpectrum,
+    TriadimefonSpectrum, TriflumuronSpectrum,
 };
 pub use spectra::Spectra;
 pub use spectral_filter::SpectralFilter;

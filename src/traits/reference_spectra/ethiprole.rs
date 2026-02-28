@@ -1,0 +1,92 @@
+//! Submodule providing data for ethiprole.
+
+use crate::traits::SpectrumAlloc;
+
+/// Trait for a spectrum of ethiprole.
+pub trait EthiproleSpectrum: SpectrumAlloc {
+    /// Create a new spectrum of ethiprole.
+    fn ethiprole() -> Self;
+}
+
+/// The precursor mass over charge value for ethiprole.
+pub const ETHIPROLE_PRECURSOR_MZ: f32 = 394.975;
+
+/// The mass over charge values for ethiprole.
+pub const ETHIPROLE_MZ: [f32; 50] = [
+    71.453072, 71.554443, 82.617233, 102.94899, 113.014847, 143.005447, 146.938934, 148.991287,
+    150.003845, 163.011902, 170.010071, 182.010025, 183.017914, 190.928696, 198.988266, 208.958923,
+    212.949738, 214.990036, 216.979263, 217.986984, 218.994827, 223.983871, 226.98996, 233.981323,
+    242.984955, 243.989532, 245.981659, 246.989456, 249.958633, 253.986771, 261.958527, 261.966583,
+    262.952698, 267.989624, 271.984894, 277.953857, 278.962097, 281.99295, 283.000824, 287.962372,
+    303.957458, 313.964783, 313.975311, 317.959991, 317.96936, 329.960754, 330.967926, 358.998749,
+    365.936249, 366.944489,
+];
+/// The intensities for ethiprole.
+pub const ETHIPROLE_INTENSITIES: [f32; 50] = [
+    15713.793945,
+    11601.032227,
+    13528.495117,
+    12011.066406,
+    34059.441406,
+    12276.857422,
+    25693.566406,
+    14788.831055,
+    127788.304688,
+    132359.796875,
+    792528.125,
+    329103.75,
+    1819503.625,
+    26189.169922,
+    12415.641602,
+    43040.300781,
+    40544.539062,
+    28532.582031,
+    38188.253906,
+    1417666.5,
+    281380.34375,
+    14379.844727,
+    11805.854492,
+    218657.21875,
+    42022.246094,
+    533661.375,
+    87098.523438,
+    190671.484375,
+    4436954.0,
+    69863.625,
+    1728543.75,
+    12576.884766,
+    12062.901367,
+    341298.5,
+    76675.546875,
+    1868266.625,
+    121996.085938,
+    317086.8125,
+    79520.046875,
+    218475.921875,
+    121247.71875,
+    1310695.5,
+    13418.967773,
+    13629.739258,
+    502677.1875,
+    4566966.5,
+    3892448.25,
+    14703.959961,
+    78679.710938,
+    25583.904297,
+];
+
+impl<S: SpectrumAlloc> EthiproleSpectrum for S
+where
+    S::Mz: From<f32>,
+    S::Intensity: From<f32>,
+{
+    fn ethiprole() -> Self {
+        let mut spectrum = Self::with_capacity(ETHIPROLE_PRECURSOR_MZ.into(), ETHIPROLE_MZ.len());
+        for (&mz, &intensity) in ETHIPROLE_MZ.iter().zip(ETHIPROLE_INTENSITIES.iter()) {
+            spectrum
+                .add_peak(mz.into(), intensity.into())
+                .expect("Failed to add ethiprole peak to spectrum");
+        }
+        spectrum
+    }
+}
