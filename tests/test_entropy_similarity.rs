@@ -1,0 +1,446 @@
+//! Tests for the EntropySimilarity implementation.
+//!
+//! Reference values are computed with a manual Python implementation of the
+//! spectral entropy algorithm (Li et al., Nature Methods 2021), validated
+//! against the `ms_entropy` package (with `clean_spectra=False`).
+
+use mass_spectrometry::prelude::{
+    AspirinSpectrum, CocaineSpectrum, EntropySimilarity, GenericSpectrum, GlucoseSpectrum,
+    HydroxyCholesterolSpectrum, PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, Spectrum,
+};
+
+fn weighted() -> EntropySimilarity<f32> {
+    EntropySimilarity::weighted(0.1)
+}
+
+fn unweighted() -> EntropySimilarity<f32> {
+    EntropySimilarity::unweighted(0.1)
+}
+
+fn assert_self_similarity(
+    name: &str,
+    spectrum: &GenericSpectrum<f32, f32>,
+    scorer: &EntropySimilarity<f32>,
+) {
+    let (sim, peaks) = scorer.similarity(spectrum, spectrum);
+    assert!(
+        (1.0_f32 - sim).abs() < 1e-5,
+        "{name} self-similarity: expected ~1.0, got {sim}"
+    );
+    assert_eq!(peaks, spectrum.len() as u16);
+}
+
+fn assert_cross(
+    name: &str,
+    a: &GenericSpectrum<f32, f32>,
+    b: &GenericSpectrum<f32, f32>,
+    scorer: &EntropySimilarity<f32>,
+    expected_sim: f32,
+    expected_matches: u16,
+    tol: f32,
+) {
+    let (sim, peaks) = scorer.similarity(a, b);
+    assert!(
+        (sim - expected_sim).abs() < tol,
+        "{name}: expected {expected_sim}, got {sim} (diff={})",
+        (sim - expected_sim).abs()
+    );
+    assert_eq!(peaks, expected_matches, "{name}: wrong match count");
+}
+
+fn assert_symmetry(
+    name: &str,
+    a: &GenericSpectrum<f32, f32>,
+    b: &GenericSpectrum<f32, f32>,
+    scorer: &EntropySimilarity<f32>,
+) {
+    let (sim_ab, peaks_ab) = scorer.similarity(a, b);
+    let (sim_ba, peaks_ba) = scorer.similarity(b, a);
+    assert!(
+        (sim_ab - sim_ba).abs() < 1e-6,
+        "{name} symmetry: {sim_ab} vs {sim_ba}"
+    );
+    assert_eq!(peaks_ab, peaks_ba, "{name} symmetry: peak count mismatch");
+}
+
+// ========== Weighted self-similarity ==========
+
+#[test]
+fn weighted_self_cocaine() {
+    assert_self_similarity("cocaine", &GenericSpectrum::cocaine(), &weighted());
+}
+
+#[test]
+fn weighted_self_glucose() {
+    assert_self_similarity("glucose", &GenericSpectrum::glucose(), &weighted());
+}
+
+#[test]
+fn weighted_self_aspirin() {
+    assert_self_similarity("aspirin", &GenericSpectrum::aspirin(), &weighted());
+}
+
+#[test]
+fn weighted_self_hydroxy_cholesterol() {
+    assert_self_similarity(
+        "hydroxy_cholesterol",
+        &GenericSpectrum::hydroxy_cholesterol(),
+        &weighted(),
+    );
+}
+
+#[test]
+fn weighted_self_salicin() {
+    assert_self_similarity("salicin", &GenericSpectrum::salicin(), &weighted());
+}
+
+#[test]
+fn weighted_self_phenylalanine() {
+    assert_self_similarity(
+        "phenylalanine",
+        &GenericSpectrum::phenylalanine(),
+        &weighted(),
+    );
+}
+
+// ========== Unweighted self-similarity ==========
+
+#[test]
+fn unweighted_self_cocaine() {
+    assert_self_similarity("cocaine", &GenericSpectrum::cocaine(), &unweighted());
+}
+
+#[test]
+fn unweighted_self_glucose() {
+    assert_self_similarity("glucose", &GenericSpectrum::glucose(), &unweighted());
+}
+
+#[test]
+fn unweighted_self_aspirin() {
+    assert_self_similarity("aspirin", &GenericSpectrum::aspirin(), &unweighted());
+}
+
+#[test]
+fn unweighted_self_hydroxy_cholesterol() {
+    assert_self_similarity(
+        "hydroxy_cholesterol",
+        &GenericSpectrum::hydroxy_cholesterol(),
+        &unweighted(),
+    );
+}
+
+#[test]
+fn unweighted_self_salicin() {
+    assert_self_similarity("salicin", &GenericSpectrum::salicin(), &unweighted());
+}
+
+#[test]
+fn unweighted_self_phenylalanine() {
+    assert_self_similarity(
+        "phenylalanine",
+        &GenericSpectrum::phenylalanine(),
+        &unweighted(),
+    );
+}
+
+// ========== Weighted cross-similarity (Python reference, no cleaning) ==========
+
+#[test]
+fn weighted_cocaine_vs_glucose() {
+    assert_cross(
+        "cocaine_vs_glucose",
+        &GenericSpectrum::cocaine(),
+        &GenericSpectrum::glucose(),
+        &weighted(),
+        0.0,
+        0,
+        1e-6,
+    );
+}
+
+#[test]
+fn weighted_cocaine_vs_aspirin() {
+    assert_cross(
+        "cocaine_vs_aspirin",
+        &GenericSpectrum::cocaine(),
+        &GenericSpectrum::aspirin(),
+        &weighted(),
+        0.026_026_2,
+        1,
+        1e-4,
+    );
+}
+
+#[test]
+fn weighted_cocaine_vs_hydroxy_cholesterol() {
+    assert_cross(
+        "cocaine_vs_hydroxy_cholesterol",
+        &GenericSpectrum::cocaine(),
+        &GenericSpectrum::hydroxy_cholesterol(),
+        &weighted(),
+        0.0,
+        0,
+        1e-6,
+    );
+}
+
+#[test]
+fn weighted_cocaine_vs_salicin() {
+    assert_cross(
+        "cocaine_vs_salicin",
+        &GenericSpectrum::cocaine(),
+        &GenericSpectrum::salicin(),
+        &weighted(),
+        0.0,
+        0,
+        1e-6,
+    );
+}
+
+#[test]
+fn weighted_cocaine_vs_phenylalanine() {
+    assert_cross(
+        "cocaine_vs_phenylalanine",
+        &GenericSpectrum::cocaine(),
+        &GenericSpectrum::phenylalanine(),
+        &weighted(),
+        0.0,
+        0,
+        1e-6,
+    );
+}
+
+#[test]
+fn weighted_glucose_vs_aspirin() {
+    assert_cross(
+        "glucose_vs_aspirin",
+        &GenericSpectrum::glucose(),
+        &GenericSpectrum::aspirin(),
+        &weighted(),
+        0.043_315_06,
+        1,
+        1e-4,
+    );
+}
+
+#[test]
+fn weighted_glucose_vs_hydroxy_cholesterol() {
+    assert_cross(
+        "glucose_vs_hydroxy_cholesterol",
+        &GenericSpectrum::glucose(),
+        &GenericSpectrum::hydroxy_cholesterol(),
+        &weighted(),
+        0.037_349_56,
+        6,
+        1e-4,
+    );
+}
+
+#[test]
+fn weighted_glucose_vs_salicin() {
+    assert_cross(
+        "glucose_vs_salicin",
+        &GenericSpectrum::glucose(),
+        &GenericSpectrum::salicin(),
+        &weighted(),
+        0.0,
+        0,
+        1e-6,
+    );
+}
+
+#[test]
+fn weighted_glucose_vs_phenylalanine() {
+    assert_cross(
+        "glucose_vs_phenylalanine",
+        &GenericSpectrum::glucose(),
+        &GenericSpectrum::phenylalanine(),
+        &weighted(),
+        0.055_385_83,
+        2,
+        1e-4,
+    );
+}
+
+#[test]
+fn weighted_aspirin_vs_hydroxy_cholesterol() {
+    assert_cross(
+        "aspirin_vs_hydroxy_cholesterol",
+        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::hydroxy_cholesterol(),
+        &weighted(),
+        0.053_310_06,
+        8,
+        1e-4,
+    );
+}
+
+#[test]
+fn weighted_aspirin_vs_salicin() {
+    assert_cross(
+        "aspirin_vs_salicin",
+        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::salicin(),
+        &weighted(),
+        0.005_232_96,
+        1,
+        1e-4,
+    );
+}
+
+#[test]
+fn weighted_aspirin_vs_phenylalanine() {
+    assert_cross(
+        "aspirin_vs_phenylalanine",
+        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::phenylalanine(),
+        &weighted(),
+        0.229_214_96,
+        3,
+        1e-4,
+    );
+}
+
+#[test]
+fn weighted_hydroxy_cholesterol_vs_salicin() {
+    assert_cross(
+        "hydroxy_cholesterol_vs_salicin",
+        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::salicin(),
+        &weighted(),
+        0.0,
+        0,
+        1e-6,
+    );
+}
+
+#[test]
+fn weighted_hydroxy_cholesterol_vs_phenylalanine() {
+    assert_cross(
+        "hydroxy_cholesterol_vs_phenylalanine",
+        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::phenylalanine(),
+        &weighted(),
+        0.028_153_34,
+        3,
+        1e-4,
+    );
+}
+
+#[test]
+fn weighted_salicin_vs_phenylalanine() {
+    assert_cross(
+        "salicin_vs_phenylalanine",
+        &GenericSpectrum::salicin(),
+        &GenericSpectrum::phenylalanine(),
+        &weighted(),
+        0.021_864_35,
+        1,
+        1e-4,
+    );
+}
+
+// ========== Unweighted cross-similarity ==========
+
+#[test]
+fn unweighted_cocaine_vs_aspirin() {
+    assert_cross(
+        "cocaine_vs_aspirin",
+        &GenericSpectrum::cocaine(),
+        &GenericSpectrum::aspirin(),
+        &unweighted(),
+        0.010_192_22,
+        1,
+        1e-4,
+    );
+}
+
+#[test]
+fn unweighted_glucose_vs_aspirin() {
+    assert_cross(
+        "glucose_vs_aspirin",
+        &GenericSpectrum::glucose(),
+        &GenericSpectrum::aspirin(),
+        &unweighted(),
+        0.027_876_10,
+        1,
+        1e-4,
+    );
+}
+
+#[test]
+fn unweighted_glucose_vs_phenylalanine() {
+    assert_cross(
+        "glucose_vs_phenylalanine",
+        &GenericSpectrum::glucose(),
+        &GenericSpectrum::phenylalanine(),
+        &unweighted(),
+        0.007_554_79,
+        2,
+        1e-4,
+    );
+}
+
+#[test]
+fn unweighted_aspirin_vs_hydroxy_cholesterol() {
+    assert_cross(
+        "aspirin_vs_hydroxy_cholesterol",
+        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::hydroxy_cholesterol(),
+        &unweighted(),
+        0.038_041_51,
+        8,
+        1e-4,
+    );
+}
+
+#[test]
+fn unweighted_aspirin_vs_phenylalanine() {
+    assert_cross(
+        "aspirin_vs_phenylalanine",
+        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::phenylalanine(),
+        &unweighted(),
+        0.098_100_87,
+        3,
+        1e-4,
+    );
+}
+
+// ========== Symmetry ==========
+
+#[test]
+fn weighted_symmetry() {
+    let scorer = weighted();
+    let cocaine = GenericSpectrum::cocaine();
+    let aspirin = GenericSpectrum::aspirin();
+    let glucose = GenericSpectrum::glucose();
+    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let phe = GenericSpectrum::phenylalanine();
+    let salicin = GenericSpectrum::salicin();
+
+    assert_symmetry("cocaine_aspirin", &cocaine, &aspirin, &scorer);
+    assert_symmetry("glucose_aspirin", &glucose, &aspirin, &scorer);
+    assert_symmetry("aspirin_hc", &aspirin, &hc, &scorer);
+    assert_symmetry("aspirin_phe", &aspirin, &phe, &scorer);
+    assert_symmetry("glucose_hc", &glucose, &hc, &scorer);
+    assert_symmetry("glucose_phe", &glucose, &phe, &scorer);
+    assert_symmetry("hc_phe", &hc, &phe, &scorer);
+    assert_symmetry("salicin_phe", &salicin, &phe, &scorer);
+}
+
+#[test]
+fn unweighted_symmetry() {
+    let scorer = unweighted();
+    let cocaine = GenericSpectrum::cocaine();
+    let aspirin = GenericSpectrum::aspirin();
+    let glucose = GenericSpectrum::glucose();
+    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let phe = GenericSpectrum::phenylalanine();
+
+    assert_symmetry("cocaine_aspirin", &cocaine, &aspirin, &scorer);
+    assert_symmetry("glucose_aspirin", &glucose, &aspirin, &scorer);
+    assert_symmetry("aspirin_hc", &aspirin, &hc, &scorer);
+    assert_symmetry("aspirin_phe", &aspirin, &phe, &scorer);
+    assert_symmetry("glucose_phe", &glucose, &phe, &scorer);
+}
