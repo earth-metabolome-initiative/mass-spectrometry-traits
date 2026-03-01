@@ -6,9 +6,11 @@
 
 use geometric_traits::prelude::{Finite, Number, ScalarSimilarity, TotalOrd};
 use multi_ranged::BiRange;
-use num_traits::{Float, Pow, ToPrimitive, Zero};
+use num_traits::{Float, Pow, ToPrimitive};
 
-use super::cosine_common::{compute_cosine_similarity_greedy, impl_cosine_wrapper_config_api};
+use super::cosine_common::{
+    compute_cosine_similarity_greedy, impl_cosine_wrapper_config_api, modified_precursor_shift_pair,
+};
 use super::similarity_errors::SimilarityComputationError;
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 
@@ -37,8 +39,8 @@ where
     type Similarity = Result<(S1::Mz, usize), SimilarityComputationError>;
 
     fn similarity(&self, left: &S1, right: &S2) -> Self::Similarity {
-        let shift = left.precursor_mz() - right.precursor_mz();
-        let negated_shift = S1::Mz::zero() - shift;
+        let (shift, negated_shift) =
+            modified_precursor_shift_pair(left.precursor_mz(), right.precursor_mz());
 
         compute_cosine_similarity_greedy::<_, _, _, BiRange<u32>, _, _>(
             left,

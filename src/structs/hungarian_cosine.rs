@@ -16,7 +16,7 @@ pub struct HungarianCosine<EXP, MZ> {
 impl_cosine_wrapper_config_api!(
     HungarianCosine,
     "the Hungarian cosine similarity",
-    "Returns the tolerance for the mass-shift of the mass/charge ratio."
+    "Returns the tolerance for the mass/charge ratio."
 );
 
 impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for HungarianCosine<EXP, S1::Mz>

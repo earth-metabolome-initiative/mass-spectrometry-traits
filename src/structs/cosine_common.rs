@@ -6,6 +6,7 @@ use geometric_traits::prelude::{
 use multi_ranged::MultiRanged;
 use num_traits::{Float, Pow, ToPrimitive, Zero};
 
+use crate::numeric_validation::{NumericValidationError, checked_to_f64};
 use crate::structs::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::Spectrum;
 
@@ -136,15 +137,29 @@ macro_rules! impl_cosine_wrapper_config_api {
 pub(crate) use impl_cosine_wrapper_config_api;
 
 #[inline]
-pub(crate) fn ensure_finite_f64(
-    value: f64,
+fn to_f64_checked_for_computation<T: ToPrimitive>(
+    value: T,
     name: &'static str,
-) -> Result<(), SimilarityComputationError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(SimilarityComputationError::NonFiniteValue(name))
-    }
+) -> Result<f64, SimilarityComputationError> {
+    checked_to_f64(value, name).map_err(|error| match error {
+        NumericValidationError::NonRepresentable(name) => {
+            SimilarityComputationError::ValueNotRepresentable(name)
+        }
+        NumericValidationError::NonFinite(name) => SimilarityComputationError::NonFiniteValue(name),
+    })
+}
+
+#[inline]
+fn to_f64_checked_for_config<T: ToPrimitive>(
+    value: T,
+    name: &'static str,
+) -> Result<f64, SimilarityConfigError> {
+    checked_to_f64(value, name).map_err(|error| match error {
+        NumericValidationError::NonRepresentable(name) => {
+            SimilarityConfigError::NonRepresentableParameter(name)
+        }
+        NumericValidationError::NonFinite(name) => SimilarityConfigError::NonFiniteParameter(name),
+    })
 }
 
 pub(crate) fn prepare_peak_products<EXP, S>(
@@ -163,12 +178,7 @@ where
 
     for (mz, intensity) in spectrum.peaks() {
         let score = mz.pow(mz_power) * intensity.pow(intensity_power);
-        let Some(score_f64) = score.to_f64() else {
-            return Err(SimilarityComputationError::ValueNotRepresentable(
-                "peak_product",
-            ));
-        };
-        ensure_finite_f64(score_f64, "peak_product")?;
+        let score_f64 = to_f64_checked_for_computation(score, "peak_product")?;
 
         products.push(score);
         as_f64.push(score_f64);
@@ -176,15 +186,9 @@ where
     }
 
     let norm = squared_sum.sqrt();
-    let Some(norm_f64) = norm.to_f64() else {
-        return Err(SimilarityComputationError::ValueNotRepresentable(
-            "peak_norm",
-        ));
-    };
-    ensure_finite_f64(norm_f64, "peak_norm")?;
+    let _ = to_f64_checked_for_computation(norm, "peak_norm")?;
 
     let max_f64 = as_f64.iter().copied().fold(0.0_f64, f64::max);
-    ensure_finite_f64(max_f64, "peak_product_max")?;
 
     Ok(PreparedPeaks {
         products,
@@ -224,25 +228,15 @@ where
     MZ: Float + Number + Finite + TotalOrd + ToPrimitive,
 {
     let denominator = left_norm * right_norm;
-    let Some(denominator_f64) = denominator.to_f64() else {
-        return Err(SimilarityComputationError::ValueNotRepresentable(
-            "similarity_denominator",
-        ));
-    };
-    ensure_finite_f64(denominator_f64, "similarity_denominator")?;
+    let denominator_f64 = to_f64_checked_for_computation(denominator, "similarity_denominator")?;
     if denominator_f64 == 0.0 {
         return Ok((MZ::zero(), 0));
     }
 
     let similarity = score_sum / denominator;
-    let Some(similarity_f64) = similarity.to_f64() else {
-        return Err(SimilarityComputationError::ValueNotRepresentable(
-            "similarity_score",
-        ));
-    };
-    ensure_finite_f64(similarity_f64, "similarity_score")?;
+    let similarity_f64 = to_f64_checked_for_computation(similarity, "similarity_score")?;
 
-    if similarity > MZ::one() {
+    if similarity_f64 > 1.0 {
         Ok((MZ::one(), n_matches))
     } else {
         Ok((similarity, n_matches))
@@ -256,8 +250,14 @@ where
     MZ: Float + Number + Finite + TotalOrd + ToPrimitive,
     R: MultiRanged<Step = u32>,
 {
-    ensure_finite_f64(inputs.max_row, "row_peak_product_max")?;
-    ensure_finite_f64(inputs.max_col, "col_peak_product_max")?;
+    for &value in inputs.row_f64 {
+        let _ = to_f64_checked_for_computation(value, "row_peak_product_f64")?;
+    }
+    for &value in inputs.col_f64 {
+        let _ = to_f64_checked_for_computation(value, "col_peak_product_f64")?;
+    }
+    let _ = to_f64_checked_for_computation(inputs.max_row, "max_row_peak_product_f64")?;
+    let _ = to_f64_checked_for_computation(inputs.max_col, "max_col_peak_product_f64")?;
 
     let map: GenericImplicitValuedMatrix2D<RangedCSR2D<u32, u32, R>, _, f64> =
         GenericImplicitValuedMatrix2D::new(inputs.matching, |(i, j)| {
@@ -294,12 +294,12 @@ where
     }
 
     // Collect all candidate edges with their weights (descending sort).
-    let mut candidates: Vec<(f64, u32, u32)> = SparseMatrix::sparse_coordinates(&inputs.matching)
-        .map(|(i, j)| {
-            let weight = inputs.row_f64[i as usize] * inputs.col_f64[j as usize];
-            (weight, i, j)
-        })
-        .collect();
+    let mut candidates: Vec<(f64, u32, u32)> = Vec::new();
+    for (i, j) in SparseMatrix::sparse_coordinates(&inputs.matching) {
+        let weight = inputs.row_f64[i as usize] * inputs.col_f64[j as usize];
+        let _ = to_f64_checked_for_computation(weight, "candidate_weight")?;
+        candidates.push((weight, i, j));
+    }
 
     candidates.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
 
@@ -324,6 +324,64 @@ where
     finalize_similarity_score(score_sum, n_matches, inputs.left_norm, inputs.right_norm)
 }
 
+fn compute_cosine_similarity_with_scoring<EXP, S1, S2, R, ForwardMatch, ReverseMatch, ScoreFn>(
+    left: &S1,
+    right: &S2,
+    mz_power: EXP,
+    intensity_power: EXP,
+    forward_match: ForwardMatch,
+    reverse_match: ReverseMatch,
+    score_fn: ScoreFn,
+) -> Result<(S1::Mz, usize), SimilarityComputationError>
+where
+    EXP: Number,
+    S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
+    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
+    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
+    R: MultiRanged<Step = u32>,
+    ForwardMatch: FnOnce(&S1, &S2) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
+    ReverseMatch: FnOnce(&S2, &S1) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
+    ScoreFn: Fn(
+            MatchingScoreInputs<'_, S1::Mz, R>,
+        ) -> Result<(S1::Mz, usize), SimilarityComputationError>
+        + Copy,
+{
+    let left_peaks = prepare_peak_products(left, mz_power, intensity_power)?;
+    let right_peaks = prepare_peak_products(right, mz_power, intensity_power)?;
+
+    if left_peaks.max_f64 == 0.0 || right_peaks.max_f64 == 0.0 {
+        return Ok((S1::Mz::zero(), 0));
+    }
+
+    if left.len() <= right.len() {
+        let matching = forward_match(left, right)?;
+        score_fn(MatchingScoreInputs {
+            matching,
+            row_f64: &left_peaks.as_f64,
+            col_f64: &right_peaks.as_f64,
+            row_products: &left_peaks.products,
+            col_products: &right_peaks.products,
+            max_row: left_peaks.max_f64,
+            max_col: right_peaks.max_f64,
+            left_norm: left_peaks.norm,
+            right_norm: right_peaks.norm,
+        })
+    } else {
+        let matching = reverse_match(right, left)?;
+        score_fn(MatchingScoreInputs {
+            matching,
+            row_f64: &right_peaks.as_f64,
+            col_f64: &left_peaks.as_f64,
+            row_products: &right_peaks.products,
+            col_products: &left_peaks.products,
+            max_row: right_peaks.max_f64,
+            max_col: left_peaks.max_f64,
+            left_norm: left_peaks.norm,
+            right_norm: right_peaks.norm,
+        })
+    }
+}
+
 pub(crate) fn compute_cosine_similarity<EXP, S1, S2, R, ForwardMatch, ReverseMatch>(
     left: &S1,
     right: &S2,
@@ -341,40 +399,15 @@ where
     ForwardMatch: FnOnce(&S1, &S2) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
     ReverseMatch: FnOnce(&S2, &S1) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
 {
-    let left_peaks = prepare_peak_products(left, mz_power, intensity_power)?;
-    let right_peaks = prepare_peak_products(right, mz_power, intensity_power)?;
-
-    if left_peaks.max_f64 == 0.0 || right_peaks.max_f64 == 0.0 {
-        return Ok((S1::Mz::zero(), 0));
-    }
-
-    if left.len() <= right.len() {
-        let matching = forward_match(left, right)?;
-        score_from_matching(MatchingScoreInputs {
-            matching,
-            row_f64: &left_peaks.as_f64,
-            col_f64: &right_peaks.as_f64,
-            row_products: &left_peaks.products,
-            col_products: &right_peaks.products,
-            max_row: left_peaks.max_f64,
-            max_col: right_peaks.max_f64,
-            left_norm: left_peaks.norm,
-            right_norm: right_peaks.norm,
-        })
-    } else {
-        let matching = reverse_match(right, left)?;
-        score_from_matching(MatchingScoreInputs {
-            matching,
-            row_f64: &right_peaks.as_f64,
-            col_f64: &left_peaks.as_f64,
-            row_products: &right_peaks.products,
-            col_products: &left_peaks.products,
-            max_row: right_peaks.max_f64,
-            max_col: left_peaks.max_f64,
-            left_norm: left_peaks.norm,
-            right_norm: right_peaks.norm,
-        })
-    }
+    compute_cosine_similarity_with_scoring(
+        left,
+        right,
+        mz_power,
+        intensity_power,
+        forward_match,
+        reverse_match,
+        score_from_matching,
+    )
 }
 
 pub(crate) fn compute_cosine_similarity_greedy<EXP, S1, S2, R, ForwardMatch, ReverseMatch>(
@@ -394,52 +427,31 @@ where
     ForwardMatch: FnOnce(&S1, &S2) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
     ReverseMatch: FnOnce(&S2, &S1) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
 {
-    let left_peaks = prepare_peak_products(left, mz_power, intensity_power)?;
-    let right_peaks = prepare_peak_products(right, mz_power, intensity_power)?;
+    compute_cosine_similarity_with_scoring(
+        left,
+        right,
+        mz_power,
+        intensity_power,
+        forward_match,
+        reverse_match,
+        score_from_matching_greedy,
+    )
+}
 
-    if left_peaks.max_f64 == 0.0 || right_peaks.max_f64 == 0.0 {
-        return Ok((S1::Mz::zero(), 0));
-    }
-
-    if left.len() <= right.len() {
-        let matching = forward_match(left, right)?;
-        score_from_matching_greedy(MatchingScoreInputs {
-            matching,
-            row_f64: &left_peaks.as_f64,
-            col_f64: &right_peaks.as_f64,
-            row_products: &left_peaks.products,
-            col_products: &right_peaks.products,
-            max_row: left_peaks.max_f64,
-            max_col: right_peaks.max_f64,
-            left_norm: left_peaks.norm,
-            right_norm: right_peaks.norm,
-        })
-    } else {
-        let matching = reverse_match(right, left)?;
-        score_from_matching_greedy(MatchingScoreInputs {
-            matching,
-            row_f64: &right_peaks.as_f64,
-            col_f64: &left_peaks.as_f64,
-            row_products: &right_peaks.products,
-            col_products: &left_peaks.products,
-            max_row: right_peaks.max_f64,
-            max_col: left_peaks.max_f64,
-            left_norm: left_peaks.norm,
-            right_norm: right_peaks.norm,
-        })
-    }
+#[inline]
+pub(crate) fn modified_precursor_shift_pair<MZ: Number>(
+    left_precursor: MZ,
+    right_precursor: MZ,
+) -> (MZ, MZ) {
+    let shift = left_precursor - right_precursor;
+    (shift, MZ::zero() - shift)
 }
 
 pub(crate) fn validate_numeric_parameter<T: ToPrimitive>(
     value: T,
     name: &'static str,
 ) -> Result<(), SimilarityConfigError> {
-    let Some(v) = value.to_f64() else {
-        return Err(SimilarityConfigError::NonRepresentableParameter(name));
-    };
-    if !v.is_finite() {
-        return Err(SimilarityConfigError::NonFiniteParameter(name));
-    }
+    let _ = to_f64_checked_for_config(value, name)?;
     Ok(())
 }
 
