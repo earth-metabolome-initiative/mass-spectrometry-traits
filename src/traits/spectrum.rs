@@ -1,7 +1,8 @@
 //! Submodule defining a single Spectrum collection trait.
 
 use geometric_traits::prelude::*;
-use multi_ranged::SimpleRange;
+use multi_ranged::{BiRange, SimpleRange};
+use num_traits::Zero;
 
 use crate::prelude::Annotation;
 
@@ -123,6 +124,109 @@ pub trait Spectrum {
                     .expect("The peak matching graph should not contain duplicate edges.");
             }
             lowest_other_index = new_lowest;
+        }
+
+        matching_peaks
+    }
+
+    /// Returns the matching peaks graph for modified cosine similarity.
+    ///
+    /// Two windows are used per left peak: a direct window (same as
+    /// `matching_peaks`) and a shifted window offset by `mz_shift`
+    /// (`precursor_mz_self - precursor_mz_other`). This captures both
+    /// direct matches and neutral-loss-related correspondences.
+    ///
+    /// # Arguments
+    ///
+    /// * `other`: The other Spectrum.
+    /// * `mz_tolerance`: The mass over charge tolerance.
+    /// * `mz_shift`: The precursor mass difference (`self - other`).
+    fn modified_matching_peaks<S: Spectrum<Mz = Self::Mz>>(
+        &self,
+        other: &S,
+        mz_tolerance: Self::Mz,
+        mz_shift: Self::Mz,
+    ) -> RangedCSR2D<u32, u16, BiRange<u16>> {
+        let mut matching_peaks: RangedCSR2D<u32, u16, BiRange<u16>> = RangedCSR2D::default();
+        let mut lowest_direct = 0usize;
+        let mut lowest_shifted = 0usize;
+
+        for (i, mz) in self.mz().enumerate() {
+            // The shifted window centre: we look for right peaks near
+            // mz - shift, i.e. mz2 ∈ [mz - shift - tol, mz - shift + tol].
+            let shifted_centre = mz - mz_shift;
+
+            // Determine which window centre is lower so we insert column
+            // indices in ascending order (required by BiRange).
+            let (first_centre, first_lowest, second_centre, second_lowest, first_is_direct) =
+                if mz <= shifted_centre {
+                    (mz, &mut lowest_direct, shifted_centre, &mut lowest_shifted, true)
+                } else {
+                    (shifted_centre, &mut lowest_shifted, mz, &mut lowest_direct, false)
+                };
+
+            // --- First (lower-centre) window ---
+            let mut new_first_lowest = *first_lowest;
+            for (j, other_mz) in other
+                .mz_from(*first_lowest)
+                .enumerate()
+                .map(|(j, mz)| (j + *first_lowest, mz))
+            {
+                if other_mz > first_centre + mz_tolerance {
+                    break;
+                }
+                if other_mz < first_centre - mz_tolerance {
+                    new_first_lowest = j + 1;
+                    continue;
+                }
+                // For the shifted match, compute the difference as
+                // (mz - other_mz) - shift rather than (mz - shift) - other_mz
+                // so that swapping both spectra and negating the shift
+                // produces bit-identical results (avoids f32 rounding
+                // asymmetry at the tolerance boundary).
+                if !first_is_direct {
+                    let shifted_diff = mz - other_mz - mz_shift;
+                    if shifted_diff < Self::Mz::zero() - mz_tolerance
+                        || shifted_diff > mz_tolerance
+                    {
+                        continue;
+                    }
+                }
+                MatrixMut::add(&mut matching_peaks, (i as u16, j as u16))
+                    .expect("Duplicate edge in first window");
+            }
+            *first_lowest = new_first_lowest;
+
+            // --- Second (higher-centre) window ---
+            // Silently ignore duplicates: when |shift| < 2*tol the two
+            // windows overlap and the same column index may already have
+            // been inserted by the first window.
+            let mut new_second_lowest = *second_lowest;
+            for (j, other_mz) in other
+                .mz_from(*second_lowest)
+                .enumerate()
+                .map(|(j, mz)| (j + *second_lowest, mz))
+            {
+                if other_mz > second_centre + mz_tolerance {
+                    break;
+                }
+                if other_mz < second_centre - mz_tolerance {
+                    new_second_lowest = j + 1;
+                    continue;
+                }
+                // Use symmetric shifted-difference form when this is the
+                // shifted window (see comment in first window above).
+                if first_is_direct {
+                    let shifted_diff = mz - other_mz - mz_shift;
+                    if shifted_diff < Self::Mz::zero() - mz_tolerance
+                        || shifted_diff > mz_tolerance
+                    {
+                        continue;
+                    }
+                }
+                let _ = MatrixMut::add(&mut matching_peaks, (i as u16, j as u16));
+            }
+            *second_lowest = new_second_lowest;
         }
 
         matching_peaks
