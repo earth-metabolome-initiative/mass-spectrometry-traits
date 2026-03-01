@@ -1,7 +1,9 @@
 //! Regression tests for `GreedySharedPeaks`.
 
 use mass_spectrometry::prelude::{GenericSpectrum, SpectrumAlloc, SpectrumMut};
-use mass_spectrometry::structs::iterators::shared_peaks::GreedySharedPeaksBuilder;
+use mass_spectrometry::structs::iterators::shared_peaks::{
+    GreedySharedPeaksBuilder, GreedySharedPeaksBuilderError,
+};
 
 fn spectrum_from_peaks(precursor_mz: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f32> {
     let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, peaks.len());
@@ -30,8 +32,8 @@ fn shifted_progression_matches_all_pairs() {
         .collect::<Vec<_>>();
 
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].0.0, 140.0);
-    assert_eq!(matches[0].1.0, 200.0);
+    assert_eq!(matches[0].0 .0, 140.0);
+    assert_eq!(matches[0].1 .0, 200.0);
 }
 
 #[test]
@@ -49,8 +51,8 @@ fn includes_exact_tolerance_boundary() {
         .collect::<Vec<_>>();
 
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].0.0, 100.0);
-    assert_eq!(matches[0].1.0, 100.1);
+    assert_eq!(matches[0].0 .0, 100.0);
+    assert_eq!(matches[0].1 .0, 100.1);
 }
 
 #[test]
@@ -99,4 +101,117 @@ fn unsigned_mz_shift_addition_does_not_overflow() {
 
     assert!(result.is_ok(), "shared peaks iteration panicked");
     assert_eq!(result.expect("catch_unwind succeeded"), 0);
+}
+
+#[test]
+fn rejects_nan_tolerance() {
+    let left = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+    let right = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+
+    let error = GreedySharedPeaksBuilder::default()
+        .left(&left)
+        .right(&right)
+        .tolerance(f32::NAN)
+        .right_shift(0.0)
+        .build();
+    let error = match error {
+        Ok(_) => panic!("NaN tolerance should be rejected"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        GreedySharedPeaksBuilderError::NonFiniteValue("tolerance")
+    );
+}
+
+#[test]
+fn rejects_non_finite_right_shift() {
+    let left = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+    let right = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+
+    let error = GreedySharedPeaksBuilder::default()
+        .left(&left)
+        .right(&right)
+        .tolerance(0.1)
+        .right_shift(f32::INFINITY)
+        .build();
+    let error = match error {
+        Ok(_) => panic!("non-finite shift should be rejected"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        GreedySharedPeaksBuilderError::NonFiniteValue("right_shift")
+    );
+}
+
+#[test]
+fn rejects_non_finite_left_peak_mz() {
+    let left = spectrum_from_peaks(100.0, &[(f32::INFINITY, 1.0)]);
+    let right = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+
+    let error = GreedySharedPeaksBuilder::default()
+        .left(&left)
+        .right(&right)
+        .tolerance(0.1)
+        .right_shift(0.0)
+        .build();
+    let error = match error {
+        Ok(_) => panic!("non-finite left mz should be rejected"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        GreedySharedPeaksBuilderError::NonFiniteValue("left_mz")
+    );
+}
+
+#[test]
+fn rejects_non_finite_right_peak_mz() {
+    let left = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+    let right = spectrum_from_peaks(100.0, &[(f32::INFINITY, 1.0)]);
+
+    let error = GreedySharedPeaksBuilder::default()
+        .left(&left)
+        .right(&right)
+        .tolerance(0.1)
+        .right_shift(0.0)
+        .build();
+    let error = match error {
+        Ok(_) => panic!("non-finite right mz should be rejected"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        GreedySharedPeaksBuilderError::NonFiniteValue("right_mz")
+    );
+}
+
+#[test]
+fn rejects_shifted_right_mz_overflow_to_infinity() {
+    let mut left = GenericSpectrum::with_capacity(0.0_f64, 1);
+    left.add_peak(0.0_f64, 1.0_f64).expect("sorted");
+
+    let mut right = GenericSpectrum::with_capacity(0.0_f64, 1);
+    right.add_peak(f64::MAX, 1.0_f64).expect("sorted");
+
+    let error = GreedySharedPeaksBuilder::default()
+        .left(&left)
+        .right(&right)
+        .tolerance(0.1_f64)
+        .right_shift(f64::MAX)
+        .build();
+    let error = match error {
+        Ok(_) => panic!("shifted right mz overflow should be rejected"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error,
+        GreedySharedPeaksBuilderError::NonFiniteValue("shifted_right_mz")
+    );
 }
