@@ -136,6 +136,62 @@ macro_rules! impl_cosine_wrapper_config_api {
 
 pub(crate) use impl_cosine_wrapper_config_api;
 
+macro_rules! impl_cosine_wrapper_similarity {
+    (
+        $type_name:ident,
+        $compute_fn:path,
+        $mz_tolerance:ident,
+        $row:ident,
+        $col:ident,
+        $forward_match:expr,
+        $reverse_match:expr
+    ) => {
+        impl<EXP, S1, S2> geometric_traits::prelude::ScalarSimilarity<S1, S2>
+            for $type_name<EXP, S1::Mz>
+        where
+            EXP: geometric_traits::prelude::Number,
+            S1::Mz: num_traits::Pow<EXP, Output = S1::Mz>
+                + num_traits::Float
+                + geometric_traits::prelude::Number
+                + geometric_traits::prelude::Finite
+                + geometric_traits::prelude::TotalOrd
+                + num_traits::ToPrimitive,
+            S1: crate::traits::Spectrum<Intensity = <S1 as crate::traits::Spectrum>::Mz>,
+            S2: crate::traits::Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
+        {
+            type Similarity =
+                Result<(S1::Mz, usize), super::similarity_errors::SimilarityComputationError>;
+
+            fn similarity(&self, left: &S1, right: &S2) -> Self::Similarity {
+                let $mz_tolerance = self.config.mz_tolerance();
+                $compute_fn(
+                    left,
+                    right,
+                    self.config.mz_power(),
+                    self.config.intensity_power(),
+                    |$row, $col| $forward_match,
+                    |$row, $col| $reverse_match,
+                )
+            }
+        }
+
+        impl<S1, S2, EXP> crate::traits::ScalarSpectralSimilarity<S1, S2>
+            for $type_name<EXP, S1::Mz>
+        where
+            EXP: geometric_traits::prelude::Number,
+            S1::Mz: num_traits::Pow<EXP, Output = S1::Mz>
+                + num_traits::Float
+                + geometric_traits::prelude::Finite
+                + geometric_traits::prelude::TotalOrd,
+            S1: crate::traits::Spectrum<Intensity = <S1 as crate::traits::Spectrum>::Mz>,
+            S2: crate::traits::Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
+        {
+        }
+    };
+}
+
+pub(crate) use impl_cosine_wrapper_similarity;
+
 #[inline]
 fn to_f64_checked_for_computation<T: ToPrimitive>(
     value: T,
@@ -436,15 +492,6 @@ where
         reverse_match,
         score_from_matching_greedy,
     )
-}
-
-#[inline]
-pub(crate) fn modified_precursor_shift_pair<MZ: Number>(
-    left_precursor: MZ,
-    right_precursor: MZ,
-) -> (MZ, MZ) {
-    let shift = left_precursor - right_precursor;
-    (shift, MZ::zero() - shift)
 }
 
 pub(crate) fn validate_numeric_parameter<T: ToPrimitive>(

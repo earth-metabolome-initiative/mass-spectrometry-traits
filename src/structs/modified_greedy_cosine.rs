@@ -4,15 +4,7 @@
 //! shifted by the precursor mass difference. This matches the matchms
 //! `ModifiedCosine` algorithm.
 
-use geometric_traits::prelude::{Finite, Number, ScalarSimilarity, TotalOrd};
-use multi_ranged::BiRange;
-use num_traits::{Float, Pow, ToPrimitive};
-
-use super::cosine_common::{
-    compute_cosine_similarity_greedy, impl_cosine_wrapper_config_api, modified_precursor_shift_pair,
-};
-use super::similarity_errors::SimilarityComputationError;
-use crate::traits::{ScalarSpectralSimilarity, Spectrum};
+use super::cosine_common::{impl_cosine_wrapper_config_api, impl_cosine_wrapper_similarity};
 
 /// Modified greedy cosine similarity for mass spectra.
 ///
@@ -29,35 +21,22 @@ impl_cosine_wrapper_config_api!(
     "Returns the tolerance for the mass/charge ratio."
 );
 
-impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for ModifiedGreedyCosine<EXP, S1::Mz>
-where
-    EXP: Number,
-    S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
-    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
-{
-    type Similarity = Result<(S1::Mz, usize), SimilarityComputationError>;
-
-    fn similarity(&self, left: &S1, right: &S2) -> Self::Similarity {
-        let (shift, negated_shift) =
-            modified_precursor_shift_pair(left.precursor_mz(), right.precursor_mz());
-
-        compute_cosine_similarity_greedy::<_, _, _, BiRange<u32>, _, _>(
-            left,
-            right,
-            self.config.mz_power(),
-            self.config.intensity_power(),
-            |row, col| row.modified_matching_peaks(col, self.config.mz_tolerance(), shift),
-            |row, col| row.modified_matching_peaks(col, self.config.mz_tolerance(), negated_shift),
-        )
-    }
-}
-
-impl<S1, S2, EXP> ScalarSpectralSimilarity<S1, S2> for ModifiedGreedyCosine<EXP, S1::Mz>
-where
-    EXP: Number,
-    S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Finite + TotalOrd,
-    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
-    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
-{
-}
+impl_cosine_wrapper_similarity!(
+    ModifiedGreedyCosine,
+    super::cosine_common::compute_cosine_similarity_greedy,
+    mz_tolerance,
+    row,
+    col,
+    crate::traits::Spectrum::modified_matching_peaks(
+        row,
+        col,
+        mz_tolerance,
+        crate::traits::Spectrum::precursor_mz(row) - crate::traits::Spectrum::precursor_mz(col)
+    ),
+    crate::traits::Spectrum::modified_matching_peaks(
+        row,
+        col,
+        mz_tolerance,
+        crate::traits::Spectrum::precursor_mz(row) - crate::traits::Spectrum::precursor_mz(col)
+    )
+);
