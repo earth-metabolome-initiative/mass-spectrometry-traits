@@ -18,7 +18,7 @@ fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
     );
     assert_eq!(
         peaks,
-        spectrum.len() as u16,
+        spectrum.len(),
         "{name} self-similarity: expected {0} matches, got {peaks}",
         spectrum.len()
     );

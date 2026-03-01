@@ -27,7 +27,7 @@ fn assert_self_similarity(
         (1.0_f32 - sim).abs() < 1e-5,
         "{name} self-similarity: expected ~1.0, got {sim}"
     );
-    assert_eq!(peaks, spectrum.len() as u16);
+    assert_eq!(peaks, spectrum.len());
 }
 
 fn assert_cross(
@@ -36,7 +36,7 @@ fn assert_cross(
     b: &GenericSpectrum<f32, f32>,
     scorer: &EntropySimilarity<f32>,
     expected_sim: f32,
-    expected_matches: u16,
+    expected_matches: usize,
     tol: f32,
 ) {
     let (sim, peaks) = scorer.similarity(a, b);

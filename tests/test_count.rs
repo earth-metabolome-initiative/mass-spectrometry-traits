@@ -25,7 +25,7 @@ fn count_edges() {
     ];
 
     for (ln, left, rn, right) in &pairs {
-        let graph: RangedCSR2D<u32, u16, SimpleRange<u16>> = left.matching_peaks(*right, tol);
+        let graph: RangedCSR2D<u32, u32, SimpleRange<u32>> = left.matching_peaks(*right, tol);
         let n_left = left.len();
         let n_right = right.len();
         let n_rows = graph.number_of_rows() as usize;

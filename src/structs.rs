@@ -1,5 +1,6 @@
 //! Structures for mass spectrometry data.
 
+mod cosine_common;
 pub mod entropy_similarity;
 pub mod exact_cosine;
 pub mod generic_spectrum;

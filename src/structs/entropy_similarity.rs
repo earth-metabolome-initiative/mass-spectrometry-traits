@@ -106,7 +106,7 @@ where
     S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
     S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
 {
-    type Similarity = (S1::Mz, u16);
+    type Similarity = (S1::Mz, usize);
 
     fn similarity(&self, left: &S1, right: &S2) -> Self::Similarity {
         // Collect peaks into f64 arrays for precision.
@@ -150,7 +150,7 @@ where
         let mut i = 0usize;
         let mut j = 0usize;
         let mut score = 0.0f64;
-        let mut n_matches: u16 = 0;
+        let mut n_matches: usize = 0;
 
         while i < left_mz.len() && j < right_mz.len() {
             let diff = left_mz[i] - right_mz[j];

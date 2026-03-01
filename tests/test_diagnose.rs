@@ -32,7 +32,7 @@ fn diagnose_adenine_adenosine() {
     println!("left_norm={left_norm:.6e}, right_norm={right_norm:.6e}");
 
     // Build matching peaks graph
-    let graph: RangedCSR2D<u32, u16, SimpleRange<u16>> = left.matching_peaks(&right, tolerance);
+    let graph: RangedCSR2D<u32, u32, SimpleRange<u32>> = left.matching_peaks(&right, tolerance);
 
     // Promote to f64 for the cost matrix
     let left_f64: Vec<f64> = left_products.iter().map(|p| *p as f64).collect();
@@ -45,7 +45,7 @@ fn diagnose_adenine_adenosine() {
     // Print all edges with costs
     println!("\n=== Edges and costs ===");
     for i in 0..left.len() {
-        let row = i as u16;
+        let row = i as u32;
         for col in graph.sparse_row(row) {
             let j = col as usize;
             let norm_prod = (left_f64[i] / max_left) * (right_f64[j] / max_right);
@@ -58,7 +58,7 @@ fn diagnose_adenine_adenosine() {
     }
 
     // Build cost matrix and run LAPMOD
-    let map: GenericImplicitValuedMatrix2D<RangedCSR2D<u32, u16, SimpleRange<u16>>, _, f64> =
+    let map: GenericImplicitValuedMatrix2D<RangedCSR2D<u32, u32, SimpleRange<u32>>, _, f64> =
         GenericImplicitValuedMatrix2D::new(graph.clone(), |(i, j)| {
             1.0f64 + f64::EPSILON
                 - (left_f64[i as usize] / max_left) * (right_f64[j as usize] / max_right)
@@ -72,7 +72,7 @@ fn diagnose_adenine_adenosine() {
     println!("padding_cost={padding_cost:.15e}");
     println!("max_cost={max_cost:.15e}");
 
-    let matching: Vec<(u16, u16)> = map.jaqaman(padding_cost, max_cost).expect("LAPMOD failed");
+    let matching: Vec<(u32, u32)> = map.jaqaman(padding_cost, max_cost).expect("LAPMOD failed");
 
     println!("\n=== LAPMOD assignment ===");
     let mut total_product: f64 = 0.0;

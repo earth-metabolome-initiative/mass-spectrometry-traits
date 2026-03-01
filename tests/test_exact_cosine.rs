@@ -20,7 +20,7 @@ fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
         (1.0_f32 - sim).abs() < 1e-6,
         "{name} self-similarity: expected ~1.0, got {sim}"
     );
-    assert_eq!(peaks, spectrum.len() as u16);
+    assert_eq!(peaks, spectrum.len());
 }
 
 // ---------- self-similarity (score must be ~1.0, matches = #peaks) ----------

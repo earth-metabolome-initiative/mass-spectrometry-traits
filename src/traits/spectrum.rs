@@ -96,7 +96,7 @@ pub trait Spectrum {
         &self,
         other: &S,
         mz_tolerance: Self::Mz,
-    ) -> RangedCSR2D<u32, u16, SimpleRange<u16>> {
+    ) -> RangedCSR2D<u32, u32, SimpleRange<u32>> {
         let mut matching_peaks = RangedCSR2D::default();
         let mut lowest_other_index = 0;
         for (i, mz) in self.mz().enumerate() {
@@ -120,7 +120,9 @@ pub trait Spectrum {
                     new_lowest = j + 1;
                     continue;
                 }
-                MatrixMut::add(&mut matching_peaks, (i as u16, j as u16))
+                let row = u32::try_from(i).expect("Too many peaks for u32 row index");
+                let col = u32::try_from(j).expect("Too many peaks for u32 column index");
+                MatrixMut::add(&mut matching_peaks, (row, col))
                     .expect("The peak matching graph should not contain duplicate edges.");
             }
             lowest_other_index = new_lowest;
@@ -146,8 +148,8 @@ pub trait Spectrum {
         other: &S,
         mz_tolerance: Self::Mz,
         mz_shift: Self::Mz,
-    ) -> RangedCSR2D<u32, u16, BiRange<u16>> {
-        let mut matching_peaks: RangedCSR2D<u32, u16, BiRange<u16>> = RangedCSR2D::default();
+    ) -> RangedCSR2D<u32, u32, BiRange<u32>> {
+        let mut matching_peaks: RangedCSR2D<u32, u32, BiRange<u32>> = RangedCSR2D::default();
         let mut lowest_direct = 0usize;
         let mut lowest_shifted = 0usize;
 
@@ -203,7 +205,9 @@ pub trait Spectrum {
                         continue;
                     }
                 }
-                MatrixMut::add(&mut matching_peaks, (i as u16, j as u16))
+                let row = u32::try_from(i).expect("Too many peaks for u32 row index");
+                let col = u32::try_from(j).expect("Too many peaks for u32 column index");
+                MatrixMut::add(&mut matching_peaks, (row, col))
                     .expect("Duplicate edge in first window");
             }
             *first_lowest = new_first_lowest;
@@ -234,7 +238,9 @@ pub trait Spectrum {
                         continue;
                     }
                 }
-                let _ = MatrixMut::add(&mut matching_peaks, (i as u16, j as u16));
+                let row = u32::try_from(i).expect("Too many peaks for u32 row index");
+                let col = u32::try_from(j).expect("Too many peaks for u32 column index");
+                let _ = MatrixMut::add(&mut matching_peaks, (row, col));
             }
             *second_lowest = new_second_lowest;
         }
