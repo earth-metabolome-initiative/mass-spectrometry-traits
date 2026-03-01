@@ -1,0 +1,123 @@
+use std::hint::black_box;
+
+use criterion::{BenchmarkGroup, Criterion, measurement::WallTime};
+use mass_spectrometry::prelude::{
+    EpimeloscineSpectrum, GenericSpectrum, HydroxyCholesterolSpectrum, SalicinSpectrum,
+    ScalarSimilarity, SimilarityComputationError,
+};
+
+pub type BenchSpectrum = GenericSpectrum<f64, f64>;
+
+type SimilarityResult = Result<(f64, usize), SimilarityComputationError>;
+
+pub struct BenchmarkSpectra {
+    pub salicin: BenchSpectrum,
+    pub hydroxy_cholesterol: BenchSpectrum,
+    pub epimeloscine: BenchSpectrum,
+}
+
+pub fn benchmark_spectra() -> BenchmarkSpectra {
+    BenchmarkSpectra {
+        salicin: GenericSpectrum::salicin(),
+        hydroxy_cholesterol: GenericSpectrum::hydroxy_cholesterol(),
+        epimeloscine: GenericSpectrum::epimeloscine(),
+    }
+}
+
+pub fn bench_standard_pairs<S>(
+    c: &mut Criterion,
+    prefix: &str,
+    spectra: &BenchmarkSpectra,
+    scorer: &S,
+) where
+    S: ScalarSimilarity<BenchSpectrum, BenchSpectrum, Similarity = SimilarityResult>,
+{
+    bench_case(
+        c,
+        format!("{prefix}_hydroxy_cholesterol_salicin"),
+        &spectra.hydroxy_cholesterol,
+        &spectra.salicin,
+        scorer,
+    );
+    bench_case(
+        c,
+        format!("{prefix}_hydroxy_cholesterol_hydroxy_cholesterol"),
+        &spectra.hydroxy_cholesterol,
+        &spectra.hydroxy_cholesterol,
+        scorer,
+    );
+    bench_case(
+        c,
+        format!("{prefix}_salicin_salicin"),
+        &spectra.salicin,
+        &spectra.salicin,
+        scorer,
+    );
+}
+
+pub fn bench_epimeloscine_pairs<S>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    prefix: &str,
+    spectra: &BenchmarkSpectra,
+    scorer: &S,
+) where
+    S: ScalarSimilarity<BenchSpectrum, BenchSpectrum, Similarity = SimilarityResult>,
+{
+    bench_group_case(
+        group,
+        format!("{prefix}_salicin_epimeloscine"),
+        &spectra.salicin,
+        &spectra.epimeloscine,
+        scorer,
+    );
+    bench_group_case(
+        group,
+        format!("{prefix}_hydroxy_cholesterol_epimeloscine"),
+        &spectra.hydroxy_cholesterol,
+        &spectra.epimeloscine,
+        scorer,
+    );
+    bench_group_case(
+        group,
+        format!("{prefix}_epimeloscine_epimeloscine"),
+        &spectra.epimeloscine,
+        &spectra.epimeloscine,
+        scorer,
+    );
+}
+
+fn bench_case<S>(
+    c: &mut Criterion,
+    name: String,
+    left: &BenchSpectrum,
+    right: &BenchSpectrum,
+    scorer: &S,
+) where
+    S: ScalarSimilarity<BenchSpectrum, BenchSpectrum, Similarity = SimilarityResult>,
+{
+    c.bench_function(&name, |b| {
+        b.iter(|| {
+            scorer
+                .similarity(black_box(left), black_box(right))
+                .expect("similarity computation should succeed")
+        })
+    });
+}
+
+fn bench_group_case<S>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    name: String,
+    left: &BenchSpectrum,
+    right: &BenchSpectrum,
+    scorer: &S,
+) where
+    S: ScalarSimilarity<BenchSpectrum, BenchSpectrum, Similarity = SimilarityResult>,
+{
+    group.bench_function(&name, |b| {
+        b.iter(|| {
+            scorer
+                .similarity(black_box(left), black_box(right))
+                .expect("similarity computation should succeed")
+        })
+    });
+}
