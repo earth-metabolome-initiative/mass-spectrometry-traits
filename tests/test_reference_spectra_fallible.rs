@@ -1,6 +1,8 @@
 use core::fmt;
 
-use mass_spectrometry::prelude::{AdenineSpectrum, GenericSpectrum, Spectrum, SpectrumAlloc, SpectrumMut};
+use mass_spectrometry::prelude::{
+    AdenineSpectrum, GenericSpectrum, Spectrum, SpectrumAlloc, SpectrumMut,
+};
 
 #[derive(Debug, Clone, Copy)]
 struct AlwaysErr;
@@ -93,7 +95,10 @@ impl SpectrumAlloc for FailingSpectrum {
 #[test]
 fn reference_constructor_returns_err_for_failing_spectrum_mutation() {
     let result = FailingSpectrum::adenine();
-    assert!(result.is_err(), "expected failing constructor to return Err");
+    assert!(
+        result.is_err(),
+        "expected failing constructor to return Err"
+    );
 }
 
 #[test]

@@ -32,8 +32,8 @@ fn shifted_progression_matches_all_pairs() {
         .collect::<Vec<_>>();
 
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].0 .0, 140.0);
-    assert_eq!(matches[0].1 .0, 200.0);
+    assert_eq!(matches[0].0.0, 140.0);
+    assert_eq!(matches[0].1.0, 200.0);
 }
 
 #[test]
@@ -51,8 +51,8 @@ fn includes_exact_tolerance_boundary() {
         .collect::<Vec<_>>();
 
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].0 .0, 100.0);
-    assert_eq!(matches[0].1 .0, 100.1);
+    assert_eq!(matches[0].0.0, 100.0);
+    assert_eq!(matches[0].1.0, 100.1);
 }
 
 #[test]

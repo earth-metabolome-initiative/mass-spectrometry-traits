@@ -29,17 +29,26 @@ fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
 
 #[test]
 fn self_similarity_cocaine() {
-    assert_self_similarity("cocaine", &GenericSpectrum::cocaine().expect("reference spectrum should build"));
+    assert_self_similarity(
+        "cocaine",
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+    );
 }
 
 #[test]
 fn self_similarity_glucose() {
-    assert_self_similarity("glucose", &GenericSpectrum::glucose().expect("reference spectrum should build"));
+    assert_self_similarity(
+        "glucose",
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+    );
 }
 
 #[test]
 fn self_similarity_aspirin() {
-    assert_self_similarity("aspirin", &GenericSpectrum::aspirin().expect("reference spectrum should build"));
+    assert_self_similarity(
+        "aspirin",
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+    );
 }
 
 #[test]
@@ -52,12 +61,18 @@ fn self_similarity_hydroxy_cholesterol() {
 
 #[test]
 fn self_similarity_salicin() {
-    assert_self_similarity("salicin", &GenericSpectrum::salicin().expect("reference spectrum should build"));
+    assert_self_similarity(
+        "salicin",
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
+    );
 }
 
 #[test]
 fn self_similarity_phenylalanine() {
-    assert_self_similarity("phenylalanine", &GenericSpectrum::phenylalanine().expect("reference spectrum should build"));
+    assert_self_similarity(
+        "phenylalanine",
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
+    );
 }
 
 // ---------- cross-similarity (matchms CosineHungarian reference) ----------

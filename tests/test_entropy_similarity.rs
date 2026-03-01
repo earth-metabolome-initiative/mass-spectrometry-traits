@@ -75,17 +75,29 @@ fn assert_symmetry(
 
 #[test]
 fn weighted_self_cocaine() {
-    assert_self_similarity("cocaine", &GenericSpectrum::cocaine().expect("reference spectrum should build"), &weighted());
+    assert_self_similarity(
+        "cocaine",
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &weighted(),
+    );
 }
 
 #[test]
 fn weighted_self_glucose() {
-    assert_self_similarity("glucose", &GenericSpectrum::glucose().expect("reference spectrum should build"), &weighted());
+    assert_self_similarity(
+        "glucose",
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+        &weighted(),
+    );
 }
 
 #[test]
 fn weighted_self_aspirin() {
-    assert_self_similarity("aspirin", &GenericSpectrum::aspirin().expect("reference spectrum should build"), &weighted());
+    assert_self_similarity(
+        "aspirin",
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+        &weighted(),
+    );
 }
 
 #[test]
@@ -99,7 +111,11 @@ fn weighted_self_hydroxy_cholesterol() {
 
 #[test]
 fn weighted_self_salicin() {
-    assert_self_similarity("salicin", &GenericSpectrum::salicin().expect("reference spectrum should build"), &weighted());
+    assert_self_similarity(
+        "salicin",
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
+        &weighted(),
+    );
 }
 
 #[test]
@@ -115,17 +131,29 @@ fn weighted_self_phenylalanine() {
 
 #[test]
 fn unweighted_self_cocaine() {
-    assert_self_similarity("cocaine", &GenericSpectrum::cocaine().expect("reference spectrum should build"), &unweighted());
+    assert_self_similarity(
+        "cocaine",
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &unweighted(),
+    );
 }
 
 #[test]
 fn unweighted_self_glucose() {
-    assert_self_similarity("glucose", &GenericSpectrum::glucose().expect("reference spectrum should build"), &unweighted());
+    assert_self_similarity(
+        "glucose",
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+        &unweighted(),
+    );
 }
 
 #[test]
 fn unweighted_self_aspirin() {
-    assert_self_similarity("aspirin", &GenericSpectrum::aspirin().expect("reference spectrum should build"), &unweighted());
+    assert_self_similarity(
+        "aspirin",
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+        &unweighted(),
+    );
 }
 
 #[test]
@@ -139,7 +167,11 @@ fn unweighted_self_hydroxy_cholesterol() {
 
 #[test]
 fn unweighted_self_salicin() {
-    assert_self_similarity("salicin", &GenericSpectrum::salicin().expect("reference spectrum should build"), &unweighted());
+    assert_self_similarity(
+        "salicin",
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
+        &unweighted(),
+    );
 }
 
 #[test]
