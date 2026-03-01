@@ -19,7 +19,7 @@ pub trait SpectrumMut: Spectrum {
 }
 
 /// Trait for an allocable Spectrum.
-pub trait SpectrumAlloc: SpectrumMut {
+pub trait SpectrumAlloc: SpectrumMut + Sized {
     /// Create a new Spectrum with a given capacity.
     ///
     /// # Arguments
@@ -28,6 +28,6 @@ pub trait SpectrumAlloc: SpectrumMut {
     /// * `capacity`: The capacity of the Spectrum.
     ///
     /// Implementations are expected to enforce constructor-time invariants for
-    /// `precursor_mz`.
-    fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Self;
+    /// `precursor_mz`, returning an error when the value is invalid.
+    fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Result<Self, Self::MutationError>;
 }

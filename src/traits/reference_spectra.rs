@@ -9,7 +9,7 @@ macro_rules! impl_reference_spectrum {
             S::Intensity: From<f32>,
         {
             fn $method_name() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError> {
-                let mut spectrum = Self::with_capacity($precursor.into(), $mz.len());
+                let mut spectrum = Self::with_capacity($precursor.into(), $mz.len())?;
                 for (&mz, &intensity) in $mz.iter().zip($intensities.iter()) {
                     spectrum.add_peak(mz.into(), intensity.into())?;
                 }

@@ -6,7 +6,8 @@ use mass_spectrometry::prelude::{
 };
 
 fn one_peak_spectrum(mz: f32, precursor_mz: f32) -> GenericSpectrum<f32, f32> {
-    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, 1);
+    let mut spectrum =
+        GenericSpectrum::with_capacity(precursor_mz, 1).expect("valid spectrum allocation");
     spectrum
         .add_peak(mz, 1.0)
         .expect("single-peak spectrum must stay sorted");

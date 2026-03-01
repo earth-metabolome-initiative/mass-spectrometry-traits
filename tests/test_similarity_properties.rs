@@ -10,7 +10,8 @@ fn build_spectrum(precursor_mz: f32, peaks: Vec<(f32, f32)>) -> GenericSpectrum<
     let mut peaks = peaks;
     peaks.sort_by(|a, b| a.0.total_cmp(&b.0));
 
-    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz.max(0.001), peaks.len());
+    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz.max(0.001), peaks.len())
+        .expect("valid spectrum allocation");
     let mut last_mz: Option<f32> = None;
 
     for (mz_raw, intensity_raw) in peaks {

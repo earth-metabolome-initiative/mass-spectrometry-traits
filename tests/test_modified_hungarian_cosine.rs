@@ -210,11 +210,11 @@ fn symmetry_hydroxy_cholesterol_phenylalanine() {
 /// With HungarianCosine, only 1 match (mz=50). With ModifiedHungarianCosine, 2 matches.
 #[test]
 fn synthetic_shifted_match() {
-    let mut a = GenericSpectrum::with_capacity(100.0_f32, 2);
+    let mut a = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
     a.add_peak(50.0, 1000.0).unwrap();
     a.add_peak(80.0, 500.0).unwrap();
 
-    let mut b = GenericSpectrum::with_capacity(110.0_f32, 2);
+    let mut b = GenericSpectrum::with_capacity(110.0_f32, 2).expect("valid spectrum allocation");
     b.add_peak(50.0, 1000.0).unwrap();
     b.add_peak(90.0, 500.0).unwrap();
 
@@ -254,12 +254,12 @@ fn synthetic_shifted_match() {
 /// When |shift| < 2*tol, windows overlap. Ensure no panics from duplicates.
 #[test]
 fn synthetic_overlapping_windows() {
-    let mut a = GenericSpectrum::with_capacity(100.0_f32, 2);
+    let mut a = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
     a.add_peak(50.0, 1000.0).unwrap();
     a.add_peak(80.0, 500.0).unwrap();
 
     // shift = 100 - 100.05 = -0.05, which is less than 2*tol=0.2
-    let mut b = GenericSpectrum::with_capacity(100.05_f32, 2);
+    let mut b = GenericSpectrum::with_capacity(100.05_f32, 2).expect("valid spectrum allocation");
     b.add_peak(50.0, 1000.0).unwrap();
     b.add_peak(80.0, 500.0).unwrap();
 
@@ -278,10 +278,10 @@ fn synthetic_overlapping_windows() {
 /// Synthetic: no matches at all (peaks far apart, shift doesn't help).
 #[test]
 fn synthetic_no_matches() {
-    let mut a = GenericSpectrum::with_capacity(100.0_f32, 1);
+    let mut a = GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
     a.add_peak(50.0, 1000.0).unwrap();
 
-    let mut b = GenericSpectrum::with_capacity(200.0_f32, 1);
+    let mut b = GenericSpectrum::with_capacity(200.0_f32, 1).expect("valid spectrum allocation");
     b.add_peak(300.0, 1000.0).unwrap();
 
     let modified =
@@ -301,12 +301,12 @@ fn synthetic_no_matches() {
 /// by using spectra with identical precursor masses.
 #[test]
 fn exact_equivalence_same_precursor() {
-    let mut a = GenericSpectrum::with_capacity(100.0_f32, 3);
+    let mut a = GenericSpectrum::with_capacity(100.0_f32, 3).expect("valid spectrum allocation");
     a.add_peak(50.0, 1000.0).unwrap();
     a.add_peak(80.0, 500.0).unwrap();
     a.add_peak(120.0, 200.0).unwrap();
 
-    let mut b = GenericSpectrum::with_capacity(100.0_f32, 3);
+    let mut b = GenericSpectrum::with_capacity(100.0_f32, 3).expect("valid spectrum allocation");
     b.add_peak(50.05, 800.0).unwrap();
     b.add_peak(80.03, 600.0).unwrap();
     b.add_peak(150.0, 300.0).unwrap();

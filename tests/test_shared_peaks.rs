@@ -65,7 +65,8 @@ impl Spectrum for RawSpectrum {
 }
 
 fn spectrum_from_peaks(precursor_mz: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f32> {
-    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, peaks.len());
+    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, peaks.len())
+        .expect("valid spectrum allocation");
     for &(mz, intensity) in peaks {
         spectrum
             .add_peak(mz, intensity)
@@ -124,8 +125,10 @@ fn includes_exact_tolerance_boundary() {
 #[test]
 fn long_nonmatching_sequence_completes() {
     let n = 200_000usize;
-    let mut left = GenericSpectrum::with_capacity(1_000_000.0, n);
-    let mut right = GenericSpectrum::with_capacity(2_000_000.0, n);
+    let mut left =
+        GenericSpectrum::with_capacity(1_000_000.0, n).expect("valid spectrum allocation");
+    let mut right =
+        GenericSpectrum::with_capacity(2_000_000.0, n).expect("valid spectrum allocation");
 
     for i in 0..n {
         left.add_peak(i as f32, 1.0).expect("sorted");
@@ -148,10 +151,10 @@ fn long_nonmatching_sequence_completes() {
 
 #[test]
 fn unsigned_mz_shift_addition_does_not_overflow() {
-    let mut left = GenericSpectrum::with_capacity(100_u32, 1);
+    let mut left = GenericSpectrum::with_capacity(100_u32, 1).expect("valid spectrum allocation");
     left.add_peak(10_u32, 1_u32).expect("sorted");
 
-    let mut right = GenericSpectrum::with_capacity(100_u32, 1);
+    let mut right = GenericSpectrum::with_capacity(100_u32, 1).expect("valid spectrum allocation");
     right.add_peak(u32::MAX, 1_u32).expect("sorted");
 
     let result = std::panic::catch_unwind(|| {
@@ -259,10 +262,10 @@ fn rejects_non_finite_right_peak_mz() {
 
 #[test]
 fn rejects_shifted_right_mz_overflow_to_infinity() {
-    let mut left = GenericSpectrum::with_capacity(0.0_f64, 1);
+    let mut left = GenericSpectrum::with_capacity(0.0_f64, 1).expect("valid spectrum allocation");
     left.add_peak(0.0_f64, 1.0_f64).expect("sorted");
 
-    let mut right = GenericSpectrum::with_capacity(0.0_f64, 1);
+    let mut right = GenericSpectrum::with_capacity(0.0_f64, 1).expect("valid spectrum allocation");
     right.add_peak(f64::MAX, 1.0_f64).expect("sorted");
 
     let error = GreedySharedPeaksBuilder::default()

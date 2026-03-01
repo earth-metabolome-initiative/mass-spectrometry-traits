@@ -8,7 +8,8 @@ use mass_spectrometry::prelude::{
 use multi_ranged::{BiRange, SimpleRange};
 
 fn linear_spectrum(size: usize, precursor_mz: f32) -> GenericSpectrum<f32, f32> {
-    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, size);
+    let mut spectrum =
+        GenericSpectrum::with_capacity(precursor_mz, size).expect("valid spectrum allocation");
     for i in 0..size {
         spectrum
             .add_peak(i as f32, 1.0)
@@ -22,7 +23,8 @@ fn shifted_linear_spectrum(
     precursor_mz: f32,
     mz_offset: f32,
 ) -> GenericSpectrum<f32, f32> {
-    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, size);
+    let mut spectrum =
+        GenericSpectrum::with_capacity(precursor_mz, size).expect("valid spectrum allocation");
     for i in 0..size {
         spectrum
             .add_peak(mz_offset + i as f32, 1.0)

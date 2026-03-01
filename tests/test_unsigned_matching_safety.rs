@@ -4,7 +4,8 @@ use geometric_traits::prelude::*;
 use mass_spectrometry::prelude::{GenericSpectrum, Spectrum, SpectrumAlloc, SpectrumMut};
 
 fn one_peak_u32_spectrum(precursor_mz: u32, mz: u32) -> GenericSpectrum<u32, u32> {
-    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, 1);
+    let mut spectrum =
+        GenericSpectrum::with_capacity(precursor_mz, 1).expect("valid spectrum allocation");
     spectrum.add_peak(mz, 1).expect("sorted single peak");
     spectrum
 }

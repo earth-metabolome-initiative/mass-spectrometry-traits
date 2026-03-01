@@ -23,8 +23,9 @@ fn modified_hungarian_cosine_rejects_negative_tolerance_at_construction() {
 }
 
 fn large_peak_spectra() -> (GenericSpectrum<f32, f32>, GenericSpectrum<f32, f32>) {
-    let mut left = GenericSpectrum::with_capacity(100.0_f32, 1);
-    let mut right = GenericSpectrum::with_capacity(100.0_f32, 1);
+    let mut left = GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
+    let mut right =
+        GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
     left.add_peak(1.0e20_f32, 1.0e20_f32)
         .expect("finite values should be accepted");
     right

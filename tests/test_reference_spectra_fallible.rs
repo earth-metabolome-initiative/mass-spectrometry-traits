@@ -85,10 +85,11 @@ impl SpectrumMut for FailingSpectrum {
 }
 
 impl SpectrumAlloc for FailingSpectrum {
-    fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Self {
-        Self {
-            inner: GenericSpectrum::with_capacity(precursor_mz, capacity),
-        }
+    fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Result<Self, Self::MutationError> {
+        Ok(Self {
+            inner: GenericSpectrum::with_capacity(precursor_mz, capacity)
+                .expect("valid failing spectrum allocation"),
+        })
     }
 }
 

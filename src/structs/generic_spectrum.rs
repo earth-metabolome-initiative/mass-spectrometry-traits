@@ -22,9 +22,15 @@ pub enum GenericSpectrumMutationError {
     /// Peak m/z values must be finite.
     #[error("mz values must be finite")]
     NonFiniteMz,
+    /// Peak m/z values must be zero or positive.
+    #[error("mz values must be >= 0")]
+    NegativeMz,
     /// Precursor m/z values must be finite.
     #[error("precursor_mz must be finite")]
     NonFinitePrecursorMz,
+    /// Precursor m/z values must be zero or positive.
+    #[error("precursor_mz must be >= 0")]
+    NegativePrecursorMz,
     /// Intensities must be finite.
     #[error("intensity values must be finite")]
     NonFiniteIntensity,
@@ -35,7 +41,7 @@ pub enum GenericSpectrumMutationError {
 
 impl<Mz, Intensity> GenericSpectrum<Mz, Intensity>
 where
-    Mz: Number + Finite,
+    Mz: Number + PartialOrd + Finite,
     Intensity: Number + PartialOrd + Finite,
 {
     /// Creates a new `GenericSpectrum` with a given capacity.
@@ -43,13 +49,18 @@ where
     /// # Errors
     ///
     /// Returns [`GenericSpectrumMutationError::NonFinitePrecursorMz`] if
-    /// `precursor_mz` is not finite.
+    /// `precursor_mz` is not finite, and
+    /// [`GenericSpectrumMutationError::NegativePrecursorMz`] if
+    /// `precursor_mz` is negative.
     pub fn try_with_capacity(
         precursor_mz: Mz,
         capacity: usize,
     ) -> Result<Self, GenericSpectrumMutationError> {
         if !precursor_mz.is_finite() {
             return Err(GenericSpectrumMutationError::NonFinitePrecursorMz);
+        }
+        if precursor_mz < Mz::zero() {
+            return Err(GenericSpectrumMutationError::NegativePrecursorMz);
         }
         Ok(Self {
             mz: SortedVec::with_capacity(capacity),
@@ -119,7 +130,7 @@ where
 
 impl<Mz, Intensity> SpectrumMut for GenericSpectrum<Mz, Intensity>
 where
-    Mz: Number + Finite,
+    Mz: Number + PartialOrd + Finite,
     Intensity: Number + PartialOrd + Finite,
 {
     type MutationError = GenericSpectrumMutationError;
@@ -131,6 +142,9 @@ where
     ) -> Result<(), Self::MutationError> {
         if !mz.is_finite() {
             return Err(GenericSpectrumMutationError::NonFiniteMz);
+        }
+        if mz < Self::Mz::zero() {
+            return Err(GenericSpectrumMutationError::NegativeMz);
         }
         if !intensity.is_finite() {
             return Err(GenericSpectrumMutationError::NonFiniteIntensity);
@@ -148,11 +162,10 @@ where
 
 impl<Mz, Intensity> SpectrumAlloc for GenericSpectrum<Mz, Intensity>
 where
-    Mz: Number + Finite,
+    Mz: Number + PartialOrd + Finite,
     Intensity: Number + PartialOrd + Finite,
 {
-    fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Self {
+    fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Result<Self, Self::MutationError> {
         Self::try_with_capacity(precursor_mz, capacity)
-            .expect("GenericSpectrum invariant violated: precursor_mz must be finite")
     }
 }
