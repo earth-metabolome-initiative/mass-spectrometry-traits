@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 
 use geometric_traits::prelude::*;
-use multi_ranged::{BiRange, SimpleRange};
+use multi_ranged::{BiRange, MultiRanged, SimpleRange};
 use num_traits::ToPrimitive;
 
 use crate::numeric_validation::{NumericValidationError, checked_to_f64};
@@ -52,6 +52,63 @@ fn tolerance_position_f64(target: f64, candidate: f64, tolerance: f64) -> Tolera
     } else {
         TolerancePosition::Within
     }
+}
+
+fn allocate_matching_peaks<R>(
+    number_of_rows: usize,
+    number_of_columns: usize,
+) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>
+where
+    R: MultiRanged<Step = u32>,
+{
+    let number_of_rows = to_matrix_index(number_of_rows)?;
+    let number_of_columns = to_matrix_index(number_of_columns)?;
+    let mut matching_peaks: RangedCSR2D<u32, u32, R> =
+        SparseMatrixMut::with_sparse_shape((number_of_rows, number_of_columns));
+    MatrixMut::increase_shape(&mut matching_peaks, (number_of_rows, number_of_columns))
+        .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
+    Ok(matching_peaks)
+}
+
+fn collect_window_matches<S, F>(
+    other: &S,
+    lowest_other_index: usize,
+    mz_f64: f64,
+    mz_tolerance_f64: f64,
+    mz_shift_f64: f64,
+    non_finite_shift_label: &'static str,
+    mut on_match: F,
+) -> Result<usize, SimilarityComputationError>
+where
+    S: Spectrum,
+    S::Mz: ToPrimitive,
+    F: FnMut(u32),
+{
+    let mut new_lowest = lowest_other_index;
+    for (j, other_mz) in other
+        .mz_from(lowest_other_index)
+        .enumerate()
+        .map(|(j, mz)| (j + lowest_other_index, mz))
+    {
+        let other_mz_f64 = to_f64_checked(other_mz, "other_mz")?;
+        let shifted_other_mz_f64 = other_mz_f64 + mz_shift_f64;
+        if !shifted_other_mz_f64.is_finite() {
+            return Err(SimilarityComputationError::NonFiniteValue(
+                non_finite_shift_label,
+            ));
+        }
+
+        match tolerance_position_f64(mz_f64, shifted_other_mz_f64, mz_tolerance_f64) {
+            TolerancePosition::Above => break,
+            TolerancePosition::Below => {
+                new_lowest = j + 1;
+                continue;
+            }
+            TolerancePosition::Within => {}
+        }
+        on_match(to_matrix_index(j)?);
+    }
+    Ok(new_lowest)
 }
 
 /// Trait for a single Spectrum.
@@ -153,44 +210,27 @@ pub trait Spectrum {
         if mz_tolerance_f64 < 0.0 {
             return Err(SimilarityComputationError::NegativeTolerance);
         }
-        let number_of_rows =
-            u32::try_from(self.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let number_of_columns =
-            u32::try_from(other.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let mut matching_peaks: RangedCSR2D<u32, u32, SimpleRange<u32>> =
-            SparseMatrixMut::with_sparse_shape((number_of_rows, number_of_columns));
-        MatrixMut::increase_shape(&mut matching_peaks, (number_of_rows, number_of_columns))
-            .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
-        let mut lowest_other_index = 0;
+        let mut matching_peaks =
+            allocate_matching_peaks::<SimpleRange<u32>>(self.len(), other.len())?;
+        let mut lowest_other_index = 0usize;
+        let mut row_matches: Vec<u32> = Vec::new();
         for (i, mz) in self.mz().enumerate() {
             let row = to_matrix_index(i)?;
             let mz_f64 = to_f64_checked(mz, "mz")?;
-            let mut new_lowest = lowest_other_index;
-            for (j, other_mz) in other
-                .mz_from(lowest_other_index)
-                .enumerate()
-                .map(|(j, mz)| (j + lowest_other_index, mz))
-            {
-                let other_mz_f64 = to_f64_checked(other_mz, "other_mz")?;
-                match tolerance_position_f64(mz_f64, other_mz_f64, mz_tolerance_f64) {
-                    TolerancePosition::Above => {
-                        // other_mz is above the tolerance window.
-                        break;
-                    }
-                    TolerancePosition::Below => {
-                        // This peak is below the tolerance window. Since both
-                        // spectra are sorted by m/z, no future left peak
-                        // (with higher m/z) can match this right peak either.
-                        new_lowest = j + 1;
-                        continue;
-                    }
-                    TolerancePosition::Within => {}
-                }
-                let col = to_matrix_index(j)?;
+            row_matches.clear();
+            lowest_other_index = collect_window_matches(
+                other,
+                lowest_other_index,
+                mz_f64,
+                mz_tolerance_f64,
+                0.0,
+                "shifted_other_mz",
+                |col| row_matches.push(col),
+            )?;
+            for &col in &row_matches {
                 MatrixMut::add(&mut matching_peaks, (row, col))
                     .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
             }
-            lowest_other_index = new_lowest;
         }
 
         Ok(matching_peaks)
@@ -222,76 +262,40 @@ pub trait Spectrum {
             return Err(SimilarityComputationError::NegativeTolerance);
         }
         let mz_shift_f64 = to_f64_checked(mz_shift, "mz_shift")?;
-
-        let number_of_rows =
-            u32::try_from(self.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let number_of_columns =
-            u32::try_from(other.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let mut matching_peaks: RangedCSR2D<u32, u32, BiRange<u32>> =
-            SparseMatrixMut::with_sparse_shape((number_of_rows, number_of_columns));
-        MatrixMut::increase_shape(&mut matching_peaks, (number_of_rows, number_of_columns))
-            .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
+        let mut matching_peaks = allocate_matching_peaks::<BiRange<u32>>(self.len(), other.len())?;
         let mut lowest_direct = 0usize;
         let mut lowest_shifted = 0usize;
+        let mut row_matches: Vec<u32> = Vec::new();
 
         for (i, mz) in self.mz().enumerate() {
             let row = to_matrix_index(i)?;
             let mz_f64 = to_f64_checked(mz, "mz")?;
 
-            let mut row_matches: Vec<u32> = Vec::new();
+            row_matches.clear();
 
-            // --- Direct window ---
-            let mut new_lowest_direct = lowest_direct;
-            for (j, other_mz) in other
-                .mz_from(lowest_direct)
-                .enumerate()
-                .map(|(j, mz)| (j + lowest_direct, mz))
-            {
-                let other_mz_f64 = to_f64_checked(other_mz, "other_mz")?;
+            lowest_direct = collect_window_matches(
+                other,
+                lowest_direct,
+                mz_f64,
+                mz_tolerance_f64,
+                0.0,
+                "shifted_other_mz",
+                |col| row_matches.push(col),
+            )?;
 
-                match tolerance_position_f64(mz_f64, other_mz_f64, mz_tolerance_f64) {
-                    TolerancePosition::Above => break,
-                    TolerancePosition::Below => {
-                        new_lowest_direct = j + 1;
-                        continue;
-                    }
-                    TolerancePosition::Within => {}
-                }
-                row_matches.push(to_matrix_index(j)?);
-            }
-            lowest_direct = new_lowest_direct;
-
-            // --- Shifted window ---
-            let mut new_lowest_shifted = lowest_shifted;
-            for (j, other_mz) in other
-                .mz_from(lowest_shifted)
-                .enumerate()
-                .map(|(j, mz)| (j + lowest_shifted, mz))
-            {
-                let other_mz_f64 = to_f64_checked(other_mz, "other_mz")?;
-
-                let shifted_other_mz_f64 = other_mz_f64 + mz_shift_f64;
-                if !shifted_other_mz_f64.is_finite() {
-                    return Err(SimilarityComputationError::NonFiniteValue(
-                        "shifted_other_mz",
-                    ));
-                }
-
-                match tolerance_position_f64(mz_f64, shifted_other_mz_f64, mz_tolerance_f64) {
-                    TolerancePosition::Above => break,
-                    TolerancePosition::Below => {
-                        new_lowest_shifted = j + 1;
-                        continue;
-                    }
-                    TolerancePosition::Within => {}
-                }
-                row_matches.push(to_matrix_index(j)?);
-            }
-            lowest_shifted = new_lowest_shifted;
+            lowest_shifted = collect_window_matches(
+                other,
+                lowest_shifted,
+                mz_f64,
+                mz_tolerance_f64,
+                mz_shift_f64,
+                "shifted_other_mz",
+                |col| row_matches.push(col),
+            )?;
 
             row_matches.sort_unstable();
             row_matches.dedup();
-            for col in row_matches {
+            for &col in &row_matches {
                 MatrixMut::add(&mut matching_peaks, (row, col))
                     .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
             }
