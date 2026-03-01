@@ -362,7 +362,7 @@ fn unweighted_glucose_vs_aspirin() {
         &GenericSpectrum::glucose(),
         &GenericSpectrum::aspirin(),
         &unweighted(),
-        0.027_876_10,
+        0.027_876_1,
         1,
         1e-4,
     );
