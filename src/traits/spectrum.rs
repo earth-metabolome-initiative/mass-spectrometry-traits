@@ -150,6 +150,9 @@ pub trait Spectrum {
         Self::Mz: ToPrimitive,
     {
         let mz_tolerance_f64 = to_f64_checked(mz_tolerance, "mz_tolerance")?;
+        if mz_tolerance_f64 < 0.0 {
+            return Err(SimilarityComputationError::NegativeTolerance);
+        }
         let number_of_rows =
             u32::try_from(self.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
         let number_of_columns =
@@ -215,6 +218,9 @@ pub trait Spectrum {
         Self::Mz: ToPrimitive,
     {
         let mz_tolerance_f64 = to_f64_checked(mz_tolerance, "mz_tolerance")?;
+        if mz_tolerance_f64 < 0.0 {
+            return Err(SimilarityComputationError::NegativeTolerance);
+        }
         let mz_shift_f64 = to_f64_checked(mz_shift, "mz_shift")?;
 
         let number_of_rows =

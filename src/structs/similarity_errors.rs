@@ -23,6 +23,9 @@ pub enum SimilarityComputationError {
     /// A numeric value required by the algorithm was not finite.
     #[error("value `{0}` must be finite")]
     NonFiniteValue(&'static str),
+    /// Tolerance must be zero or positive.
+    #[error("value `mz_tolerance` must be >= 0")]
+    NegativeTolerance,
     /// Peak index did not fit expected matrix index type.
     #[error("peak index overflow while building match graph")]
     IndexOverflow,
