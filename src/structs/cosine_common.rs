@@ -36,15 +36,6 @@ pub(crate) struct CosineConfig<EXP, MZ> {
 
 impl<EXP: Number, MZ: Number> CosineConfig<EXP, MZ> {
     #[inline]
-    pub(crate) fn new_unchecked(mz_power: EXP, intensity_power: EXP, mz_tolerance: MZ) -> Self {
-        Self {
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-        }
-    }
-
-    #[inline]
     pub(crate) fn mz_tolerance(&self) -> MZ {
         self.mz_tolerance
     }
@@ -74,9 +65,75 @@ where
         validate_numeric_parameter(mz_power, "mz_power")?;
         validate_numeric_parameter(intensity_power, "intensity_power")?;
         validate_non_negative_tolerance(mz_tolerance)?;
-        Ok(Self::new_unchecked(mz_power, intensity_power, mz_tolerance))
+        Ok(Self {
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+        })
     }
 }
+
+macro_rules! impl_cosine_wrapper_config_api {
+    ($type_name:ident, $constructor_description:expr, $tolerance_doc:expr) => {
+        impl<EXP: geometric_traits::prelude::Number, MZ: geometric_traits::prelude::Number>
+            $type_name<EXP, MZ>
+        {
+            #[doc = $tolerance_doc]
+            #[inline]
+            pub fn mz_tolerance(&self) -> MZ {
+                self.config.mz_tolerance()
+            }
+
+            /// Returns the power to which the mass/charge ratio is raised.
+            #[inline]
+            pub fn mz_power(&self) -> EXP {
+                self.config.mz_power()
+            }
+
+            /// Returns the power to which the intensity is raised.
+            #[inline]
+            pub fn intensity_power(&self) -> EXP {
+                self.config.intensity_power()
+            }
+        }
+
+        impl<EXP, MZ> $type_name<EXP, MZ>
+        where
+            EXP: geometric_traits::prelude::Number + num_traits::ToPrimitive,
+            MZ: geometric_traits::prelude::Number + num_traits::ToPrimitive + PartialOrd,
+        {
+            #[doc = concat!("Creates a new instance of ", $constructor_description, ".")]
+            ///
+            /// # Arguments
+            ///
+            /// * `mz_power`: The power to which the mass/charge ratio is raised.
+            /// * `intensity_power`: The power to which the intensity is raised.
+            #[doc = concat!("* `mz_tolerance`: ", $tolerance_doc)]
+            ///
+            /// # Errors
+            ///
+            /// Returns [`super::similarity_errors::SimilarityConfigError`] if
+            /// any numeric parameter is not finite/representable or if
+            /// `mz_tolerance` is negative.
+            #[inline]
+            pub fn new(
+                mz_power: EXP,
+                intensity_power: EXP,
+                mz_tolerance: MZ,
+            ) -> Result<Self, super::similarity_errors::SimilarityConfigError> {
+                Ok(Self {
+                    config: super::cosine_common::CosineConfig::new(
+                        mz_power,
+                        intensity_power,
+                        mz_tolerance,
+                    )?,
+                })
+            }
+        }
+    };
+}
+
+pub(crate) use impl_cosine_wrapper_config_api;
 
 #[inline]
 pub(crate) fn ensure_finite_f64(
@@ -156,6 +213,42 @@ where
     (score_sum, n_matches)
 }
 
+#[inline]
+pub(crate) fn finalize_similarity_score<MZ>(
+    score_sum: MZ,
+    n_matches: usize,
+    left_norm: MZ,
+    right_norm: MZ,
+) -> Result<(MZ, usize), SimilarityComputationError>
+where
+    MZ: Float + Number + Finite + TotalOrd + ToPrimitive,
+{
+    let denominator = left_norm * right_norm;
+    let Some(denominator_f64) = denominator.to_f64() else {
+        return Err(SimilarityComputationError::ValueNotRepresentable(
+            "similarity_denominator",
+        ));
+    };
+    ensure_finite_f64(denominator_f64, "similarity_denominator")?;
+    if denominator_f64 == 0.0 {
+        return Ok((MZ::zero(), 0));
+    }
+
+    let similarity = score_sum / denominator;
+    let Some(similarity_f64) = similarity.to_f64() else {
+        return Err(SimilarityComputationError::ValueNotRepresentable(
+            "similarity_score",
+        ));
+    };
+    ensure_finite_f64(similarity_f64, "similarity_score")?;
+
+    if similarity > MZ::one() {
+        Ok((MZ::one(), n_matches))
+    } else {
+        Ok((similarity, n_matches))
+    }
+}
+
 pub(crate) fn score_from_matching<MZ, R>(
     inputs: MatchingScoreInputs<'_, MZ, R>,
 ) -> Result<(MZ, usize), SimilarityComputationError>
@@ -186,31 +279,7 @@ where
 
     let (score_sum, n_matches) =
         accumulate_assignment_scores(&assignments, inputs.row_products, inputs.col_products);
-
-    let denominator = inputs.left_norm * inputs.right_norm;
-    let Some(denominator_f64) = denominator.to_f64() else {
-        return Err(SimilarityComputationError::ValueNotRepresentable(
-            "similarity_denominator",
-        ));
-    };
-    ensure_finite_f64(denominator_f64, "similarity_denominator")?;
-    if denominator_f64 == 0.0 {
-        return Ok((MZ::zero(), 0));
-    }
-
-    let similarity = score_sum / denominator;
-    let Some(similarity_f64) = similarity.to_f64() else {
-        return Err(SimilarityComputationError::ValueNotRepresentable(
-            "similarity_score",
-        ));
-    };
-    ensure_finite_f64(similarity_f64, "similarity_score")?;
-
-    if similarity > MZ::one() {
-        Ok((MZ::one(), n_matches))
-    } else {
-        Ok((similarity, n_matches))
-    }
+    finalize_similarity_score(score_sum, n_matches, inputs.left_norm, inputs.right_norm)
 }
 
 pub(crate) fn score_from_matching_greedy<MZ, R>(
@@ -252,31 +321,7 @@ where
 
     let (score_sum, n_matches) =
         accumulate_assignment_scores(&assignments, inputs.row_products, inputs.col_products);
-
-    let denominator = inputs.left_norm * inputs.right_norm;
-    let Some(denominator_f64) = denominator.to_f64() else {
-        return Err(SimilarityComputationError::ValueNotRepresentable(
-            "similarity_denominator",
-        ));
-    };
-    ensure_finite_f64(denominator_f64, "similarity_denominator")?;
-    if denominator_f64 == 0.0 {
-        return Ok((MZ::zero(), 0));
-    }
-
-    let similarity = score_sum / denominator;
-    let Some(similarity_f64) = similarity.to_f64() else {
-        return Err(SimilarityComputationError::ValueNotRepresentable(
-            "similarity_score",
-        ));
-    };
-    ensure_finite_f64(similarity_f64, "similarity_score")?;
-
-    if similarity > MZ::one() {
-        Ok((MZ::one(), n_matches))
-    } else {
-        Ok((similarity, n_matches))
-    }
+    finalize_similarity_score(score_sum, n_matches, inputs.left_norm, inputs.right_norm)
 }
 
 pub(crate) fn compute_cosine_similarity<EXP, S1, S2, R, ForwardMatch, ReverseMatch>(

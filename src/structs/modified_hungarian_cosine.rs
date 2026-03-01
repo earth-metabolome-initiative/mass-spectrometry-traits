@@ -11,8 +11,8 @@ use geometric_traits::prelude::{Finite, Number, ScalarSimilarity, TotalOrd};
 use multi_ranged::BiRange;
 use num_traits::{Float, Pow, ToPrimitive, Zero};
 
-use super::cosine_common::{CosineConfig, compute_cosine_similarity};
-use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
+use super::cosine_common::{compute_cosine_similarity, impl_cosine_wrapper_config_api};
+use super::similarity_errors::SimilarityComputationError;
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 
 /// Modified cosine similarity for mass spectra.
@@ -20,67 +20,14 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 /// Extends [`super::HungarianCosine`] by also matching fragment peaks shifted by
 /// the precursor mass difference, using optimal (Crouse LAPJV) assignment.
 pub struct ModifiedHungarianCosine<EXP, MZ> {
-    config: CosineConfig<EXP, MZ>,
+    config: super::cosine_common::CosineConfig<EXP, MZ>,
 }
 
-impl<EXP: Number, MZ: Number> ModifiedHungarianCosine<EXP, MZ> {
-    /// Creates a new instance of the modified cosine similarity without
-    /// validating numeric parameters.
-    #[inline]
-    pub fn new_unchecked(mz_power: EXP, intensity_power: EXP, mz_tolerance: MZ) -> Self {
-        Self {
-            config: CosineConfig::new_unchecked(mz_power, intensity_power, mz_tolerance),
-        }
-    }
-
-    /// Returns the tolerance for the mass-shift of the mass/charge ratio.
-    #[inline]
-    pub fn mz_tolerance(&self) -> MZ {
-        self.config.mz_tolerance()
-    }
-
-    /// Returns the power to which the mass/charge ratio is raised.
-    #[inline]
-    pub fn mz_power(&self) -> EXP {
-        self.config.mz_power()
-    }
-
-    /// Returns the power to which the intensity is raised.
-    #[inline]
-    pub fn intensity_power(&self) -> EXP {
-        self.config.intensity_power()
-    }
-}
-
-impl<EXP, MZ> ModifiedHungarianCosine<EXP, MZ>
-where
-    EXP: Number + ToPrimitive,
-    MZ: Number + ToPrimitive + PartialOrd,
-{
-    /// Creates a new instance of the modified cosine similarity.
-    ///
-    /// # Arguments
-    ///
-    /// * `mz_power`: The power to which the mass/charge ratio is raised.
-    /// * `intensity_power`: The power to which the intensity is raised.
-    /// * `mz_tolerance`: The tolerance for the mass-shift of the mass/charge
-    ///   ratio.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityConfigError`] if any numeric parameter is not
-    /// finite/representable or if `mz_tolerance` is negative.
-    #[inline]
-    pub fn new(
-        mz_power: EXP,
-        intensity_power: EXP,
-        mz_tolerance: MZ,
-    ) -> Result<Self, SimilarityConfigError> {
-        Ok(Self {
-            config: CosineConfig::new(mz_power, intensity_power, mz_tolerance)?,
-        })
-    }
-}
+impl_cosine_wrapper_config_api!(
+    ModifiedHungarianCosine,
+    "the modified Hungarian cosine similarity",
+    "Returns the tolerance for the mass-shift of the mass/charge ratio."
+);
 
 impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for ModifiedHungarianCosine<EXP, S1::Mz>
 where
