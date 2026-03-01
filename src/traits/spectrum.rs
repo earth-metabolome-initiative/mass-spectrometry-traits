@@ -113,13 +113,14 @@ pub trait Spectrum {
                 .enumerate()
                 .map(|(j, mz)| (j + lowest_other_index, mz))
             {
-                if other_mz > mz + mz_tolerance {
-                    // The mz values are sorted, so we can break here as we have
-                    // reached the end of the mz values that are within the mz
-                    // tolerance for the current mz value.
+                // Use a single canonical difference expression to avoid
+                // tolerance-boundary asymmetry from mixed +/- comparisons.
+                let diff = mz - other_mz;
+                if diff < Self::Mz::zero() - mz_tolerance {
+                    // other_mz is above the tolerance window.
                     break;
                 }
-                if other_mz < mz - mz_tolerance {
+                if diff > mz_tolerance {
                     // This peak is below the tolerance window. Since both
                     // spectra are sorted by m/z, no future left peak (with
                     // higher m/z) can match this right peak either, so we
@@ -167,24 +168,11 @@ pub trait Spectrum {
 
             // Determine which window centre is lower so we insert column
             // indices in ascending order (required by BiRange).
-            let (first_centre, first_lowest, second_centre, second_lowest, first_is_direct) =
-                if mz <= shifted_centre {
-                    (
-                        mz,
-                        &mut lowest_direct,
-                        shifted_centre,
-                        &mut lowest_shifted,
-                        true,
-                    )
-                } else {
-                    (
-                        shifted_centre,
-                        &mut lowest_shifted,
-                        mz,
-                        &mut lowest_direct,
-                        false,
-                    )
-                };
+            let (first_lowest, second_lowest, first_is_direct) = if mz <= shifted_centre {
+                (&mut lowest_direct, &mut lowest_shifted, true)
+            } else {
+                (&mut lowest_shifted, &mut lowest_direct, false)
+            };
 
             // --- First (lower-centre) window ---
             let mut new_first_lowest = *first_lowest;
@@ -193,24 +181,20 @@ pub trait Spectrum {
                 .enumerate()
                 .map(|(j, mz)| (j + *first_lowest, mz))
             {
-                if other_mz > first_centre + mz_tolerance {
+                // For shifted matches use (mz - other_mz) - shift so that
+                // swapping spectra and negating shift is bit-symmetric.
+                let diff = if first_is_direct {
+                    mz - other_mz
+                } else {
+                    mz - other_mz - mz_shift
+                };
+
+                if diff < Self::Mz::zero() - mz_tolerance {
                     break;
                 }
-                if other_mz < first_centre - mz_tolerance {
+                if diff > mz_tolerance {
                     new_first_lowest = j + 1;
                     continue;
-                }
-                // For the shifted match, compute the difference as
-                // (mz - other_mz) - shift rather than (mz - shift) - other_mz
-                // so that swapping both spectra and negating the shift
-                // produces bit-identical results (avoids f32 rounding
-                // asymmetry at the tolerance boundary).
-                if !first_is_direct {
-                    let shifted_diff = mz - other_mz - mz_shift;
-                    if shifted_diff < Self::Mz::zero() - mz_tolerance || shifted_diff > mz_tolerance
-                    {
-                        continue;
-                    }
                 }
                 let col = to_matrix_index(j)?;
                 MatrixMut::add(&mut matching_peaks, (row, col))
@@ -228,21 +212,18 @@ pub trait Spectrum {
                 .enumerate()
                 .map(|(j, mz)| (j + *second_lowest, mz))
             {
-                if other_mz > second_centre + mz_tolerance {
+                let diff = if first_is_direct {
+                    mz - other_mz - mz_shift
+                } else {
+                    mz - other_mz
+                };
+
+                if diff < Self::Mz::zero() - mz_tolerance {
                     break;
                 }
-                if other_mz < second_centre - mz_tolerance {
+                if diff > mz_tolerance {
                     new_second_lowest = j + 1;
                     continue;
-                }
-                // Use symmetric shifted-difference form when this is the
-                // shifted window (see comment in first window above).
-                if first_is_direct {
-                    let shifted_diff = mz - other_mz - mz_shift;
-                    if shifted_diff < Self::Mz::zero() - mz_tolerance || shifted_diff > mz_tolerance
-                    {
-                        continue;
-                    }
                 }
                 let col = to_matrix_index(j)?;
                 match MatrixMut::add(&mut matching_peaks, (row, col)) {
