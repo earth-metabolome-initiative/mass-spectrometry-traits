@@ -72,24 +72,26 @@ where
     );
 
     fn next(&mut self) -> Option<Self::Item> {
-        match (self.left.peek(), self.right.peek()) {
-            (Some((left_mz, _)), Some((right_mz, _))) => {
-                let shifted_right_mz = *right_mz + self.right_shift;
-                if shifted_right_mz < *left_mz + self.tolerance
-                    && *left_mz < shifted_right_mz + self.tolerance
-                {
-                    let left = self.left.next().unwrap();
-                    let right = self.right.next().unwrap();
-                    Some((left, right))
-                } else if left_mz < right_mz {
-                    self.left.next();
-                    self.next()
-                } else {
-                    self.right.next();
-                    self.next()
-                }
+        loop {
+            let (Some((left_mz, _)), Some((right_mz, _))) = (self.left.peek(), self.right.peek())
+            else {
+                return None;
+            };
+
+            let shifted_right_mz = *right_mz + self.right_shift;
+            if shifted_right_mz <= *left_mz + self.tolerance
+                && *left_mz <= shifted_right_mz + self.tolerance
+            {
+                let left = self.left.next().expect("left peeked");
+                let right = self.right.next().expect("right peeked");
+                return Some((left, right));
             }
-            _ => None,
+
+            if shifted_right_mz < *left_mz {
+                self.right.next();
+            } else {
+                self.left.next();
+            }
         }
     }
 }

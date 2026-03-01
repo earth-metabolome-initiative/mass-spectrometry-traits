@@ -1,56 +1,79 @@
-//! Test suite to verify that the shared peaks are correctly identified.
+//! Regression tests for `GreedySharedPeaks`.
 
-// use mass_spectrometry::{
-//     prelude::GenericSpectrum,
-//     traits::{
-//         CocaineSpectrum, GlucoseSpectrum, HydroxyCholesterolSpectrum,
-// Spectrum,         PhenylalanineSpectrum,
-//     },
-// };
+use mass_spectrometry::prelude::{GenericSpectrum, SpectrumAlloc, SpectrumMut};
+use mass_spectrometry::structs::iterators::shared_peaks::GreedySharedPeaksBuilder;
 
-// #[test]
-// /// Test the shared peaks between two spectra.
-// pub fn test_greedy_shared_peaks_homogeneous() {
-//     for spectrum in [
-//         GenericSpectrum::cocaine(),
-//         GenericSpectrum::glucose(),
-//         GenericSpectrum::hydroxy_cholesterol(),
-//         GenericSpectrum::phenylalanine(),
-//     ] {
-//         let greedy_shared_peaks = spectrum.greedy_shared_peaks(&spectrum,
-// 0.1_f32, 0.0_f32);
+fn spectrum_from_peaks(precursor_mz: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f32> {
+    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, peaks.len());
+    for &(mz, intensity) in peaks {
+        spectrum
+            .add_peak(mz, intensity)
+            .expect("test peaks must be sorted by m/z");
+    }
+    spectrum
+}
 
-//         let greedy_shared_peaks: Vec<_> = greedy_shared_peaks.collect();
-//         let cocaine_peaks: Vec<(f32, f32)> =
-// spectrum.peaks().collect::<Vec<_>>();
+#[test]
+fn shifted_progression_matches_all_pairs() {
+    let left = spectrum_from_peaks(500.0, &[(100.0, 1.0), (140.0, 2.0)]);
+    let right = spectrum_from_peaks(500.0, &[(150.0, 1.0), (200.0, 2.0)]);
 
-//         assert_eq!(greedy_shared_peaks.len(), cocaine_peaks.len());
-//         for ((left_peak, right_peak), cocaine_peak) in
-//             greedy_shared_peaks.iter().zip(cocaine_peaks.iter())
-//         {
-//             assert_eq!(left_peak, cocaine_peak);
-//             assert_eq!(right_peak, cocaine_peak);
-//         }
-//     }
-// }
+    // After applying right_shift=-60:
+    // right peaks become [90, 140], so only left[140] <-> right[200] should match.
+    let matches = GreedySharedPeaksBuilder::default()
+        .left(&left)
+        .right(&right)
+        .tolerance(0.1)
+        .right_shift(-60.0)
+        .build()
+        .expect("builder is complete")
+        .collect::<Vec<_>>();
 
-// #[test]
-// /// Test the shared peaks between two spectra.
-// pub fn test_greedy_shared_peaks_heterogeneous() {
-//     let cocaine: GenericSpectrum<f32, f32> = GenericSpectrum::cocaine();
-//     let glucose: GenericSpectrum<f32, f32> = GenericSpectrum::glucose();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].0.0, 140.0);
+    assert_eq!(matches[0].1.0, 200.0);
+}
 
-//     let greedy_shared_peaks =
-//         cocaine.greedy_shared_peaks(&glucose, 1.0_f32,
-// 0.0_f32).collect::<Vec<_>>();
+#[test]
+fn includes_exact_tolerance_boundary() {
+    let left = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+    let right = spectrum_from_peaks(100.0, &[(100.1, 1.0)]);
 
-//     assert_eq!(greedy_shared_peaks.len(), 3);
-//     assert_eq!(
-//         greedy_shared_peaks,
-//         vec![
-//             ((82.06479, 13342.493), (82.95215, 798.8589)),
-//             ((105.03325, 3264.1335), (105.27045, 1257.2534)),
-//             ((185.80469, 1849.1401), (185.15268, 9220.535))
-//         ]
-//     );
-// }
+    let matches = GreedySharedPeaksBuilder::default()
+        .left(&left)
+        .right(&right)
+        .tolerance(0.1)
+        .right_shift(0.0)
+        .build()
+        .expect("builder is complete")
+        .collect::<Vec<_>>();
+
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].0.0, 100.0);
+    assert_eq!(matches[0].1.0, 100.1);
+}
+
+#[test]
+fn long_nonmatching_sequence_completes() {
+    let n = 200_000usize;
+    let mut left = GenericSpectrum::with_capacity(1_000_000.0, n);
+    let mut right = GenericSpectrum::with_capacity(2_000_000.0, n);
+
+    for i in 0..n {
+        left.add_peak(i as f32, 1.0).expect("sorted");
+        right
+            .add_peak(10_000_000.0 + i as f32, 1.0)
+            .expect("sorted");
+    }
+
+    let count = GreedySharedPeaksBuilder::default()
+        .left(&left)
+        .right(&right)
+        .tolerance(0.0)
+        .right_shift(0.0)
+        .build()
+        .expect("builder is complete")
+        .count();
+
+    assert_eq!(count, 0);
+}
