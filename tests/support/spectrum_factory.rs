@@ -1,94 +1,148 @@
+use std::iter;
+
 use mass_spectrometry::prelude::*;
+
+type SpectrumBuilder = fn() -> GenericSpectrum<f32, f32>;
+
+struct SpectrumEntry {
+    canonical: &'static str,
+    builder: SpectrumBuilder,
+    aliases: &'static [&'static str],
+}
+
+macro_rules! spectrum_registry {
+    ($(($name:literal, $ctor:ident, [$($alias:literal),* $(,)?])),+ $(,)?) => {
+        const SPECTRUM_REGISTRY: &[SpectrumEntry] = &[
+            $(SpectrumEntry {
+                canonical: $name,
+                builder: GenericSpectrum::$ctor,
+                aliases: &[$($alias),*],
+            },)+
+        ];
+    };
+}
+
+spectrum_registry!(
+    ("acephate", acephate, []),
+    ("acetyl_coenzyme_a", acetyl_coenzyme_a, []),
+    ("adenine", adenine, []),
+    ("adenosine", adenosine, []),
+    ("adenosine_5_diphosphate", adenosine_5_diphosphate, []),
+    ("adenosine_5_monophosphate", adenosine_5_monophosphate, []),
+    ("alanine", alanine, []),
+    ("arachidic_acid", arachidic_acid, []),
+    ("arachidonic_acid", arachidonic_acid, []),
+    ("arginine", arginine, []),
+    ("ascorbic_acid", ascorbic_acid, []),
+    ("aspartic_acid", aspartic_acid, []),
+    ("aspirin", aspirin, []),
+    ("avermectin", avermectin, []),
+    ("biotin", biotin, []),
+    ("boscalid", boscalid, []),
+    ("chlorantraniliprole", chlorantraniliprole, []),
+    ("chlorfluazuron", chlorfluazuron, []),
+    ("chlorotoluron", chlorotoluron, []),
+    ("citric_acid", citric_acid, []),
+    ("clothianidin", clothianidin, []),
+    ("cocaine", cocaine, []),
+    ("cyazofamid", cyazofamid, []),
+    ("cymoxanil", cymoxanil, []),
+    ("cysteine", cysteine, []),
+    ("cytidine", cytidine, []),
+    ("cytidine_5_diphosphate", cytidine_5_diphosphate, []),
+    ("cytidine_5_triphosphate", cytidine_5_triphosphate, []),
+    ("desmosterol", desmosterol, []),
+    ("diflubenzuron", diflubenzuron, []),
+    ("dihydrosphingosine", dihydrosphingosine, []),
+    ("diniconazole", diniconazole, []),
+    ("dinotefuran", dinotefuran, []),
+    ("diuron", diuron, []),
+    ("doramectin", doramectin, []),
+    ("elaidic_acid", elaidic_acid, []),
+    ("epimeloscine", epimeloscine, []),
+    ("eprinomectin", eprinomectin, []),
+    ("ethiprole", ethiprole, []),
+    ("ethirimol", ethirimol, []),
+    ("fipronil", fipronil, []),
+    ("flonicamid", flonicamid, []),
+    ("fluazinam", fluazinam, []),
+    ("fludioxinil", fludioxinil, []),
+    ("flufenoxuron", flufenoxuron, []),
+    ("fluometuron", fluometuron, []),
+    ("flutolanil", flutolanil, []),
+    ("folic_acid", folic_acid, []),
+    ("forchlorfenuron", forchlorfenuron, []),
+    ("fuberidazole", fuberidazole, []),
+    ("glucose", glucose, []),
+    ("halofenozide", halofenozide, []),
+    ("hexaflumuron", hexaflumuron, []),
+    ("hydramethylnon", hydramethylnon, []),
+    (
+        "hydroxy_cholesterol",
+        hydroxy_cholesterol,
+        ["hydroxycholesterol"]
+    ),
+    ("ivermectin", ivermectin, []),
+    ("lufenuron", lufenuron, []),
+    ("metaflumizone", metaflumizone, []),
+    (
+        "n1_2_dierucoyl_sn_glycero_3_phosphocholine",
+        n1_2_dierucoyl_sn_glycero_3_phosphocholine,
+        []
+    ),
+    ("n1_2_dioleoyl_rac_glycerol", n1_2_dioleoyl_rac_glycerol, []),
+    (
+        "n1_oleoyl_sn_glycero_3_phosphocholine",
+        n1_oleoyl_sn_glycero_3_phosphocholine,
+        []
+    ),
+    (
+        "n1_palmitoyl_sn_glycero_3_phosphocholine",
+        n1_palmitoyl_sn_glycero_3_phosphocholine,
+        []
+    ),
+    ("n2_5_dihydroxybenzoic_acid", n2_5_dihydroxybenzoic_acid, []),
+    ("n4_aminobenzoic_acid", n4_aminobenzoic_acid, []),
+    ("n4_cholesten_3_one", n4_cholesten_3_one, []),
+    ("neburon", neburon, []),
+    ("nitenpyram", nitenpyram, []),
+    ("novaluron", novaluron, []),
+    ("phenylalanine", phenylalanine, []),
+    ("prothioconazole", prothioconazole, []),
+    ("pymetrozine", pymetrozine, []),
+    ("pyrimethanil", pyrimethanil, []),
+    ("salicin", salicin, []),
+    ("sulfentrazone", sulfentrazone, []),
+    ("tebufenozide", tebufenozide, []),
+    ("teflubenzuron", teflubenzuron, []),
+    ("thidiazuron", thidiazuron, []),
+    ("thiophanate", thiophanate, []),
+    ("triadimefon", triadimefon, []),
+    ("triflumuron", triflumuron, [])
+);
+
+#[allow(dead_code)]
+pub fn canonical_spectrum_names() -> Vec<&'static str> {
+    SPECTRUM_REGISTRY
+        .iter()
+        .map(|entry| entry.canonical)
+        .collect()
+}
+
+#[allow(dead_code)]
+pub fn known_spectrum_names() -> Vec<&'static str> {
+    SPECTRUM_REGISTRY
+        .iter()
+        .flat_map(|entry| iter::once(entry.canonical).chain(entry.aliases.iter().copied()))
+        .collect()
+}
 
 /// Build a `GenericSpectrum<f32, f32>` by compound name.
 pub fn build_spectrum(name: &str) -> Option<GenericSpectrum<f32, f32>> {
-    Some(match name {
-        "acephate" => GenericSpectrum::acephate(),
-        "acetyl_coenzyme_a" => GenericSpectrum::acetyl_coenzyme_a(),
-        "adenine" => GenericSpectrum::adenine(),
-        "adenosine" => GenericSpectrum::adenosine(),
-        "adenosine_5_diphosphate" => GenericSpectrum::adenosine_5_diphosphate(),
-        "adenosine_5_monophosphate" => GenericSpectrum::adenosine_5_monophosphate(),
-        "alanine" => GenericSpectrum::alanine(),
-        "arachidic_acid" => GenericSpectrum::arachidic_acid(),
-        "arachidonic_acid" => GenericSpectrum::arachidonic_acid(),
-        "arginine" => GenericSpectrum::arginine(),
-        "ascorbic_acid" => GenericSpectrum::ascorbic_acid(),
-        "aspartic_acid" => GenericSpectrum::aspartic_acid(),
-        "aspirin" => GenericSpectrum::aspirin(),
-        "avermectin" => GenericSpectrum::avermectin(),
-        "biotin" => GenericSpectrum::biotin(),
-        "boscalid" => GenericSpectrum::boscalid(),
-        "chlorantraniliprole" => GenericSpectrum::chlorantraniliprole(),
-        "chlorfluazuron" => GenericSpectrum::chlorfluazuron(),
-        "chlorotoluron" => GenericSpectrum::chlorotoluron(),
-        "citric_acid" => GenericSpectrum::citric_acid(),
-        "clothianidin" => GenericSpectrum::clothianidin(),
-        "cocaine" => GenericSpectrum::cocaine(),
-        "cyazofamid" => GenericSpectrum::cyazofamid(),
-        "cymoxanil" => GenericSpectrum::cymoxanil(),
-        "cysteine" => GenericSpectrum::cysteine(),
-        "cytidine" => GenericSpectrum::cytidine(),
-        "cytidine_5_diphosphate" => GenericSpectrum::cytidine_5_diphosphate(),
-        "cytidine_5_triphosphate" => GenericSpectrum::cytidine_5_triphosphate(),
-        "desmosterol" => GenericSpectrum::desmosterol(),
-        "diflubenzuron" => GenericSpectrum::diflubenzuron(),
-        "dihydrosphingosine" => GenericSpectrum::dihydrosphingosine(),
-        "diniconazole" => GenericSpectrum::diniconazole(),
-        "dinotefuran" => GenericSpectrum::dinotefuran(),
-        "diuron" => GenericSpectrum::diuron(),
-        "doramectin" => GenericSpectrum::doramectin(),
-        "elaidic_acid" => GenericSpectrum::elaidic_acid(),
-        "epimeloscine" => GenericSpectrum::epimeloscine(),
-        "eprinomectin" => GenericSpectrum::eprinomectin(),
-        "ethiprole" => GenericSpectrum::ethiprole(),
-        "ethirimol" => GenericSpectrum::ethirimol(),
-        "fipronil" => GenericSpectrum::fipronil(),
-        "flonicamid" => GenericSpectrum::flonicamid(),
-        "fluazinam" => GenericSpectrum::fluazinam(),
-        "fludioxinil" => GenericSpectrum::fludioxinil(),
-        "flufenoxuron" => GenericSpectrum::flufenoxuron(),
-        "fluometuron" => GenericSpectrum::fluometuron(),
-        "flutolanil" => GenericSpectrum::flutolanil(),
-        "folic_acid" => GenericSpectrum::folic_acid(),
-        "forchlorfenuron" => GenericSpectrum::forchlorfenuron(),
-        "fuberidazole" => GenericSpectrum::fuberidazole(),
-        "glucose" => GenericSpectrum::glucose(),
-        "halofenozide" => GenericSpectrum::halofenozide(),
-        "hexaflumuron" => GenericSpectrum::hexaflumuron(),
-        "hydramethylnon" => GenericSpectrum::hydramethylnon(),
-        "hydroxy_cholesterol" | "hydroxycholesterol" => GenericSpectrum::hydroxy_cholesterol(),
-        "ivermectin" => GenericSpectrum::ivermectin(),
-        "lufenuron" => GenericSpectrum::lufenuron(),
-        "metaflumizone" => GenericSpectrum::metaflumizone(),
-        "n1_2_dierucoyl_sn_glycero_3_phosphocholine" => {
-            GenericSpectrum::n1_2_dierucoyl_sn_glycero_3_phosphocholine()
+    for entry in SPECTRUM_REGISTRY {
+        if name == entry.canonical || entry.aliases.contains(&name) {
+            return Some((entry.builder)());
         }
-        "n1_2_dioleoyl_rac_glycerol" => GenericSpectrum::n1_2_dioleoyl_rac_glycerol(),
-        "n1_oleoyl_sn_glycero_3_phosphocholine" => {
-            GenericSpectrum::n1_oleoyl_sn_glycero_3_phosphocholine()
-        }
-        "n1_palmitoyl_sn_glycero_3_phosphocholine" => {
-            GenericSpectrum::n1_palmitoyl_sn_glycero_3_phosphocholine()
-        }
-        "n2_5_dihydroxybenzoic_acid" => GenericSpectrum::n2_5_dihydroxybenzoic_acid(),
-        "n4_aminobenzoic_acid" => GenericSpectrum::n4_aminobenzoic_acid(),
-        "n4_cholesten_3_one" => GenericSpectrum::n4_cholesten_3_one(),
-        "neburon" => GenericSpectrum::neburon(),
-        "nitenpyram" => GenericSpectrum::nitenpyram(),
-        "novaluron" => GenericSpectrum::novaluron(),
-        "phenylalanine" => GenericSpectrum::phenylalanine(),
-        "prothioconazole" => GenericSpectrum::prothioconazole(),
-        "pymetrozine" => GenericSpectrum::pymetrozine(),
-        "pyrimethanil" => GenericSpectrum::pyrimethanil(),
-        "salicin" => GenericSpectrum::salicin(),
-        "sulfentrazone" => GenericSpectrum::sulfentrazone(),
-        "tebufenozide" => GenericSpectrum::tebufenozide(),
-        "teflubenzuron" => GenericSpectrum::teflubenzuron(),
-        "thidiazuron" => GenericSpectrum::thidiazuron(),
-        "thiophanate" => GenericSpectrum::thiophanate(),
-        "triadimefon" => GenericSpectrum::triadimefon(),
-        "triflumuron" => GenericSpectrum::triflumuron(),
-        _ => return None,
-    })
+    }
+    None
 }
