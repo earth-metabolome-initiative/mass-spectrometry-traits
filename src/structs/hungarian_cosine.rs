@@ -15,7 +15,7 @@ use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 
 /// Implementation of the cosine distance for mass spectra.
-pub struct ExactCosine<EXP, MZ> {
+pub struct HungarianCosine<EXP, MZ> {
     /// The power to which the mass/charge ratio is raised.
     mz_power: EXP,
     /// The power to which the intensity is raised.
@@ -24,7 +24,7 @@ pub struct ExactCosine<EXP, MZ> {
     mz_tolerance: MZ,
 }
 
-impl<EXP: Number, MZ: Number> ExactCosine<EXP, MZ> {
+impl<EXP: Number, MZ: Number> HungarianCosine<EXP, MZ> {
     /// Creates a new instance of the Hungarian cosine distance without
     /// validating numeric parameters.
     pub fn new_unchecked(mz_power: EXP, intensity_power: EXP, mz_tolerance: MZ) -> Self {
@@ -51,7 +51,7 @@ impl<EXP: Number, MZ: Number> ExactCosine<EXP, MZ> {
     }
 }
 
-impl<EXP, MZ> ExactCosine<EXP, MZ>
+impl<EXP, MZ> HungarianCosine<EXP, MZ>
 where
     EXP: Number + ToPrimitive,
     MZ: Number + ToPrimitive + PartialOrd,
@@ -81,7 +81,7 @@ where
     }
 }
 
-impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for ExactCosine<EXP, S1::Mz>
+impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for HungarianCosine<EXP, S1::Mz>
 where
     EXP: Number,
     S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
@@ -103,7 +103,7 @@ where
         // rows avoids an internal transpose in the solver.
         let (matching, row_f64, col_f64, row_products, col_products, max_row, max_col) =
             if left.len() <= right.len() {
-                let matching = left.matching_peaks(right, self.mz_tolerance);
+                let matching = left.matching_peaks(right, self.mz_tolerance)?;
                 (
                     matching,
                     &left_peaks.as_f64,
@@ -114,7 +114,7 @@ where
                     right_peaks.max_f64,
                 )
             } else {
-                let matching = right.matching_peaks(left, self.mz_tolerance);
+                let matching = right.matching_peaks(left, self.mz_tolerance)?;
                 (
                     matching,
                     &right_peaks.as_f64,
@@ -165,7 +165,7 @@ where
     }
 }
 
-impl<S1, S2, EXP> ScalarSpectralSimilarity<S1, S2> for ExactCosine<EXP, S1::Mz>
+impl<S1, S2, EXP> ScalarSpectralSimilarity<S1, S2> for HungarianCosine<EXP, S1::Mz>
 where
     EXP: Number,
     S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Finite + TotalOrd,

@@ -11,7 +11,7 @@ fn diagnose_adenine_adenosine() {
     let mz_power: f32 = 0.0;
     let intensity_power: f32 = 1.0;
 
-    // Compute peak products (same as ExactCosine)
+    // Compute peak products (same as HungarianCosine)
     let mut left_products: Vec<f32> = Vec::new();
     let mut left_sq_sum: f32 = 0.0;
     for (mz, int) in left.peaks() {
@@ -32,7 +32,9 @@ fn diagnose_adenine_adenosine() {
     println!("left_norm={left_norm:.6e}, right_norm={right_norm:.6e}");
 
     // Build matching peaks graph
-    let graph: RangedCSR2D<u32, u32, SimpleRange<u32>> = left.matching_peaks(&right, tolerance);
+    let graph: RangedCSR2D<u32, u32, SimpleRange<u32>> = left
+        .matching_peaks(&right, tolerance)
+        .expect("matching graph construction should succeed");
 
     // Promote to f64 for the cost matrix
     let left_f64: Vec<f64> = left_products.iter().map(|p| *p as f64).collect();

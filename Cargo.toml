@@ -14,7 +14,7 @@ criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.6"
 
 [[bench]]
-name = "exact_cosine"
+name = "hungarian_cosine"
 harness = false
 
 [[bench]]
@@ -22,5 +22,5 @@ name = "entropy_similarity"
 harness = false
 
 [[bench]]
-name = "modified_cosine"
+name = "modified_hungarian_cosine"
 harness = false

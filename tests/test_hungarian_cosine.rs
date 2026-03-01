@@ -1,15 +1,15 @@
-//! Tests for the ExactCosine similarity implementation.
+//! Tests for the HungarianCosine similarity implementation.
 //!
 //! Reference values are computed with matchms CosineHungarian
 //! (tolerance=0.1, mz_power=1.0, intensity_power=1.0).
 
 use mass_spectrometry::prelude::{
-    AspirinSpectrum, CocaineSpectrum, ExactCosine, GenericSpectrum, GlucoseSpectrum,
+    AspirinSpectrum, CocaineSpectrum, GenericSpectrum, GlucoseSpectrum, HungarianCosine,
     HydroxyCholesterolSpectrum, PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, Spectrum,
 };
 
-fn cosine() -> ExactCosine<f32, f32> {
-    ExactCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
+fn cosine() -> HungarianCosine<f32, f32> {
+    HungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
 fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {

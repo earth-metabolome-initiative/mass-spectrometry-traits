@@ -1,6 +1,6 @@
-//! Implementation of the modified cosine similarity for mass spectra.
+//! Implementation of the modified Hungarian cosine similarity for mass spectra.
 //!
-//! Modified Cosine extends Exact Cosine by also matching fragment peaks
+//! Modified Hungarian Cosine extends Hungarian Cosine by also matching fragment peaks
 //! shifted by the precursor mass difference. This captures neutral-loss-related
 //! peak correspondences between spectra with different precursor masses.
 //!
@@ -23,9 +23,9 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 
 /// Modified cosine similarity for mass spectra.
 ///
-/// Extends [`super::ExactCosine`] by also matching fragment peaks shifted by
+/// Extends [`super::HungarianCosine`] by also matching fragment peaks shifted by
 /// the precursor mass difference, using optimal (Crouse LAPJV) assignment.
-pub struct ModifiedCosine<EXP, MZ> {
+pub struct ModifiedHungarianCosine<EXP, MZ> {
     /// The power to which the mass/charge ratio is raised.
     mz_power: EXP,
     /// The power to which the intensity is raised.
@@ -34,7 +34,7 @@ pub struct ModifiedCosine<EXP, MZ> {
     mz_tolerance: MZ,
 }
 
-impl<EXP: Number, MZ: Number> ModifiedCosine<EXP, MZ> {
+impl<EXP: Number, MZ: Number> ModifiedHungarianCosine<EXP, MZ> {
     /// Creates a new instance of the modified cosine similarity without
     /// validating numeric parameters.
     pub fn new_unchecked(mz_power: EXP, intensity_power: EXP, mz_tolerance: MZ) -> Self {
@@ -61,7 +61,7 @@ impl<EXP: Number, MZ: Number> ModifiedCosine<EXP, MZ> {
     }
 }
 
-impl<EXP, MZ> ModifiedCosine<EXP, MZ>
+impl<EXP, MZ> ModifiedHungarianCosine<EXP, MZ>
 where
     EXP: Number + ToPrimitive,
     MZ: Number + ToPrimitive + PartialOrd,
@@ -91,7 +91,7 @@ where
     }
 }
 
-impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for ModifiedCosine<EXP, S1::Mz>
+impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for ModifiedHungarianCosine<EXP, S1::Mz>
 where
     EXP: Number,
     S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
@@ -115,7 +115,7 @@ where
         // graph. When swapping, negate the shift.
         let (matching, row_f64, col_f64, row_products, col_products, max_row, max_col) =
             if left.len() <= right.len() {
-                let matching = left.modified_matching_peaks(right, self.mz_tolerance, shift);
+                let matching = left.modified_matching_peaks(right, self.mz_tolerance, shift)?;
                 (
                     matching,
                     &left_peaks.as_f64,
@@ -129,7 +129,7 @@ where
                 // Negate shift when swapping row/column roles.
                 let negated_shift = S1::Mz::zero() - shift;
                 let matching =
-                    right.modified_matching_peaks(left, self.mz_tolerance, negated_shift);
+                    right.modified_matching_peaks(left, self.mz_tolerance, negated_shift)?;
                 (
                     matching,
                     &right_peaks.as_f64,
@@ -171,7 +171,7 @@ where
     }
 }
 
-impl<S1, S2, EXP> ScalarSpectralSimilarity<S1, S2> for ModifiedCosine<EXP, S1::Mz>
+impl<S1, S2, EXP> ScalarSpectralSimilarity<S1, S2> for ModifiedHungarianCosine<EXP, S1::Mz>
 where
     EXP: Number,
     S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Finite + TotalOrd,

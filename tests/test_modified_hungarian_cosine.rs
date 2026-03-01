@@ -1,17 +1,17 @@
-//! Tests for the ModifiedCosine similarity implementation.
+//! Tests for the ModifiedHungarianCosine similarity implementation.
 
 use mass_spectrometry::prelude::{
-    AspirinSpectrum, CocaineSpectrum, ExactCosine, GenericSpectrum, GlucoseSpectrum,
-    HydroxyCholesterolSpectrum, ModifiedCosine, PhenylalanineSpectrum, SalicinSpectrum,
+    AspirinSpectrum, CocaineSpectrum, GenericSpectrum, GlucoseSpectrum, HungarianCosine,
+    HydroxyCholesterolSpectrum, ModifiedHungarianCosine, PhenylalanineSpectrum, SalicinSpectrum,
     ScalarSimilarity, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 
-fn modified_cosine() -> ModifiedCosine<f32, f32> {
-    ModifiedCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
+fn modified_hungarian_cosine() -> ModifiedHungarianCosine<f32, f32> {
+    ModifiedHungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
 fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
-    let (sim, peaks) = modified_cosine()
+    let (sim, peaks) = modified_hungarian_cosine()
         .similarity(spectrum, spectrum)
         .expect("similarity computation should succeed");
     assert!(
@@ -61,21 +61,22 @@ fn self_similarity_phenylalanine() {
     assert_self_similarity("phenylalanine", &GenericSpectrum::phenylalanine());
 }
 
-// ---------- shift=0 equivalence with ExactCosine ----------
+// ---------- shift=0 equivalence with HungarianCosine ----------
 
-/// When both spectra have the same precursor m/z (shift = 0), ModifiedCosine
-/// should produce identical scores to ExactCosine.
+/// When both spectra have the same precursor m/z (shift = 0), ModifiedHungarianCosine
+/// should produce identical scores to HungarianCosine.
 fn assert_shift0_equivalence(
     name: &str,
     left: &GenericSpectrum<f32, f32>,
     right: &GenericSpectrum<f32, f32>,
 ) {
-    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let exact = HungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
 
     // Force same precursor by wrapping — but our test spectra already have
     // distinct precursors. Instead, when shift=0 (same precursor), the shifted
-    // window duplicates the direct window, so results must match ExactCosine.
+    // window duplicates the direct window, so results must match HungarianCosine.
     // We test this via self-similarity (precursor difference = 0).
     let (exact_score, exact_matches) = exact
         .similarity(left, right)
@@ -90,18 +91,18 @@ fn assert_shift0_equivalence(
     if left.precursor_mz() == right.precursor_mz() {
         assert!(
             (exact_score - mod_score).abs() < 1e-6,
-            "{name}: ExactCosine={exact_score} vs ModifiedCosine={mod_score}"
+            "{name}: HungarianCosine={exact_score} vs ModifiedHungarianCosine={mod_score}"
         );
         assert_eq!(
             exact_matches, mod_matches,
-            "{name}: ExactCosine matches={exact_matches} vs ModifiedCosine matches={mod_matches}"
+            "{name}: HungarianCosine matches={exact_matches} vs ModifiedHungarianCosine matches={mod_matches}"
         );
     } else {
         // With different precursors, modified cosine should find at least as
         // many matches (shifted window adds edges).
         assert!(
             mod_score >= exact_score - 1e-6,
-            "{name}: ModifiedCosine ({mod_score}) < ExactCosine ({exact_score})"
+            "{name}: ModifiedHungarianCosine ({mod_score}) < HungarianCosine ({exact_score})"
         );
     }
 }
@@ -136,7 +137,7 @@ fn assert_symmetry(
     left: &GenericSpectrum<f32, f32>,
     right: &GenericSpectrum<f32, f32>,
 ) {
-    let mc = modified_cosine();
+    let mc = modified_hungarian_cosine();
     let (score_ab, matches_ab) = mc
         .similarity(left, right)
         .expect("similarity computation should succeed");
@@ -191,7 +192,7 @@ fn symmetry_hydroxy_cholesterol_phenylalanine() {
 /// Direct matches: mz=50 ↔ mz=50 (within tol=0.1)
 /// Shifted matches: mz=80 matches mz=90 because 80 - (-10) = 90
 ///
-/// With ExactCosine, only 1 match (mz=50). With ModifiedCosine, 2 matches.
+/// With HungarianCosine, only 1 match (mz=50). With ModifiedHungarianCosine, 2 matches.
 #[test]
 fn synthetic_shifted_match() {
     let mut a = GenericSpectrum::with_capacity(100.0_f32, 2);
@@ -202,8 +203,9 @@ fn synthetic_shifted_match() {
     b.add_peak(50.0, 1000.0).unwrap();
     b.add_peak(90.0, 500.0).unwrap();
 
-    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let exact = HungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
 
     let (exact_score, exact_matches) = exact
         .similarity(&a, &b)
@@ -212,11 +214,14 @@ fn synthetic_shifted_match() {
         .similarity(&a, &b)
         .expect("similarity computation should succeed");
 
-    assert_eq!(exact_matches, 1, "ExactCosine should find 1 match");
-    assert_eq!(mod_matches, 2, "ModifiedCosine should find 2 matches");
+    assert_eq!(exact_matches, 1, "HungarianCosine should find 1 match");
+    assert_eq!(
+        mod_matches, 2,
+        "ModifiedHungarianCosine should find 2 matches"
+    );
     assert!(
         mod_score > exact_score,
-        "ModifiedCosine score ({mod_score}) should exceed ExactCosine ({exact_score})"
+        "ModifiedHungarianCosine score ({mod_score}) should exceed HungarianCosine ({exact_score})"
     );
 
     // Verify symmetry on the synthetic case.
@@ -243,7 +248,8 @@ fn synthetic_overlapping_windows() {
     b.add_peak(50.0, 1000.0).unwrap();
     b.add_peak(80.0, 500.0).unwrap();
 
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
     let (score, matches) = modified
         .similarity(&a, &b)
         .expect("similarity computation should succeed");
@@ -263,7 +269,8 @@ fn synthetic_no_matches() {
     let mut b = GenericSpectrum::with_capacity(200.0_f32, 1);
     b.add_peak(300.0, 1000.0).unwrap();
 
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
     let (score, matches) = modified
         .similarity(&a, &b)
         .expect("similarity computation should succeed");
@@ -275,7 +282,7 @@ fn synthetic_no_matches() {
     assert_eq!(matches, 0);
 }
 
-/// Verify that ModifiedCosine with shift=0 yields exact same score as ExactCosine
+/// Verify that ModifiedHungarianCosine with shift=0 yields exact same score as HungarianCosine
 /// by using spectra with identical precursor masses.
 #[test]
 fn exact_equivalence_same_precursor() {
@@ -289,8 +296,9 @@ fn exact_equivalence_same_precursor() {
     b.add_peak(80.03, 600.0).unwrap();
     b.add_peak(150.0, 300.0).unwrap();
 
-    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let exact = HungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
 
     let (exact_score, exact_matches) = exact
         .similarity(&a, &b)
@@ -301,7 +309,7 @@ fn exact_equivalence_same_precursor() {
 
     assert!(
         (exact_score - mod_score).abs() < 1e-6,
-        "Same precursor: ExactCosine={exact_score} vs ModifiedCosine={mod_score}"
+        "Same precursor: HungarianCosine={exact_score} vs ModifiedHungarianCosine={mod_score}"
     );
     assert_eq!(exact_matches, mod_matches);
 }

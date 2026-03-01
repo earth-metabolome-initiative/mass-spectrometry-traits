@@ -1,4 +1,4 @@
-//! Validation of ModifiedCosine against matchms ModifiedCosine (greedy).
+//! Validation of ModifiedHungarianCosine against matchms ModifiedCosine (greedy).
 //!
 //! Since matchms uses greedy assignment and we use optimal (Crouse LAPJV),
 //! our scores should be >= matchms scores. We also verify symmetry.
@@ -9,7 +9,7 @@ use support::spectrum_factory::build_spectrum;
 mod support;
 
 #[test]
-fn validate_modified_cosine_against_matchms() {
+fn validate_modified_hungarian_cosine_against_matchms() {
     let csv_path = "tests/fixtures/expected_modified_cosine_similarities.csv";
     let mut reader = csv::Reader::from_path(csv_path)
         .unwrap_or_else(|e| panic!("Failed to open {csv_path}: {e}"));
@@ -34,8 +34,8 @@ fn validate_modified_cosine_against_matchms() {
             continue;
         };
 
-        let modified =
-            ModifiedCosine::new(mz_power, intensity_power, tolerance).expect("valid scorer config");
+        let modified = ModifiedHungarianCosine::new(mz_power, intensity_power, tolerance)
+            .expect("valid scorer config");
         let (score, matches) = modified
             .similarity(&left, &right)
             .expect("similarity computation should succeed");

@@ -1,16 +1,16 @@
-//! Criterion benchmark to evaluate the performance of the `exact_cosine`
+//! Criterion benchmark to evaluate the performance of the `HungarianCosine`
 //! function.
 
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use mass_spectrometry::prelude::{
-    EpimeloscineSpectrum, ExactCosine, GenericSpectrum, HydroxyCholesterolSpectrum,
+    EpimeloscineSpectrum, GenericSpectrum, HungarianCosine, HydroxyCholesterolSpectrum,
     SalicinSpectrum, ScalarSimilarity,
 };
 
-/// Benchmark for the `exact_cosine` function.
-fn bench_exact_cosine(c: &mut Criterion) {
+/// Benchmark for the `HungarianCosine` function.
+fn bench_hungarian_cosine(c: &mut Criterion) {
     let salicin = GenericSpectrum::salicin();
     let hydroxy_cholesterol = GenericSpectrum::hydroxy_cholesterol();
     let epimeloscine: GenericSpectrum<f64, f64> = GenericSpectrum::epimeloscine();
@@ -19,7 +19,7 @@ fn bench_exact_cosine(c: &mut Criterion) {
     let intensity_power = 1.0;
     let mz_tolerance = 0.1;
     let cosine =
-        ExactCosine::new(mz_power, intensity_power, mz_tolerance).expect("valid scorer config");
+        HungarianCosine::new(mz_power, intensity_power, mz_tolerance).expect("valid scorer config");
 
     c.bench_function("cosine_hydroxy_cholesterol_salicin", |b| {
         b.iter(|| {
@@ -76,5 +76,5 @@ fn bench_exact_cosine(c: &mut Criterion) {
     epimeloscine_group.finish();
 }
 
-criterion_group!(benches, bench_exact_cosine);
+criterion_group!(benches, bench_hungarian_cosine);
 criterion_main!(benches);

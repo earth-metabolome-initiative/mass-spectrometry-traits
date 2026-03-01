@@ -5,10 +5,11 @@ use multi_ranged::{BiRange, SimpleRange};
 use num_traits::Zero;
 
 use crate::prelude::Annotation;
+use crate::structs::SimilarityComputationError;
 
 #[inline]
-fn to_matrix_index(index: usize) -> Option<u32> {
-    u32::try_from(index).ok()
+fn to_matrix_index(index: usize) -> Result<u32, SimilarityComputationError> {
+    u32::try_from(index).map_err(|_| SimilarityComputationError::IndexOverflow)
 }
 
 /// Trait for a single Spectrum.
@@ -101,13 +102,11 @@ pub trait Spectrum {
         &self,
         other: &S,
         mz_tolerance: Self::Mz,
-    ) -> RangedCSR2D<u32, u32, SimpleRange<u32>> {
+    ) -> Result<RangedCSR2D<u32, u32, SimpleRange<u32>>, SimilarityComputationError> {
         let mut matching_peaks = RangedCSR2D::default();
         let mut lowest_other_index = 0;
         for (i, mz) in self.mz().enumerate() {
-            let Some(row) = to_matrix_index(i) else {
-                break;
-            };
+            let row = to_matrix_index(i)?;
             let mut new_lowest = lowest_other_index;
             for (j, other_mz) in other
                 .mz_from(lowest_other_index)
@@ -128,15 +127,14 @@ pub trait Spectrum {
                     new_lowest = j + 1;
                     continue;
                 }
-                let Some(col) = to_matrix_index(j) else {
-                    break;
-                };
-                let _ = MatrixMut::add(&mut matching_peaks, (row, col));
+                let col = to_matrix_index(j)?;
+                MatrixMut::add(&mut matching_peaks, (row, col))
+                    .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
             }
             lowest_other_index = new_lowest;
         }
 
-        matching_peaks
+        Ok(matching_peaks)
     }
 
     /// Returns the matching peaks graph for modified cosine similarity.
@@ -156,15 +154,13 @@ pub trait Spectrum {
         other: &S,
         mz_tolerance: Self::Mz,
         mz_shift: Self::Mz,
-    ) -> RangedCSR2D<u32, u32, BiRange<u32>> {
+    ) -> Result<RangedCSR2D<u32, u32, BiRange<u32>>, SimilarityComputationError> {
         let mut matching_peaks: RangedCSR2D<u32, u32, BiRange<u32>> = RangedCSR2D::default();
         let mut lowest_direct = 0usize;
         let mut lowest_shifted = 0usize;
 
         for (i, mz) in self.mz().enumerate() {
-            let Some(row) = to_matrix_index(i) else {
-                break;
-            };
+            let row = to_matrix_index(i)?;
             // The shifted window centre: we look for right peaks near
             // mz - shift, i.e. mz2 ∈ [mz - shift - tol, mz - shift + tol].
             let shifted_centre = mz - mz_shift;
@@ -216,10 +212,9 @@ pub trait Spectrum {
                         continue;
                     }
                 }
-                let Some(col) = to_matrix_index(j) else {
-                    break;
-                };
-                let _ = MatrixMut::add(&mut matching_peaks, (row, col));
+                let col = to_matrix_index(j)?;
+                MatrixMut::add(&mut matching_peaks, (row, col))
+                    .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
             }
             *first_lowest = new_first_lowest;
 
@@ -249,15 +244,13 @@ pub trait Spectrum {
                         continue;
                     }
                 }
-                let Some(col) = to_matrix_index(j) else {
-                    break;
-                };
+                let col = to_matrix_index(j)?;
                 let _ = MatrixMut::add(&mut matching_peaks, (row, col));
             }
             *second_lowest = new_second_lowest;
         }
 
-        matching_peaks
+        Ok(matching_peaks)
     }
 }
 

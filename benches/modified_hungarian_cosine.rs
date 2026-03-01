@@ -1,16 +1,16 @@
-//! Criterion benchmark to evaluate the performance of the `modified_cosine`
+//! Criterion benchmark to evaluate the performance of the `ModifiedHungarianCosine`
 //! function.
 
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use mass_spectrometry::prelude::{
-    EpimeloscineSpectrum, GenericSpectrum, HydroxyCholesterolSpectrum, ModifiedCosine,
+    EpimeloscineSpectrum, GenericSpectrum, HydroxyCholesterolSpectrum, ModifiedHungarianCosine,
     SalicinSpectrum, ScalarSimilarity,
 };
 
-/// Benchmark for the `modified_cosine` function.
-fn bench_modified_cosine(c: &mut Criterion) {
+/// Benchmark for the `ModifiedHungarianCosine` function.
+fn bench_modified_hungarian_cosine(c: &mut Criterion) {
     let salicin = GenericSpectrum::salicin();
     let hydroxy_cholesterol = GenericSpectrum::hydroxy_cholesterol();
     let epimeloscine: GenericSpectrum<f64, f64> = GenericSpectrum::epimeloscine();
@@ -18,8 +18,8 @@ fn bench_modified_cosine(c: &mut Criterion) {
     let mz_power = 1.0;
     let intensity_power = 1.0;
     let mz_tolerance = 0.1;
-    let cosine =
-        ModifiedCosine::new(mz_power, intensity_power, mz_tolerance).expect("valid scorer config");
+    let cosine = ModifiedHungarianCosine::new(mz_power, intensity_power, mz_tolerance)
+        .expect("valid scorer config");
 
     c.bench_function("modified_cosine_hydroxy_cholesterol_salicin", |b| {
         b.iter(|| {
@@ -79,5 +79,5 @@ fn bench_modified_cosine(c: &mut Criterion) {
     epimeloscine_group.finish();
 }
 
-criterion_group!(benches, bench_modified_cosine);
+criterion_group!(benches, bench_modified_hungarian_cosine);
 criterion_main!(benches);

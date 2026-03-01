@@ -2,8 +2,8 @@
 
 use geometric_traits::prelude::*;
 use mass_spectrometry::prelude::{
-    EntropySimilarity, ExactCosine, GenericSpectrum, ModifiedCosine, ScalarSimilarity, Spectrum,
-    SpectrumAlloc, SpectrumMut,
+    EntropySimilarity, GenericSpectrum, HungarianCosine, ModifiedHungarianCosine, ScalarSimilarity,
+    Spectrum, SpectrumAlloc, SpectrumMut,
 };
 use multi_ranged::{BiRange, SimpleRange};
 
@@ -23,7 +23,9 @@ fn matching_peaks_supports_indices_above_u16() {
     let left = linear_spectrum(n, 1_000_000.0);
     let right = linear_spectrum(n, 1_000_000.0);
 
-    let graph: RangedCSR2D<u32, u32, SimpleRange<u32>> = left.matching_peaks(&right, 0.0);
+    let graph: RangedCSR2D<u32, u32, SimpleRange<u32>> = left
+        .matching_peaks(&right, 0.0)
+        .expect("matching graph construction should succeed");
 
     assert_eq!(graph.number_of_rows() as usize, n);
     assert_eq!(graph.number_of_columns() as usize, n);
@@ -40,7 +42,9 @@ fn modified_matching_peaks_supports_indices_above_u16() {
     let left = linear_spectrum(n, 1_000_000.0);
     let right = linear_spectrum(n, 1_000_000.0);
 
-    let graph: RangedCSR2D<u32, u32, BiRange<u32>> = left.modified_matching_peaks(&right, 0.0, 0.0);
+    let graph: RangedCSR2D<u32, u32, BiRange<u32>> = left
+        .modified_matching_peaks(&right, 0.0, 0.0)
+        .expect("matching graph construction should succeed");
 
     assert_eq!(graph.number_of_rows() as usize, n);
     assert_eq!(graph.number_of_columns() as usize, n);
@@ -65,8 +69,9 @@ fn similarity_match_count_type_is_usize() {
     let left = linear_spectrum(4, 1_000.0);
     let right = linear_spectrum(4, 1_000.0);
 
-    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
+    let exact = HungarianCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
     let entropy = EntropySimilarity::unweighted(0.0_f32).expect("valid scorer config");
 
     let (_s1, m1): (f32, usize) = exact

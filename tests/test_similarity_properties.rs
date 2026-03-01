@@ -1,8 +1,8 @@
 //! Property tests for core similarity invariants.
 
 use mass_spectrometry::prelude::{
-    EntropySimilarity, ExactCosine, GenericSpectrum, ModifiedCosine, ScalarSimilarity, Spectrum,
-    SpectrumAlloc, SpectrumMut,
+    EntropySimilarity, GenericSpectrum, HungarianCosine, ModifiedHungarianCosine, ScalarSimilarity,
+    Spectrum, SpectrumAlloc, SpectrumMut,
 };
 use proptest::prelude::*;
 
@@ -30,12 +30,12 @@ fn build_spectrum(precursor_mz: f32, peaks: Vec<(f32, f32)>) -> GenericSpectrum<
     spectrum
 }
 
-fn scorer_exact() -> ExactCosine<f32, f32> {
-    ExactCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
+fn scorer_exact() -> HungarianCosine<f32, f32> {
+    HungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
-fn scorer_modified() -> ModifiedCosine<f32, f32> {
-    ModifiedCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
+fn scorer_modified() -> ModifiedHungarianCosine<f32, f32> {
+    ModifiedHungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
 fn scorer_entropy() -> EntropySimilarity<f32> {

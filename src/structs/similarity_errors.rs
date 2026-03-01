@@ -32,6 +32,8 @@ pub enum SimilarityComputationError {
     ValueNotRepresentable(&'static str),
     /// Peak index did not fit expected matrix index type.
     IndexOverflow,
+    /// Graph construction failed while inserting a match edge.
+    GraphConstructionFailed,
     /// Assignment solver failed unexpectedly.
     AssignmentFailed,
 }
@@ -43,6 +45,9 @@ impl core::fmt::Display for SimilarityComputationError {
                 write!(f, "value `{name}` must be representable as f64")
             }
             Self::IndexOverflow => write!(f, "peak index overflow while building match graph"),
+            Self::GraphConstructionFailed => {
+                write!(f, "failed while building peak matching graph")
+            }
             Self::AssignmentFailed => write!(f, "assignment solver failed"),
         }
     }
