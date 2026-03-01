@@ -6,6 +6,11 @@ use num_traits::Zero;
 
 use crate::prelude::Annotation;
 
+#[inline]
+fn to_matrix_index(index: usize) -> Option<u32> {
+    u32::try_from(index).ok()
+}
+
 /// Trait for a single Spectrum.
 pub trait Spectrum {
     /// The type of the Intensity.
@@ -100,6 +105,9 @@ pub trait Spectrum {
         let mut matching_peaks = RangedCSR2D::default();
         let mut lowest_other_index = 0;
         for (i, mz) in self.mz().enumerate() {
+            let Some(row) = to_matrix_index(i) else {
+                break;
+            };
             let mut new_lowest = lowest_other_index;
             for (j, other_mz) in other
                 .mz_from(lowest_other_index)
@@ -120,10 +128,10 @@ pub trait Spectrum {
                     new_lowest = j + 1;
                     continue;
                 }
-                let row = u32::try_from(i).expect("Too many peaks for u32 row index");
-                let col = u32::try_from(j).expect("Too many peaks for u32 column index");
-                MatrixMut::add(&mut matching_peaks, (row, col))
-                    .expect("The peak matching graph should not contain duplicate edges.");
+                let Some(col) = to_matrix_index(j) else {
+                    break;
+                };
+                let _ = MatrixMut::add(&mut matching_peaks, (row, col));
             }
             lowest_other_index = new_lowest;
         }
@@ -154,6 +162,9 @@ pub trait Spectrum {
         let mut lowest_shifted = 0usize;
 
         for (i, mz) in self.mz().enumerate() {
+            let Some(row) = to_matrix_index(i) else {
+                break;
+            };
             // The shifted window centre: we look for right peaks near
             // mz - shift, i.e. mz2 ∈ [mz - shift - tol, mz - shift + tol].
             let shifted_centre = mz - mz_shift;
@@ -205,10 +216,10 @@ pub trait Spectrum {
                         continue;
                     }
                 }
-                let row = u32::try_from(i).expect("Too many peaks for u32 row index");
-                let col = u32::try_from(j).expect("Too many peaks for u32 column index");
-                MatrixMut::add(&mut matching_peaks, (row, col))
-                    .expect("Duplicate edge in first window");
+                let Some(col) = to_matrix_index(j) else {
+                    break;
+                };
+                let _ = MatrixMut::add(&mut matching_peaks, (row, col));
             }
             *first_lowest = new_first_lowest;
 
@@ -238,8 +249,9 @@ pub trait Spectrum {
                         continue;
                     }
                 }
-                let row = u32::try_from(i).expect("Too many peaks for u32 row index");
-                let col = u32::try_from(j).expect("Too many peaks for u32 column index");
+                let Some(col) = to_matrix_index(j) else {
+                    break;
+                };
                 let _ = MatrixMut::add(&mut matching_peaks, (row, col));
             }
             *second_lowest = new_second_lowest;

@@ -7,11 +7,13 @@ use mass_spectrometry::prelude::{
 };
 
 fn modified_cosine() -> ModifiedCosine<f32, f32> {
-    ModifiedCosine::new(1.0, 1.0, 0.1)
+    ModifiedCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
 fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
-    let (sim, peaks) = modified_cosine().similarity(spectrum, spectrum);
+    let (sim, peaks) = modified_cosine()
+        .similarity(spectrum, spectrum)
+        .expect("similarity computation should succeed");
     assert!(
         (1.0_f32 - sim).abs() < 1e-6,
         "{name} self-similarity: expected ~1.0, got {sim}"
@@ -68,15 +70,19 @@ fn assert_shift0_equivalence(
     left: &GenericSpectrum<f32, f32>,
     right: &GenericSpectrum<f32, f32>,
 ) {
-    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
+    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
 
     // Force same precursor by wrapping — but our test spectra already have
     // distinct precursors. Instead, when shift=0 (same precursor), the shifted
     // window duplicates the direct window, so results must match ExactCosine.
     // We test this via self-similarity (precursor difference = 0).
-    let (exact_score, exact_matches) = exact.similarity(left, right);
-    let (mod_score, mod_matches) = modified.similarity(left, right);
+    let (exact_score, exact_matches) = exact
+        .similarity(left, right)
+        .expect("similarity computation should succeed");
+    let (mod_score, mod_matches) = modified
+        .similarity(left, right)
+        .expect("similarity computation should succeed");
 
     // When precursors differ, modified may find additional matches, so
     // score >= exact_score. But when precursors are equal (self-similarity),
@@ -131,8 +137,12 @@ fn assert_symmetry(
     right: &GenericSpectrum<f32, f32>,
 ) {
     let mc = modified_cosine();
-    let (score_ab, matches_ab) = mc.similarity(left, right);
-    let (score_ba, matches_ba) = mc.similarity(right, left);
+    let (score_ab, matches_ab) = mc
+        .similarity(left, right)
+        .expect("similarity computation should succeed");
+    let (score_ba, matches_ba) = mc
+        .similarity(right, left)
+        .expect("similarity computation should succeed");
     assert!(
         (score_ab - score_ba).abs() < 1e-6,
         "{name}: sim(A,B)={score_ab} != sim(B,A)={score_ba}"
@@ -192,11 +202,15 @@ fn synthetic_shifted_match() {
     b.add_peak(50.0, 1000.0).unwrap();
     b.add_peak(90.0, 500.0).unwrap();
 
-    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
+    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
 
-    let (exact_score, exact_matches) = exact.similarity(&a, &b);
-    let (mod_score, mod_matches) = modified.similarity(&a, &b);
+    let (exact_score, exact_matches) = exact
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
+    let (mod_score, mod_matches) = modified
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
 
     assert_eq!(exact_matches, 1, "ExactCosine should find 1 match");
     assert_eq!(mod_matches, 2, "ModifiedCosine should find 2 matches");
@@ -206,7 +220,9 @@ fn synthetic_shifted_match() {
     );
 
     // Verify symmetry on the synthetic case.
-    let (mod_score_ba, mod_matches_ba) = modified.similarity(&b, &a);
+    let (mod_score_ba, mod_matches_ba) = modified
+        .similarity(&b, &a)
+        .expect("similarity computation should succeed");
     assert!(
         (mod_score - mod_score_ba).abs() < 1e-6,
         "Synthetic symmetry: {mod_score} != {mod_score_ba}"
@@ -227,8 +243,10 @@ fn synthetic_overlapping_windows() {
     b.add_peak(50.0, 1000.0).unwrap();
     b.add_peak(80.0, 500.0).unwrap();
 
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
-    let (score, matches) = modified.similarity(&a, &b);
+    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let (score, matches) = modified
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
 
     // Both peaks should match directly; the shifted window nearly overlaps
     // but should not cause panics.
@@ -245,8 +263,10 @@ fn synthetic_no_matches() {
     let mut b = GenericSpectrum::with_capacity(200.0_f32, 1);
     b.add_peak(300.0, 1000.0).unwrap();
 
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
-    let (score, matches) = modified.similarity(&a, &b);
+    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let (score, matches) = modified
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
 
     assert!(
         score.abs() < 1e-9,
@@ -269,11 +289,15 @@ fn exact_equivalence_same_precursor() {
     b.add_peak(80.03, 600.0).unwrap();
     b.add_peak(150.0, 300.0).unwrap();
 
-    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
+    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
 
-    let (exact_score, exact_matches) = exact.similarity(&a, &b);
-    let (mod_score, mod_matches) = modified.similarity(&a, &b);
+    let (exact_score, exact_matches) = exact
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
+    let (mod_score, mod_matches) = modified
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
 
     assert!(
         (exact_score - mod_score).abs() < 1e-6,

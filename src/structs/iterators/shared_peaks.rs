@@ -82,8 +82,9 @@ where
             if shifted_right_mz <= *left_mz + self.tolerance
                 && *left_mz <= shifted_right_mz + self.tolerance
             {
-                let left = self.left.next().expect("left peeked");
-                let right = self.right.next().expect("right peeked");
+                let (Some(left), Some(right)) = (self.left.next(), self.right.next()) else {
+                    return None;
+                };
                 return Some((left, right));
             }
 

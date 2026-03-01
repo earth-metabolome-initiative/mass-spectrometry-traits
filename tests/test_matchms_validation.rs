@@ -45,8 +45,11 @@ fn validate_against_matchms() {
             }
         };
 
-        let cosine = ExactCosine::new(mz_power, intensity_power, tolerance);
-        let (score, matches) = cosine.similarity(&left, &right);
+        let cosine =
+            ExactCosine::new(mz_power, intensity_power, tolerance).expect("valid scorer config");
+        let (score, matches) = cosine
+            .similarity(&left, &right)
+            .expect("similarity computation should succeed");
 
         let score_diff = (score as f64 - expected_score).abs();
         // Allow 1e-4 tolerance: for very large spectra (5000+ peaks) with

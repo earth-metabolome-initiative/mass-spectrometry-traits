@@ -53,8 +53,10 @@ fn entropy_match_count_scales_past_u16() {
     let left = linear_spectrum(n, 1_000_000.0);
     let right = linear_spectrum(n, 1_000_000.0);
 
-    let entropy = EntropySimilarity::unweighted(0.0);
-    let (_score, matches) = entropy.similarity(&left, &right);
+    let entropy = EntropySimilarity::unweighted(0.0).expect("valid scorer config");
+    let (_score, matches) = entropy
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
     assert_eq!(matches, n);
 }
 
@@ -63,13 +65,19 @@ fn similarity_match_count_type_is_usize() {
     let left = linear_spectrum(4, 1_000.0);
     let right = linear_spectrum(4, 1_000.0);
 
-    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.0_f32);
-    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.0_f32);
-    let entropy = EntropySimilarity::unweighted(0.0_f32);
+    let exact = ExactCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
+    let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
+    let entropy = EntropySimilarity::unweighted(0.0_f32).expect("valid scorer config");
 
-    let (_s1, m1): (f32, usize) = exact.similarity(&left, &right);
-    let (_s2, m2): (f32, usize) = modified.similarity(&left, &right);
-    let (_s3, m3): (f32, usize) = entropy.similarity(&left, &right);
+    let (_s1, m1): (f32, usize) = exact
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+    let (_s2, m2): (f32, usize) = modified
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+    let (_s3, m3): (f32, usize) = entropy
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
 
     assert_eq!(m1, 4);
     assert_eq!(m2, 4);

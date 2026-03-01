@@ -10,11 +10,11 @@ use mass_spectrometry::prelude::{
 };
 
 fn weighted() -> EntropySimilarity<f32> {
-    EntropySimilarity::weighted(0.1)
+    EntropySimilarity::weighted(0.1).expect("valid scorer config")
 }
 
 fn unweighted() -> EntropySimilarity<f32> {
-    EntropySimilarity::unweighted(0.1)
+    EntropySimilarity::unweighted(0.1).expect("valid scorer config")
 }
 
 fn assert_self_similarity(
@@ -22,7 +22,9 @@ fn assert_self_similarity(
     spectrum: &GenericSpectrum<f32, f32>,
     scorer: &EntropySimilarity<f32>,
 ) {
-    let (sim, peaks) = scorer.similarity(spectrum, spectrum);
+    let (sim, peaks) = scorer
+        .similarity(spectrum, spectrum)
+        .expect("similarity computation should succeed");
     assert!(
         (1.0_f32 - sim).abs() < 1e-5,
         "{name} self-similarity: expected ~1.0, got {sim}"
@@ -39,7 +41,9 @@ fn assert_cross(
     expected_matches: usize,
     tol: f32,
 ) {
-    let (sim, peaks) = scorer.similarity(a, b);
+    let (sim, peaks) = scorer
+        .similarity(a, b)
+        .expect("similarity computation should succeed");
     assert!(
         (sim - expected_sim).abs() < tol,
         "{name}: expected {expected_sim}, got {sim} (diff={})",
@@ -54,8 +58,12 @@ fn assert_symmetry(
     b: &GenericSpectrum<f32, f32>,
     scorer: &EntropySimilarity<f32>,
 ) {
-    let (sim_ab, peaks_ab) = scorer.similarity(a, b);
-    let (sim_ba, peaks_ba) = scorer.similarity(b, a);
+    let (sim_ab, peaks_ab) = scorer
+        .similarity(a, b)
+        .expect("similarity computation should succeed");
+    let (sim_ba, peaks_ba) = scorer
+        .similarity(b, a)
+        .expect("similarity computation should succeed");
     assert!(
         (sim_ab - sim_ba).abs() < 1e-6,
         "{name} symmetry: {sim_ab} vs {sim_ba}"

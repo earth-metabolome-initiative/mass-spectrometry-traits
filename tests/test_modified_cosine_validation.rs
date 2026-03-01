@@ -34,8 +34,11 @@ fn validate_modified_cosine_against_matchms() {
             continue;
         };
 
-        let modified = ModifiedCosine::new(mz_power, intensity_power, tolerance);
-        let (score, matches) = modified.similarity(&left, &right);
+        let modified =
+            ModifiedCosine::new(mz_power, intensity_power, tolerance).expect("valid scorer config");
+        let (score, matches) = modified
+            .similarity(&left, &right)
+            .expect("similarity computation should succeed");
         let our_score = score as f64;
 
         // Our optimal assignment should produce scores >= matchms greedy
@@ -48,7 +51,9 @@ fn validate_modified_cosine_against_matchms() {
         }
 
         // Also verify symmetry.
-        let (score_ba, matches_ba) = modified.similarity(&right, &left);
+        let (score_ba, matches_ba) = modified
+            .similarity(&right, &left)
+            .expect("similarity computation should succeed");
         if (score as f64 - score_ba as f64).abs() >= 1e-6 {
             failures.push(format!(
                 "{left_name} vs {right_name} (tol={tolerance}, mz_pow={mz_power}, int_pow={intensity_power}): \
