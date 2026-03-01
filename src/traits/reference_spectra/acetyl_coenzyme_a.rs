@@ -75,24 +75,10 @@ pub const ACETYL_COENZYME_A_INTENSITIES: [f32; 50] = [
     29246.314453,
 ];
 
-impl<S: SpectrumAlloc> AcetylCoenzymeASpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn acetyl_coenzyme_a() -> Self {
-        let mut spectrum = Self::with_capacity(
-            ACETYL_COENZYME_A_PRECURSOR_MZ.into(),
-            ACETYL_COENZYME_A_MZ.len(),
-        );
-        for (&mz, &intensity) in ACETYL_COENZYME_A_MZ
-            .iter()
-            .zip(ACETYL_COENZYME_A_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add acetyl coenzyme a peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    AcetylCoenzymeASpectrum,
+    acetyl_coenzyme_a,
+    ACETYL_COENZYME_A_PRECURSOR_MZ,
+    ACETYL_COENZYME_A_MZ,
+    ACETYL_COENZYME_A_INTENSITIES
+);

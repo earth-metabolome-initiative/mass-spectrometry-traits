@@ -29,22 +29,10 @@ pub const METAFLUMIZONE_INTENSITIES: [f32; 50] = [
     228.0, 146.0, 57633.0, 144.0, 97.0, 166.0, 62.0, 98.0, 1681.0, 191.0,
 ];
 
-impl<S: SpectrumAlloc> MetaflumizoneSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn metaflumizone() -> Self {
-        let mut spectrum =
-            Self::with_capacity(METAFLUMIZONE_PRECURSOR_MZ.into(), METAFLUMIZONE_MZ.len());
-        for (&mz, &intensity) in METAFLUMIZONE_MZ
-            .iter()
-            .zip(METAFLUMIZONE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add metaflumizone peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    MetaflumizoneSpectrum,
+    metaflumizone,
+    METAFLUMIZONE_PRECURSOR_MZ,
+    METAFLUMIZONE_MZ,
+    METAFLUMIZONE_INTENSITIES
+);

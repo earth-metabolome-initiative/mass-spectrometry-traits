@@ -48,24 +48,10 @@ pub const N2_5_DIHYDROXYBENZOIC_ACID_INTENSITIES: [f32; 26] = [
     72867.859375,
 ];
 
-impl<S: SpectrumAlloc> N25DihydroxybenzoicAcidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn n2_5_dihydroxybenzoic_acid() -> Self {
-        let mut spectrum = Self::with_capacity(
-            N2_5_DIHYDROXYBENZOIC_ACID_PRECURSOR_MZ.into(),
-            N2_5_DIHYDROXYBENZOIC_ACID_MZ.len(),
-        );
-        for (&mz, &intensity) in N2_5_DIHYDROXYBENZOIC_ACID_MZ
-            .iter()
-            .zip(N2_5_DIHYDROXYBENZOIC_ACID_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add n2 5 dihydroxybenzoic acid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    N25DihydroxybenzoicAcidSpectrum,
+    n2_5_dihydroxybenzoic_acid,
+    N2_5_DIHYDROXYBENZOIC_ACID_PRECURSOR_MZ,
+    N2_5_DIHYDROXYBENZOIC_ACID_MZ,
+    N2_5_DIHYDROXYBENZOIC_ACID_INTENSITIES
+);

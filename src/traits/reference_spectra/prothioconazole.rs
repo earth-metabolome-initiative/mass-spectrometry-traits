@@ -75,24 +75,10 @@ pub const PROTHIOCONAZOLE_INTENSITIES: [f32; 50] = [
     16998.355469,
 ];
 
-impl<S: SpectrumAlloc> ProthioconazoleSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn prothioconazole() -> Self {
-        let mut spectrum = Self::with_capacity(
-            PROTHIOCONAZOLE_PRECURSOR_MZ.into(),
-            PROTHIOCONAZOLE_MZ.len(),
-        );
-        for (&mz, &intensity) in PROTHIOCONAZOLE_MZ
-            .iter()
-            .zip(PROTHIOCONAZOLE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add prothioconazole peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ProthioconazoleSpectrum,
+    prothioconazole,
+    PROTHIOCONAZOLE_PRECURSOR_MZ,
+    PROTHIOCONAZOLE_MZ,
+    PROTHIOCONAZOLE_INTENSITIES
+);

@@ -41,18 +41,10 @@ pub const CYTIDINE_INTENSITIES: [f32; 20] = [
     820996.125,
 ];
 
-impl<S: SpectrumAlloc> CytidineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn cytidine() -> Self {
-        let mut spectrum = Self::with_capacity(CYTIDINE_PRECURSOR_MZ.into(), CYTIDINE_MZ.len());
-        for (&mz, &intensity) in CYTIDINE_MZ.iter().zip(CYTIDINE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add cytidine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    CytidineSpectrum,
+    cytidine,
+    CYTIDINE_PRECURSOR_MZ,
+    CYTIDINE_MZ,
+    CYTIDINE_INTENSITIES
+);

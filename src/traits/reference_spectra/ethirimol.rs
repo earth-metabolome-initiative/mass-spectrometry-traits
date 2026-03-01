@@ -75,18 +75,10 @@ pub const ETHIRIMOL_INTENSITIES: [f32; 50] = [
     42055.011719,
 ];
 
-impl<S: SpectrumAlloc> EthirimolSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn ethirimol() -> Self {
-        let mut spectrum = Self::with_capacity(ETHIRIMOL_PRECURSOR_MZ.into(), ETHIRIMOL_MZ.len());
-        for (&mz, &intensity) in ETHIRIMOL_MZ.iter().zip(ETHIRIMOL_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add ethirimol peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    EthirimolSpectrum,
+    ethirimol,
+    ETHIRIMOL_PRECURSOR_MZ,
+    ETHIRIMOL_MZ,
+    ETHIRIMOL_INTENSITIES
+);

@@ -67,19 +67,10 @@ pub const THIDIAZURON_INTENSITIES: [f32; 43] = [
     7742.956055,
 ];
 
-impl<S: SpectrumAlloc> ThidiazuronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn thidiazuron() -> Self {
-        let mut spectrum =
-            Self::with_capacity(THIDIAZURON_PRECURSOR_MZ.into(), THIDIAZURON_MZ.len());
-        for (&mz, &intensity) in THIDIAZURON_MZ.iter().zip(THIDIAZURON_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add thidiazuron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ThidiazuronSpectrum,
+    thidiazuron,
+    THIDIAZURON_PRECURSOR_MZ,
+    THIDIAZURON_MZ,
+    THIDIAZURON_INTENSITIES
+);

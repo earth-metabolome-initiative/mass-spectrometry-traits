@@ -52,19 +52,10 @@ pub const DINICONAZOLE_INTENSITIES: [f32; 30] = [
     6645.259277,
 ];
 
-impl<S: SpectrumAlloc> DiniconazoleSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn diniconazole() -> Self {
-        let mut spectrum =
-            Self::with_capacity(DINICONAZOLE_PRECURSOR_MZ.into(), DINICONAZOLE_MZ.len());
-        for (&mz, &intensity) in DINICONAZOLE_MZ.iter().zip(DINICONAZOLE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add diniconazole peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    DiniconazoleSpectrum,
+    diniconazole,
+    DINICONAZOLE_PRECURSOR_MZ,
+    DINICONAZOLE_MZ,
+    DINICONAZOLE_INTENSITIES
+);

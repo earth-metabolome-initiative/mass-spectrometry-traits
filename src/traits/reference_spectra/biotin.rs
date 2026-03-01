@@ -70,18 +70,10 @@ pub const BIOTIN_INTENSITIES: [f32; 46] = [
     179656880.0,
 ];
 
-impl<S: SpectrumAlloc> BiotinSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn biotin() -> Self {
-        let mut spectrum = Self::with_capacity(BIOTIN_PRECURSOR_MZ.into(), BIOTIN_MZ.len());
-        for (&mz, &intensity) in BIOTIN_MZ.iter().zip(BIOTIN_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add biotin peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    BiotinSpectrum,
+    biotin,
+    BIOTIN_PRECURSOR_MZ,
+    BIOTIN_MZ,
+    BIOTIN_INTENSITIES
+);

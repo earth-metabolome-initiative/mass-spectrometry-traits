@@ -29,18 +29,10 @@ pub const CYAZOFAMID_INTENSITIES: [f32; 50] = [
     263.0, 24420.0, 8897.0, 142.0, 185.0, 177.0, 212.0, 215.0, 173.0, 180.0, 192.0,
 ];
 
-impl<S: SpectrumAlloc> CyazofamidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn cyazofamid() -> Self {
-        let mut spectrum = Self::with_capacity(CYAZOFAMID_PRECURSOR_MZ.into(), CYAZOFAMID_MZ.len());
-        for (&mz, &intensity) in CYAZOFAMID_MZ.iter().zip(CYAZOFAMID_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add cyazofamid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    CyazofamidSpectrum,
+    cyazofamid,
+    CYAZOFAMID_PRECURSOR_MZ,
+    CYAZOFAMID_MZ,
+    CYAZOFAMID_INTENSITIES
+);

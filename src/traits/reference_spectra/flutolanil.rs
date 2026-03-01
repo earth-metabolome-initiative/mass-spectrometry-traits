@@ -61,18 +61,10 @@ pub const FLUTOLANIL_INTENSITIES: [f32; 38] = [
     97915.03125,
 ];
 
-impl<S: SpectrumAlloc> FlutolanilSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn flutolanil() -> Self {
-        let mut spectrum = Self::with_capacity(FLUTOLANIL_PRECURSOR_MZ.into(), FLUTOLANIL_MZ.len());
-        for (&mz, &intensity) in FLUTOLANIL_MZ.iter().zip(FLUTOLANIL_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add flutolanil peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    FlutolanilSpectrum,
+    flutolanil,
+    FLUTOLANIL_PRECURSOR_MZ,
+    FLUTOLANIL_MZ,
+    FLUTOLANIL_INTENSITIES
+);

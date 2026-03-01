@@ -60,24 +60,10 @@ pub const FORCHLORFENURON_INTENSITIES: [f32; 37] = [
     13934.783203,
 ];
 
-impl<S: SpectrumAlloc> ForchlorfenuronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn forchlorfenuron() -> Self {
-        let mut spectrum = Self::with_capacity(
-            FORCHLORFENURON_PRECURSOR_MZ.into(),
-            FORCHLORFENURON_MZ.len(),
-        );
-        for (&mz, &intensity) in FORCHLORFENURON_MZ
-            .iter()
-            .zip(FORCHLORFENURON_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add forchlorfenuron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ForchlorfenuronSpectrum,
+    forchlorfenuron,
+    FORCHLORFENURON_PRECURSOR_MZ,
+    FORCHLORFENURON_MZ,
+    FORCHLORFENURON_INTENSITIES
+);

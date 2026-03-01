@@ -56,24 +56,10 @@ pub const DIHYDROSPHINGOSINE_INTENSITIES: [f32; 33] = [
     4255582.5,
 ];
 
-impl<S: SpectrumAlloc> DihydrosphingosineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn dihydrosphingosine() -> Self {
-        let mut spectrum = Self::with_capacity(
-            DIHYDROSPHINGOSINE_PRECURSOR_MZ.into(),
-            DIHYDROSPHINGOSINE_MZ.len(),
-        );
-        for (&mz, &intensity) in DIHYDROSPHINGOSINE_MZ
-            .iter()
-            .zip(DIHYDROSPHINGOSINE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add dihydrosphingosine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    DihydrosphingosineSpectrum,
+    dihydrosphingosine,
+    DIHYDROSPHINGOSINE_PRECURSOR_MZ,
+    DIHYDROSPHINGOSINE_MZ,
+    DIHYDROSPHINGOSINE_INTENSITIES
+);

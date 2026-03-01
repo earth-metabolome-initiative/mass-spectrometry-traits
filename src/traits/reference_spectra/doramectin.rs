@@ -29,18 +29,10 @@ pub const DORAMECTIN_INTENSITIES: [f32; 50] = [
     291.0, 338.0, 661.0, 325.0, 2866.0, 1302.0, 4955.0, 418.0, 846.0, 1725.0, 616.0,
 ];
 
-impl<S: SpectrumAlloc> DoramectinSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn doramectin() -> Self {
-        let mut spectrum = Self::with_capacity(DORAMECTIN_PRECURSOR_MZ.into(), DORAMECTIN_MZ.len());
-        for (&mz, &intensity) in DORAMECTIN_MZ.iter().zip(DORAMECTIN_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add doramectin peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    DoramectinSpectrum,
+    doramectin,
+    DORAMECTIN_PRECURSOR_MZ,
+    DORAMECTIN_MZ,
+    DORAMECTIN_INTENSITIES
+);

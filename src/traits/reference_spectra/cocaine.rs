@@ -29,18 +29,10 @@ pub const COCAINE_INTENSITIES: [f32; 9] = [
     86052.375,
 ];
 
-impl<S: SpectrumAlloc> CocaineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn cocaine() -> Self {
-        let mut spectrum = Self::with_capacity(COCAINE_PRECURSOR_MZ.into(), COCAINE_MZ.len());
-        for (&mz, &intensity) in COCAINE_MZ.iter().zip(COCAINE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add cocaine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    CocaineSpectrum,
+    cocaine,
+    COCAINE_PRECURSOR_MZ,
+    COCAINE_MZ,
+    COCAINE_INTENSITIES
+);

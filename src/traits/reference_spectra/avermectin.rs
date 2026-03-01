@@ -29,18 +29,10 @@ pub const AVERMECTIN_INTENSITIES: [f32; 50] = [
     370.0, 451.0, 223.0, 379.0, 811.0, 3268.0, 1692.0, 209.0, 3958.0, 594.0, 1400.0,
 ];
 
-impl<S: SpectrumAlloc> AvermectinSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn avermectin() -> Self {
-        let mut spectrum = Self::with_capacity(AVERMECTIN_PRECURSOR_MZ.into(), AVERMECTIN_MZ.len());
-        for (&mz, &intensity) in AVERMECTIN_MZ.iter().zip(AVERMECTIN_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add avermectin peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    AvermectinSpectrum,
+    avermectin,
+    AVERMECTIN_PRECURSOR_MZ,
+    AVERMECTIN_MZ,
+    AVERMECTIN_INTENSITIES
+);

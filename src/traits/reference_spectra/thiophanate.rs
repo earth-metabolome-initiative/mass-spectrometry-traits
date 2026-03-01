@@ -75,19 +75,10 @@ pub const THIOPHANATE_INTENSITIES: [f32; 50] = [
     384.20224,
 ];
 
-impl<S: SpectrumAlloc> ThiophanateSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn thiophanate() -> Self {
-        let mut spectrum =
-            Self::with_capacity(THIOPHANATE_PRECURSOR_MZ.into(), THIOPHANATE_MZ.len());
-        for (&mz, &intensity) in THIOPHANATE_MZ.iter().zip(THIOPHANATE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add thiophanate peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ThiophanateSpectrum,
+    thiophanate,
+    THIOPHANATE_PRECURSOR_MZ,
+    THIOPHANATE_MZ,
+    THIOPHANATE_INTENSITIES
+);

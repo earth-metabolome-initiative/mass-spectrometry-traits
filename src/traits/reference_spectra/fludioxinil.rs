@@ -71,19 +71,10 @@ pub const FLUDIOXINIL_INTENSITIES: [f32; 47] = [
     103181.8125,
 ];
 
-impl<S: SpectrumAlloc> FludioxinilSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn fludioxinil() -> Self {
-        let mut spectrum =
-            Self::with_capacity(FLUDIOXINIL_PRECURSOR_MZ.into(), FLUDIOXINIL_MZ.len());
-        for (&mz, &intensity) in FLUDIOXINIL_MZ.iter().zip(FLUDIOXINIL_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add fludioxinil peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    FludioxinilSpectrum,
+    fludioxinil,
+    FLUDIOXINIL_PRECURSOR_MZ,
+    FLUDIOXINIL_MZ,
+    FLUDIOXINIL_INTENSITIES
+);

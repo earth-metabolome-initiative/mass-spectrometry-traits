@@ -59,18 +59,10 @@ pub const CYMOXANIL_INTENSITIES: [f32; 36] = [
     2510.677734,
 ];
 
-impl<S: SpectrumAlloc> CymoxanilSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn cymoxanil() -> Self {
-        let mut spectrum = Self::with_capacity(CYMOXANIL_PRECURSOR_MZ.into(), CYMOXANIL_MZ.len());
-        for (&mz, &intensity) in CYMOXANIL_MZ.iter().zip(CYMOXANIL_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add cymoxanil peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    CymoxanilSpectrum,
+    cymoxanil,
+    CYMOXANIL_PRECURSOR_MZ,
+    CYMOXANIL_MZ,
+    CYMOXANIL_INTENSITIES
+);

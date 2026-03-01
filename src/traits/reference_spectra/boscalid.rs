@@ -23,18 +23,10 @@ pub const BOSCALID_INTENSITIES: [f32; 17] = [
     145.0, 169.0, 1752.0,
 ];
 
-impl<S: SpectrumAlloc> BoscalidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn boscalid() -> Self {
-        let mut spectrum = Self::with_capacity(BOSCALID_PRECURSOR_MZ.into(), BOSCALID_MZ.len());
-        for (&mz, &intensity) in BOSCALID_MZ.iter().zip(BOSCALID_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add boscalid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    BoscalidSpectrum,
+    boscalid,
+    BOSCALID_PRECURSOR_MZ,
+    BOSCALID_MZ,
+    BOSCALID_INTENSITIES
+);

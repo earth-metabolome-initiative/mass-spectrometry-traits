@@ -34,22 +34,10 @@ pub const ARACHIDIC_ACID_INTENSITIES: [f32; 14] = [
     62529.160156,
 ];
 
-impl<S: SpectrumAlloc> ArachidicAcidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn arachidic_acid() -> Self {
-        let mut spectrum =
-            Self::with_capacity(ARACHIDIC_ACID_PRECURSOR_MZ.into(), ARACHIDIC_ACID_MZ.len());
-        for (&mz, &intensity) in ARACHIDIC_ACID_MZ
-            .iter()
-            .zip(ARACHIDIC_ACID_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add arachidic acid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ArachidicAcidSpectrum,
+    arachidic_acid,
+    ARACHIDIC_ACID_PRECURSOR_MZ,
+    ARACHIDIC_ACID_MZ,
+    ARACHIDIC_ACID_INTENSITIES
+);

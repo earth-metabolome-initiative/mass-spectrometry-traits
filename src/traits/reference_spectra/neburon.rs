@@ -52,18 +52,10 @@ pub const NEBURON_INTENSITIES: [f32; 30] = [
     11251.418945,
 ];
 
-impl<S: SpectrumAlloc> NeburonSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn neburon() -> Self {
-        let mut spectrum = Self::with_capacity(NEBURON_PRECURSOR_MZ.into(), NEBURON_MZ.len());
-        for (&mz, &intensity) in NEBURON_MZ.iter().zip(NEBURON_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add neburon peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    NeburonSpectrum,
+    neburon,
+    NEBURON_PRECURSOR_MZ,
+    NEBURON_MZ,
+    NEBURON_INTENSITIES
+);

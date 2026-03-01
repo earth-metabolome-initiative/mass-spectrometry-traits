@@ -75,19 +75,10 @@ pub const DESMOSTEROL_INTENSITIES: [f32; 50] = [
     255675520.0,
 ];
 
-impl<S: SpectrumAlloc> DesmosterolSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn desmosterol() -> Self {
-        let mut spectrum =
-            Self::with_capacity(DESMOSTEROL_PRECURSOR_MZ.into(), DESMOSTEROL_MZ.len());
-        for (&mz, &intensity) in DESMOSTEROL_MZ.iter().zip(DESMOSTEROL_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add desmosterol peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    DesmosterolSpectrum,
+    desmosterol,
+    DESMOSTEROL_PRECURSOR_MZ,
+    DESMOSTEROL_MZ,
+    DESMOSTEROL_INTENSITIES
+);

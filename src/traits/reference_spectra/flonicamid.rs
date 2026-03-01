@@ -42,18 +42,10 @@ pub const FLONICAMID_INTENSITIES: [f32; 21] = [
     2163029.75,
 ];
 
-impl<S: SpectrumAlloc> FlonicamidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn flonicamid() -> Self {
-        let mut spectrum = Self::with_capacity(FLONICAMID_PRECURSOR_MZ.into(), FLONICAMID_MZ.len());
-        for (&mz, &intensity) in FLONICAMID_MZ.iter().zip(FLONICAMID_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add flonicamid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    FlonicamidSpectrum,
+    flonicamid,
+    FLONICAMID_PRECURSOR_MZ,
+    FLONICAMID_MZ,
+    FLONICAMID_INTENSITIES
+);

@@ -47,18 +47,10 @@ pub const ARGININE_INTENSITIES: [f32; 25] = [
     249996.796875,
 ];
 
-impl<S: SpectrumAlloc> ArginineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn arginine() -> Self {
-        let mut spectrum = Self::with_capacity(ARGININE_PRECURSOR_MZ.into(), ARGININE_MZ.len());
-        for (&mz, &intensity) in ARGININE_MZ.iter().zip(ARGININE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add arginine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ArginineSpectrum,
+    arginine,
+    ARGININE_PRECURSOR_MZ,
+    ARGININE_MZ,
+    ARGININE_INTENSITIES
+);

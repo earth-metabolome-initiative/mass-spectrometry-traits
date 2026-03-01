@@ -59,24 +59,10 @@ pub const N1_PALMITOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES: [f32; 36] = [
     125002984.0,
 ];
 
-impl<S: SpectrumAlloc> N1PalmitoylSnGlycero3PhosphocholineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn n1_palmitoyl_sn_glycero_3_phosphocholine() -> Self {
-        let mut spectrum = Self::with_capacity(
-            N1_PALMITOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_PRECURSOR_MZ.into(),
-            N1_PALMITOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ.len(),
-        );
-        for (&mz, &intensity) in N1_PALMITOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ
-            .iter()
-            .zip(N1_PALMITOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add n1 palmitoyl sn glycero 3 phosphocholine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    N1PalmitoylSnGlycero3PhosphocholineSpectrum,
+    n1_palmitoyl_sn_glycero_3_phosphocholine,
+    N1_PALMITOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_PRECURSOR_MZ,
+    N1_PALMITOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ,
+    N1_PALMITOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES
+);

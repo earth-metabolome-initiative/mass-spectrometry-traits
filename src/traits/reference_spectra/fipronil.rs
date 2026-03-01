@@ -28,18 +28,10 @@ pub const FIPRONIL_INTENSITIES: [f32; 45] = [
     90.0, 943.0, 351.0, 229.0, 30.0,
 ];
 
-impl<S: SpectrumAlloc> FipronilSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn fipronil() -> Self {
-        let mut spectrum = Self::with_capacity(FIPRONIL_PRECURSOR_MZ.into(), FIPRONIL_MZ.len());
-        for (&mz, &intensity) in FIPRONIL_MZ.iter().zip(FIPRONIL_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add fipronil peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    FipronilSpectrum,
+    fipronil,
+    FIPRONIL_PRECURSOR_MZ,
+    FIPRONIL_MZ,
+    FIPRONIL_INTENSITIES
+);

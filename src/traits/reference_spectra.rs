@@ -1,6 +1,28 @@
 //! Submodule providing reference spectra for common molecules.
 #![allow(clippy::excessive_precision)]
 
+macro_rules! impl_reference_spectrum {
+    ($trait_name:ident, $method_name:ident, $precursor:ident, $mz:ident, $intensities:ident) => {
+        impl<S: crate::traits::SpectrumAlloc> $trait_name for S
+        where
+            S::Mz: From<f32>,
+            S::Intensity: From<f32>,
+        {
+            fn $method_name() -> Self {
+                let mut spectrum = Self::with_capacity($precursor.into(), $mz.len());
+                for (&mz, &intensity) in $mz.iter().zip($intensities.iter()) {
+                    spectrum
+                        .add_peak(mz.into(), intensity.into())
+                        .expect("Failed to add reference peak to spectrum");
+                }
+                spectrum
+            }
+        }
+    };
+}
+
+pub(crate) use impl_reference_spectrum;
+
 pub mod acephate;
 pub mod acetyl_coenzyme_a;
 pub mod adenine;

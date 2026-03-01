@@ -45,19 +45,10 @@ pub const CITRIC_ACID_INTENSITIES: [f32; 24] = [
     185818.765625,
 ];
 
-impl<S: SpectrumAlloc> CitricAcidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn citric_acid() -> Self {
-        let mut spectrum =
-            Self::with_capacity(CITRIC_ACID_PRECURSOR_MZ.into(), CITRIC_ACID_MZ.len());
-        for (&mz, &intensity) in CITRIC_ACID_MZ.iter().zip(CITRIC_ACID_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add citric acid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    CitricAcidSpectrum,
+    citric_acid,
+    CITRIC_ACID_PRECURSOR_MZ,
+    CITRIC_ACID_MZ,
+    CITRIC_ACID_INTENSITIES
+);

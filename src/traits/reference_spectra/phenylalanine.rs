@@ -44,19 +44,10 @@ pub const PHENYLANINE_INTENSITIES: [f32; 23] = [
     590.623_3,
 ];
 
-impl<S: SpectrumAlloc> PhenylalanineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn phenylalanine() -> Self {
-        let mut spectrum =
-            Self::with_capacity(PHENYLANINE_PRECURSOR_MZ.into(), PHENYLANINE_MZ.len());
-        for (&mz, &intensity) in PHENYLANINE_MZ.iter().zip(PHENYLANINE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add Phenylalanine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    PhenylalanineSpectrum,
+    phenylalanine,
+    PHENYLANINE_PRECURSOR_MZ,
+    PHENYLANINE_MZ,
+    PHENYLANINE_INTENSITIES
+);

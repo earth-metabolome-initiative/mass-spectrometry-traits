@@ -57,24 +57,10 @@ pub const N1_OLEOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES: [f32; 34] = [
     70303520.0,
 ];
 
-impl<S: SpectrumAlloc> N1OleoylSnGlycero3PhosphocholineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn n1_oleoyl_sn_glycero_3_phosphocholine() -> Self {
-        let mut spectrum = Self::with_capacity(
-            N1_OLEOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_PRECURSOR_MZ.into(),
-            N1_OLEOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ.len(),
-        );
-        for (&mz, &intensity) in N1_OLEOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ
-            .iter()
-            .zip(N1_OLEOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add n1 oleoyl sn glycero 3 phosphocholine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    N1OleoylSnGlycero3PhosphocholineSpectrum,
+    n1_oleoyl_sn_glycero_3_phosphocholine,
+    N1_OLEOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_PRECURSOR_MZ,
+    N1_OLEOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ,
+    N1_OLEOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES
+);

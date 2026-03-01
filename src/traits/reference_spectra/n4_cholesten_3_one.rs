@@ -75,24 +75,10 @@ pub const N4_CHOLESTEN_3_ONE_INTENSITIES: [f32; 50] = [
     255675520.0,
 ];
 
-impl<S: SpectrumAlloc> N4Cholesten3OneSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn n4_cholesten_3_one() -> Self {
-        let mut spectrum = Self::with_capacity(
-            N4_CHOLESTEN_3_ONE_PRECURSOR_MZ.into(),
-            N4_CHOLESTEN_3_ONE_MZ.len(),
-        );
-        for (&mz, &intensity) in N4_CHOLESTEN_3_ONE_MZ
-            .iter()
-            .zip(N4_CHOLESTEN_3_ONE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add n4 cholesten 3 one peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    N4Cholesten3OneSpectrum,
+    n4_cholesten_3_one,
+    N4_CHOLESTEN_3_ONE_PRECURSOR_MZ,
+    N4_CHOLESTEN_3_ONE_MZ,
+    N4_CHOLESTEN_3_ONE_INTENSITIES
+);

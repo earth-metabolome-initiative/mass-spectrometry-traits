@@ -75,22 +75,10 @@ pub const CHLORFLUAZURON_INTENSITIES: [f32; 50] = [
     4143.660645,
 ];
 
-impl<S: SpectrumAlloc> ChlorfluazuronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn chlorfluazuron() -> Self {
-        let mut spectrum =
-            Self::with_capacity(CHLORFLUAZURON_PRECURSOR_MZ.into(), CHLORFLUAZURON_MZ.len());
-        for (&mz, &intensity) in CHLORFLUAZURON_MZ
-            .iter()
-            .zip(CHLORFLUAZURON_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add chlorfluazuron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ChlorfluazuronSpectrum,
+    chlorfluazuron,
+    CHLORFLUAZURON_PRECURSOR_MZ,
+    CHLORFLUAZURON_MZ,
+    CHLORFLUAZURON_INTENSITIES
+);

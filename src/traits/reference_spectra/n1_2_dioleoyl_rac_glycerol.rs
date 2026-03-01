@@ -75,24 +75,10 @@ pub const N1_2_DIOLEOYL_RAC_GLYCEROL_INTENSITIES: [f32; 50] = [
     3383829.5,
 ];
 
-impl<S: SpectrumAlloc> N12DioleoylRacGlycerolSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn n1_2_dioleoyl_rac_glycerol() -> Self {
-        let mut spectrum = Self::with_capacity(
-            N1_2_DIOLEOYL_RAC_GLYCEROL_PRECURSOR_MZ.into(),
-            N1_2_DIOLEOYL_RAC_GLYCEROL_MZ.len(),
-        );
-        for (&mz, &intensity) in N1_2_DIOLEOYL_RAC_GLYCEROL_MZ
-            .iter()
-            .zip(N1_2_DIOLEOYL_RAC_GLYCEROL_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add n1 2 dioleoyl rac glycerol peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    N12DioleoylRacGlycerolSpectrum,
+    n1_2_dioleoyl_rac_glycerol,
+    N1_2_DIOLEOYL_RAC_GLYCEROL_PRECURSOR_MZ,
+    N1_2_DIOLEOYL_RAC_GLYCEROL_MZ,
+    N1_2_DIOLEOYL_RAC_GLYCEROL_INTENSITIES
+);

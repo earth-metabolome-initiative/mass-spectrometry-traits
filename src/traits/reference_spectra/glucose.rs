@@ -34,18 +34,10 @@ pub const GLUCOSE_INTENSITIES: [f32; 14] = [
     9_220.535,
 ];
 
-impl<S: SpectrumAlloc> GlucoseSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn glucose() -> Self {
-        let mut spectrum = Self::with_capacity(GLUCOSE_PRECURSOR_MZ.into(), GLUCOSE_MZ.len());
-        for (&mz, &intensity) in GLUCOSE_MZ.iter().zip(GLUCOSE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add glucose peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    GlucoseSpectrum,
+    glucose,
+    GLUCOSE_PRECURSOR_MZ,
+    GLUCOSE_MZ,
+    GLUCOSE_INTENSITIES
+);

@@ -47,18 +47,10 @@ pub const FOLIC_ACID_INTENSITIES: [f32; 25] = [
     462587.34375,
 ];
 
-impl<S: SpectrumAlloc> FolicAcidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn folic_acid() -> Self {
-        let mut spectrum = Self::with_capacity(FOLIC_ACID_PRECURSOR_MZ.into(), FOLIC_ACID_MZ.len());
-        for (&mz, &intensity) in FOLIC_ACID_MZ.iter().zip(FOLIC_ACID_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add folic acid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    FolicAcidSpectrum,
+    folic_acid,
+    FOLIC_ACID_PRECURSOR_MZ,
+    FOLIC_ACID_MZ,
+    FOLIC_ACID_INTENSITIES
+);

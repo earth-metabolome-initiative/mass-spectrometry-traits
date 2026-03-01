@@ -71,19 +71,10 @@ pub const TRIFLUMURON_INTENSITIES: [f32; 47] = [
     112693.210938,
 ];
 
-impl<S: SpectrumAlloc> TriflumuronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn triflumuron() -> Self {
-        let mut spectrum =
-            Self::with_capacity(TRIFLUMURON_PRECURSOR_MZ.into(), TRIFLUMURON_MZ.len());
-        for (&mz, &intensity) in TRIFLUMURON_MZ.iter().zip(TRIFLUMURON_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add triflumuron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    TriflumuronSpectrum,
+    triflumuron,
+    TRIFLUMURON_PRECURSOR_MZ,
+    TRIFLUMURON_MZ,
+    TRIFLUMURON_INTENSITIES
+);

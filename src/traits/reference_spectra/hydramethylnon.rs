@@ -29,22 +29,10 @@ pub const HYDRAMETHYLNON_INTENSITIES: [f32; 50] = [
     511.0, 4193.0, 249.0, 618.0, 231.0, 2032.0, 6201.0, 316.0, 1599.0, 289.0, 28977.0,
 ];
 
-impl<S: SpectrumAlloc> HydramethylnonSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn hydramethylnon() -> Self {
-        let mut spectrum =
-            Self::with_capacity(HYDRAMETHYLNON_PRECURSOR_MZ.into(), HYDRAMETHYLNON_MZ.len());
-        for (&mz, &intensity) in HYDRAMETHYLNON_MZ
-            .iter()
-            .zip(HYDRAMETHYLNON_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add hydramethylnon peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    HydramethylnonSpectrum,
+    hydramethylnon,
+    HYDRAMETHYLNON_PRECURSOR_MZ,
+    HYDRAMETHYLNON_MZ,
+    HYDRAMETHYLNON_INTENSITIES
+);

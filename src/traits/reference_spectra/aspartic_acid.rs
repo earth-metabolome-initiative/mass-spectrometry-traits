@@ -34,22 +34,10 @@ pub const ASPARTIC_ACID_INTENSITIES: [f32; 14] = [
     27315.875,
 ];
 
-impl<S: SpectrumAlloc> AsparticAcidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn aspartic_acid() -> Self {
-        let mut spectrum =
-            Self::with_capacity(ASPARTIC_ACID_PRECURSOR_MZ.into(), ASPARTIC_ACID_MZ.len());
-        for (&mz, &intensity) in ASPARTIC_ACID_MZ
-            .iter()
-            .zip(ASPARTIC_ACID_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add aspartic acid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    AsparticAcidSpectrum,
+    aspartic_acid,
+    ASPARTIC_ACID_PRECURSOR_MZ,
+    ASPARTIC_ACID_MZ,
+    ASPARTIC_ACID_INTENSITIES
+);

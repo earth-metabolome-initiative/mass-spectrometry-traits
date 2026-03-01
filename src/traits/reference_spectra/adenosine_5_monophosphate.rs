@@ -36,24 +36,10 @@ pub const ADENOSINE_5_MONOPHOSPHATE_INTENSITIES: [f32; 16] = [
     537890.4375,
 ];
 
-impl<S: SpectrumAlloc> Adenosine5MonophosphateSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn adenosine_5_monophosphate() -> Self {
-        let mut spectrum = Self::with_capacity(
-            ADENOSINE_5_MONOPHOSPHATE_PRECURSOR_MZ.into(),
-            ADENOSINE_5_MONOPHOSPHATE_MZ.len(),
-        );
-        for (&mz, &intensity) in ADENOSINE_5_MONOPHOSPHATE_MZ
-            .iter()
-            .zip(ADENOSINE_5_MONOPHOSPHATE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add adenosine 5 monophosphate peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    Adenosine5MonophosphateSpectrum,
+    adenosine_5_monophosphate,
+    ADENOSINE_5_MONOPHOSPHATE_PRECURSOR_MZ,
+    ADENOSINE_5_MONOPHOSPHATE_MZ,
+    ADENOSINE_5_MONOPHOSPHATE_INTENSITIES
+);

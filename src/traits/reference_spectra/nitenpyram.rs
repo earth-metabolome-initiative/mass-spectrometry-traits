@@ -75,18 +75,10 @@ pub const NITENPYRAM_INTENSITIES: [f32; 50] = [
     1650.996216,
 ];
 
-impl<S: SpectrumAlloc> NitenpyramSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn nitenpyram() -> Self {
-        let mut spectrum = Self::with_capacity(NITENPYRAM_PRECURSOR_MZ.into(), NITENPYRAM_MZ.len());
-        for (&mz, &intensity) in NITENPYRAM_MZ.iter().zip(NITENPYRAM_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add nitenpyram peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    NitenpyramSpectrum,
+    nitenpyram,
+    NITENPYRAM_PRECURSOR_MZ,
+    NITENPYRAM_MZ,
+    NITENPYRAM_INTENSITIES
+);

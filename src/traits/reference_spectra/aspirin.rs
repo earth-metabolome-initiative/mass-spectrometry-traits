@@ -25,18 +25,10 @@ pub const ASPIRIN_INTENSITIES: [f32; 29] = [
     120675.9,
 ];
 
-impl<S: SpectrumAlloc> AspirinSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn aspirin() -> Self {
-        let mut spectrum = Self::with_capacity(ASPIRIN_PRECURSOR_MZ.into(), ASPIRIN_MZ.len());
-        for (&mz, &intensity) in ASPIRIN_MZ.iter().zip(ASPIRIN_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add ASPIRIN peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    AspirinSpectrum,
+    aspirin,
+    ASPIRIN_PRECURSOR_MZ,
+    ASPIRIN_MZ,
+    ASPIRIN_INTENSITIES
+);

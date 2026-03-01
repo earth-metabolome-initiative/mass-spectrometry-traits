@@ -39,18 +39,10 @@ pub const CYSTEINE_INTENSITIES: [f32; 18] = [
     4254.670898,
 ];
 
-impl<S: SpectrumAlloc> CysteineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn cysteine() -> Self {
-        let mut spectrum = Self::with_capacity(CYSTEINE_PRECURSOR_MZ.into(), CYSTEINE_MZ.len());
-        for (&mz, &intensity) in CYSTEINE_MZ.iter().zip(CYSTEINE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add cysteine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    CysteineSpectrum,
+    cysteine,
+    CYSTEINE_PRECURSOR_MZ,
+    CYSTEINE_MZ,
+    CYSTEINE_INTENSITIES
+);

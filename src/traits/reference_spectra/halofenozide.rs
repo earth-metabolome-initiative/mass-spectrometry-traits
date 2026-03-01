@@ -66,19 +66,10 @@ pub const HALOFENOZIDE_INTENSITIES: [f32; 42] = [
     87944.8125,
 ];
 
-impl<S: SpectrumAlloc> HalofenozideSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn halofenozide() -> Self {
-        let mut spectrum =
-            Self::with_capacity(HALOFENOZIDE_PRECURSOR_MZ.into(), HALOFENOZIDE_MZ.len());
-        for (&mz, &intensity) in HALOFENOZIDE_MZ.iter().zip(HALOFENOZIDE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add halofenozide peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    HalofenozideSpectrum,
+    halofenozide,
+    HALOFENOZIDE_PRECURSOR_MZ,
+    HALOFENOZIDE_MZ,
+    HALOFENOZIDE_INTENSITIES
+);

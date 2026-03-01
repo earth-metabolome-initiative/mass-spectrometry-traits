@@ -75,18 +75,10 @@ pub const ETHIPROLE_INTENSITIES: [f32; 50] = [
     25583.904297,
 ];
 
-impl<S: SpectrumAlloc> EthiproleSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn ethiprole() -> Self {
-        let mut spectrum = Self::with_capacity(ETHIPROLE_PRECURSOR_MZ.into(), ETHIPROLE_MZ.len());
-        for (&mz, &intensity) in ETHIPROLE_MZ.iter().zip(ETHIPROLE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add ethiprole peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    EthiproleSpectrum,
+    ethiprole,
+    ETHIPROLE_PRECURSOR_MZ,
+    ETHIPROLE_MZ,
+    ETHIPROLE_INTENSITIES
+);

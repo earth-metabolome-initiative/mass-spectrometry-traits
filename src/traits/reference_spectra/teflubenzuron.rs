@@ -75,22 +75,10 @@ pub const TEFLUBENZURON_INTENSITIES: [f32; 50] = [
     17804.919922,
 ];
 
-impl<S: SpectrumAlloc> TeflubenzuronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn teflubenzuron() -> Self {
-        let mut spectrum =
-            Self::with_capacity(TEFLUBENZURON_PRECURSOR_MZ.into(), TEFLUBENZURON_MZ.len());
-        for (&mz, &intensity) in TEFLUBENZURON_MZ
-            .iter()
-            .zip(TEFLUBENZURON_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add teflubenzuron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    TeflubenzuronSpectrum,
+    teflubenzuron,
+    TEFLUBENZURON_PRECURSOR_MZ,
+    TEFLUBENZURON_MZ,
+    TEFLUBENZURON_INTENSITIES
+);

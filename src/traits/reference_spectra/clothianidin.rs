@@ -75,19 +75,10 @@ pub const CLOTHIANIDIN_INTENSITIES: [f32; 50] = [
     315305.375,
 ];
 
-impl<S: SpectrumAlloc> ClothianidinSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn clothianidin() -> Self {
-        let mut spectrum =
-            Self::with_capacity(CLOTHIANIDIN_PRECURSOR_MZ.into(), CLOTHIANIDIN_MZ.len());
-        for (&mz, &intensity) in CLOTHIANIDIN_MZ.iter().zip(CLOTHIANIDIN_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add clothianidin peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ClothianidinSpectrum,
+    clothianidin,
+    CLOTHIANIDIN_PRECURSOR_MZ,
+    CLOTHIANIDIN_MZ,
+    CLOTHIANIDIN_INTENSITIES
+);

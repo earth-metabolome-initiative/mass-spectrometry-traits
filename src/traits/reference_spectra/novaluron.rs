@@ -75,18 +75,10 @@ pub const NOVALURON_INTENSITIES: [f32; 50] = [
     9067.113281,
 ];
 
-impl<S: SpectrumAlloc> NovaluronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn novaluron() -> Self {
-        let mut spectrum = Self::with_capacity(NOVALURON_PRECURSOR_MZ.into(), NOVALURON_MZ.len());
-        for (&mz, &intensity) in NOVALURON_MZ.iter().zip(NOVALURON_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add novaluron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    NovaluronSpectrum,
+    novaluron,
+    NOVALURON_PRECURSOR_MZ,
+    NOVALURON_MZ,
+    NOVALURON_INTENSITIES
+);

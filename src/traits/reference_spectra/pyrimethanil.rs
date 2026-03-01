@@ -75,19 +75,10 @@ pub const PYRIMETHANIL_INTENSITIES: [f32; 50] = [
     42703.347656,
 ];
 
-impl<S: SpectrumAlloc> PyrimethanilSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn pyrimethanil() -> Self {
-        let mut spectrum =
-            Self::with_capacity(PYRIMETHANIL_PRECURSOR_MZ.into(), PYRIMETHANIL_MZ.len());
-        for (&mz, &intensity) in PYRIMETHANIL_MZ.iter().zip(PYRIMETHANIL_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add pyrimethanil peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    PyrimethanilSpectrum,
+    pyrimethanil,
+    PYRIMETHANIL_PRECURSOR_MZ,
+    PYRIMETHANIL_MZ,
+    PYRIMETHANIL_INTENSITIES
+);

@@ -23,18 +23,10 @@ pub const SALICIN_INTENSITIES: [f32; 21] = [
     2173.0, 2257.0, 2367.0, 4363.0, 31526.0, 5119.0, 2252.0, 2233.0, 22755.0,
 ];
 
-impl<S: SpectrumAlloc> SalicinSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn salicin() -> Self {
-        let mut spectrum = Self::with_capacity(SALICIN_PRECURSOR_MZ.into(), SALICIN_MZ.len());
-        for (&mz, &intensity) in SALICIN_MZ.iter().zip(SALICIN_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add salicin peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    SalicinSpectrum,
+    salicin,
+    SALICIN_PRECURSOR_MZ,
+    SALICIN_MZ,
+    SALICIN_INTENSITIES
+);

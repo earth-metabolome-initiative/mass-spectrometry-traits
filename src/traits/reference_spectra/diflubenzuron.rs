@@ -57,22 +57,10 @@ pub const DIFLUBENZURON_INTENSITIES: [f32; 34] = [
     13360.837891,
 ];
 
-impl<S: SpectrumAlloc> DiflubenzuronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn diflubenzuron() -> Self {
-        let mut spectrum =
-            Self::with_capacity(DIFLUBENZURON_PRECURSOR_MZ.into(), DIFLUBENZURON_MZ.len());
-        for (&mz, &intensity) in DIFLUBENZURON_MZ
-            .iter()
-            .zip(DIFLUBENZURON_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add diflubenzuron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    DiflubenzuronSpectrum,
+    diflubenzuron,
+    DIFLUBENZURON_PRECURSOR_MZ,
+    DIFLUBENZURON_MZ,
+    DIFLUBENZURON_INTENSITIES
+);

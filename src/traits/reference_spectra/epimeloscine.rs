@@ -5955,19 +5955,10 @@ pub static EPIMELOSCINE_INTENSITIES: [f32; 5379] = [
     3.770833, 7.686403,
 ];
 
-impl<S: SpectrumAlloc> EpimeloscineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn epimeloscine() -> Self {
-        let mut spectrum =
-            Self::with_capacity(EPIMELOSCINE_PRECURSOR_MZ.into(), EPIMELOSCINE_MZ.len());
-        for (&mz, &intensity) in EPIMELOSCINE_MZ.iter().zip(EPIMELOSCINE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add epimeloscine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    EpimeloscineSpectrum,
+    epimeloscine,
+    EPIMELOSCINE_PRECURSOR_MZ,
+    EPIMELOSCINE_MZ,
+    EPIMELOSCINE_INTENSITIES
+);

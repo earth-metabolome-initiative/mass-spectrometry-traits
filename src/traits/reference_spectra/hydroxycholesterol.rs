@@ -52,24 +52,10 @@ pub const HYDROXY_CHOLESTEROL_INTENSITIES: [f32; 131] = [
     447.722_3, 12.113778,
 ];
 
-impl<S: SpectrumAlloc> HydroxyCholesterolSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn hydroxy_cholesterol() -> Self {
-        let mut spectrum = Self::with_capacity(
-            HYDROXY_CHOLESTEROL_PRECURSOR_MZ.into(),
-            HYDROXY_CHOLESTEROL_MZ.len(),
-        );
-        for (&mz, &intensity) in HYDROXY_CHOLESTEROL_MZ
-            .iter()
-            .zip(HYDROXY_CHOLESTEROL_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add hydroxy-cholesterol peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    HydroxyCholesterolSpectrum,
+    hydroxy_cholesterol,
+    HYDROXY_CHOLESTEROL_PRECURSOR_MZ,
+    HYDROXY_CHOLESTEROL_MZ,
+    HYDROXY_CHOLESTEROL_INTENSITIES
+);

@@ -44,24 +44,10 @@ pub const N1_2_DIERUCOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES: [f32; 23] = [
     455642.8125,
 ];
 
-impl<S: SpectrumAlloc> N12DierucoylSnGlycero3PhosphocholineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn n1_2_dierucoyl_sn_glycero_3_phosphocholine() -> Self {
-        let mut spectrum = Self::with_capacity(
-            N1_2_DIERUCOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_PRECURSOR_MZ.into(),
-            N1_2_DIERUCOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ.len(),
-        );
-        for (&mz, &intensity) in N1_2_DIERUCOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ
-            .iter()
-            .zip(N1_2_DIERUCOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES.iter())
-        {
-            spectrum.add_peak(mz.into(), intensity.into()).expect(
-                "Failed to add n1 2 dierucoyl sn glycero 3 phosphocholine peak to spectrum",
-            );
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    N12DierucoylSnGlycero3PhosphocholineSpectrum,
+    n1_2_dierucoyl_sn_glycero_3_phosphocholine,
+    N1_2_DIERUCOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_PRECURSOR_MZ,
+    N1_2_DIERUCOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_MZ,
+    N1_2_DIERUCOYL_SN_GLYCERO_3_PHOSPHOCHOLINE_INTENSITIES
+);

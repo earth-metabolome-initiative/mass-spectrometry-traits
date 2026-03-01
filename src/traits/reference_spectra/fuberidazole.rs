@@ -75,19 +75,10 @@ pub const FUBERIDAZOLE_INTENSITIES: [f32; 50] = [
     327.976257,
 ];
 
-impl<S: SpectrumAlloc> FuberidazoleSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn fuberidazole() -> Self {
-        let mut spectrum =
-            Self::with_capacity(FUBERIDAZOLE_PRECURSOR_MZ.into(), FUBERIDAZOLE_MZ.len());
-        for (&mz, &intensity) in FUBERIDAZOLE_MZ.iter().zip(FUBERIDAZOLE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add fuberidazole peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    FuberidazoleSpectrum,
+    fuberidazole,
+    FUBERIDAZOLE_PRECURSOR_MZ,
+    FUBERIDAZOLE_MZ,
+    FUBERIDAZOLE_INTENSITIES
+);

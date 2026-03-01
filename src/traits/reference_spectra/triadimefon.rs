@@ -75,19 +75,10 @@ pub const TRIADIMEFON_INTENSITIES: [f32; 50] = [
     481.738037,
 ];
 
-impl<S: SpectrumAlloc> TriadimefonSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn triadimefon() -> Self {
-        let mut spectrum =
-            Self::with_capacity(TRIADIMEFON_PRECURSOR_MZ.into(), TRIADIMEFON_MZ.len());
-        for (&mz, &intensity) in TRIADIMEFON_MZ.iter().zip(TRIADIMEFON_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add triadimefon peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    TriadimefonSpectrum,
+    triadimefon,
+    TRIADIMEFON_PRECURSOR_MZ,
+    TRIADIMEFON_MZ,
+    TRIADIMEFON_INTENSITIES
+);

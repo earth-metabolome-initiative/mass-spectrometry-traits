@@ -30,18 +30,10 @@ pub const ADENINE_INTENSITIES: [f32; 10] = [
     2822116.25,
 ];
 
-impl<S: SpectrumAlloc> AdenineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn adenine() -> Self {
-        let mut spectrum = Self::with_capacity(ADENINE_PRECURSOR_MZ.into(), ADENINE_MZ.len());
-        for (&mz, &intensity) in ADENINE_MZ.iter().zip(ADENINE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add adenine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    AdenineSpectrum,
+    adenine,
+    ADENINE_PRECURSOR_MZ,
+    ADENINE_MZ,
+    ADENINE_INTENSITIES
+);

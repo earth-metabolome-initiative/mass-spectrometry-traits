@@ -22,19 +22,10 @@ pub const TEBUFENOZIDE_INTENSITIES: [f32; 16] = [
     155.0, 10642.0, 178.0,
 ];
 
-impl<S: SpectrumAlloc> TebufenozideSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn tebufenozide() -> Self {
-        let mut spectrum =
-            Self::with_capacity(TEBUFENOZIDE_PRECURSOR_MZ.into(), TEBUFENOZIDE_MZ.len());
-        for (&mz, &intensity) in TEBUFENOZIDE_MZ.iter().zip(TEBUFENOZIDE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add tebufenozide peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    TebufenozideSpectrum,
+    tebufenozide,
+    TEBUFENOZIDE_PRECURSOR_MZ,
+    TEBUFENOZIDE_MZ,
+    TEBUFENOZIDE_INTENSITIES
+);

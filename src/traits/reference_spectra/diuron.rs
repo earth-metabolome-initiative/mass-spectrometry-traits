@@ -75,18 +75,10 @@ pub const DIURON_INTENSITIES: [f32; 50] = [
     1551.676758,
 ];
 
-impl<S: SpectrumAlloc> DiuronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn diuron() -> Self {
-        let mut spectrum = Self::with_capacity(DIURON_PRECURSOR_MZ.into(), DIURON_MZ.len());
-        for (&mz, &intensity) in DIURON_MZ.iter().zip(DIURON_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add diuron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    DiuronSpectrum,
+    diuron,
+    DIURON_PRECURSOR_MZ,
+    DIURON_MZ,
+    DIURON_INTENSITIES
+);

@@ -75,19 +75,10 @@ pub const HEXAFLUMURON_INTENSITIES: [f32; 50] = [
     25052.765625,
 ];
 
-impl<S: SpectrumAlloc> HexaflumuronSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn hexaflumuron() -> Self {
-        let mut spectrum =
-            Self::with_capacity(HEXAFLUMURON_PRECURSOR_MZ.into(), HEXAFLUMURON_MZ.len());
-        for (&mz, &intensity) in HEXAFLUMURON_MZ.iter().zip(HEXAFLUMURON_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add hexaflumuron peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    HexaflumuronSpectrum,
+    hexaflumuron,
+    HEXAFLUMURON_PRECURSOR_MZ,
+    HEXAFLUMURON_MZ,
+    HEXAFLUMURON_INTENSITIES
+);

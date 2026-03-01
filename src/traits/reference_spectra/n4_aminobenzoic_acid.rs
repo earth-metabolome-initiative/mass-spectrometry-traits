@@ -49,24 +49,10 @@ pub const N4_AMINOBENZOIC_ACID_INTENSITIES: [f32; 27] = [
     172943.5,
 ];
 
-impl<S: SpectrumAlloc> N4AminobenzoicAcidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn n4_aminobenzoic_acid() -> Self {
-        let mut spectrum = Self::with_capacity(
-            N4_AMINOBENZOIC_ACID_PRECURSOR_MZ.into(),
-            N4_AMINOBENZOIC_ACID_MZ.len(),
-        );
-        for (&mz, &intensity) in N4_AMINOBENZOIC_ACID_MZ
-            .iter()
-            .zip(N4_AMINOBENZOIC_ACID_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add n4 aminobenzoic acid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    N4AminobenzoicAcidSpectrum,
+    n4_aminobenzoic_acid,
+    N4_AMINOBENZOIC_ACID_PRECURSOR_MZ,
+    N4_AMINOBENZOIC_ACID_MZ,
+    N4_AMINOBENZOIC_ACID_INTENSITIES
+);

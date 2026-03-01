@@ -66,22 +66,10 @@ pub const ASCORBIC_ACID_INTENSITIES: [f32; 42] = [
     808394.6875,
 ];
 
-impl<S: SpectrumAlloc> AscorbicAcidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn ascorbic_acid() -> Self {
-        let mut spectrum =
-            Self::with_capacity(ASCORBIC_ACID_PRECURSOR_MZ.into(), ASCORBIC_ACID_MZ.len());
-        for (&mz, &intensity) in ASCORBIC_ACID_MZ
-            .iter()
-            .zip(ASCORBIC_ACID_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add ascorbic acid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    AscorbicAcidSpectrum,
+    ascorbic_acid,
+    ASCORBIC_ACID_PRECURSOR_MZ,
+    ASCORBIC_ACID_MZ,
+    ASCORBIC_ACID_INTENSITIES
+);

@@ -65,19 +65,10 @@ pub const PYMETROZINE_INTENSITIES: [f32; 41] = [
     158700.890625,
 ];
 
-impl<S: SpectrumAlloc> PymetrozineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn pymetrozine() -> Self {
-        let mut spectrum =
-            Self::with_capacity(PYMETROZINE_PRECURSOR_MZ.into(), PYMETROZINE_MZ.len());
-        for (&mz, &intensity) in PYMETROZINE_MZ.iter().zip(PYMETROZINE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add pymetrozine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    PymetrozineSpectrum,
+    pymetrozine,
+    PYMETROZINE_PRECURSOR_MZ,
+    PYMETROZINE_MZ,
+    PYMETROZINE_INTENSITIES
+);

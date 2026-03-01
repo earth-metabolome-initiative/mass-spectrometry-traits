@@ -23,22 +23,10 @@ pub const SULFENTRAZONE_INTENSITIES: [f32; 21] = [
     549.0, 2325.0, 218.0, 438.0, 153.0, 10655.0, 94.0, 90.0,
 ];
 
-impl<S: SpectrumAlloc> SulfentrazoneSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn sulfentrazone() -> Self {
-        let mut spectrum =
-            Self::with_capacity(SULFENTRAZONE_PRECURSOR_MZ.into(), SULFENTRAZONE_MZ.len());
-        for (&mz, &intensity) in SULFENTRAZONE_MZ
-            .iter()
-            .zip(SULFENTRAZONE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add sulfentrazone peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    SulfentrazoneSpectrum,
+    sulfentrazone,
+    SULFENTRAZONE_PRECURSOR_MZ,
+    SULFENTRAZONE_MZ,
+    SULFENTRAZONE_INTENSITIES
+);

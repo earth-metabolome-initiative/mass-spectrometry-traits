@@ -26,18 +26,10 @@ pub const FLUAZINAM_INTENSITIES: [f32; 37] = [
     250.0, 690.0, 230.0, 6796.0, 18042.0, 146.0, 173.0, 195.0, 5805.0,
 ];
 
-impl<S: SpectrumAlloc> FluazinamSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn fluazinam() -> Self {
-        let mut spectrum = Self::with_capacity(FLUAZINAM_PRECURSOR_MZ.into(), FLUAZINAM_MZ.len());
-        for (&mz, &intensity) in FLUAZINAM_MZ.iter().zip(FLUAZINAM_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add fluazinam peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    FluazinamSpectrum,
+    fluazinam,
+    FLUAZINAM_PRECURSOR_MZ,
+    FLUAZINAM_MZ,
+    FLUAZINAM_INTENSITIES
+);

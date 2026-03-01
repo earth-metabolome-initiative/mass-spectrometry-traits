@@ -30,18 +30,10 @@ pub const ALANINE_INTENSITIES: [f32; 10] = [
     1510.326904,
 ];
 
-impl<S: SpectrumAlloc> AlanineSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn alanine() -> Self {
-        let mut spectrum = Self::with_capacity(ALANINE_PRECURSOR_MZ.into(), ALANINE_MZ.len());
-        for (&mz, &intensity) in ALANINE_MZ.iter().zip(ALANINE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add alanine peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    AlanineSpectrum,
+    alanine,
+    ALANINE_PRECURSOR_MZ,
+    ALANINE_MZ,
+    ALANINE_INTENSITIES
+);

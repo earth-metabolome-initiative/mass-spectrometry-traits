@@ -35,24 +35,10 @@ pub const CYTIDINE_5_DIPHOSPHATE_INTENSITIES: [f32; 15] = [
     212609.28125,
 ];
 
-impl<S: SpectrumAlloc> Cytidine5DiphosphateSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn cytidine_5_diphosphate() -> Self {
-        let mut spectrum = Self::with_capacity(
-            CYTIDINE_5_DIPHOSPHATE_PRECURSOR_MZ.into(),
-            CYTIDINE_5_DIPHOSPHATE_MZ.len(),
-        );
-        for (&mz, &intensity) in CYTIDINE_5_DIPHOSPHATE_MZ
-            .iter()
-            .zip(CYTIDINE_5_DIPHOSPHATE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add cytidine 5 diphosphate peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    Cytidine5DiphosphateSpectrum,
+    cytidine_5_diphosphate,
+    CYTIDINE_5_DIPHOSPHATE_PRECURSOR_MZ,
+    CYTIDINE_5_DIPHOSPHATE_MZ,
+    CYTIDINE_5_DIPHOSPHATE_INTENSITIES
+);

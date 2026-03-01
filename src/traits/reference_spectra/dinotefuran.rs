@@ -70,19 +70,10 @@ pub const DINOTEFURAN_INTENSITIES: [f32; 46] = [
     25212.037109,
 ];
 
-impl<S: SpectrumAlloc> DinotefuranSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn dinotefuran() -> Self {
-        let mut spectrum =
-            Self::with_capacity(DINOTEFURAN_PRECURSOR_MZ.into(), DINOTEFURAN_MZ.len());
-        for (&mz, &intensity) in DINOTEFURAN_MZ.iter().zip(DINOTEFURAN_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add dinotefuran peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    DinotefuranSpectrum,
+    dinotefuran,
+    DINOTEFURAN_PRECURSOR_MZ,
+    DINOTEFURAN_MZ,
+    DINOTEFURAN_INTENSITIES
+);

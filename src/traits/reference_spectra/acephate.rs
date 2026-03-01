@@ -75,18 +75,10 @@ pub const ACEPHATE_INTENSITIES: [f32; 50] = [
     277.326111,
 ];
 
-impl<S: SpectrumAlloc> AcephateSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn acephate() -> Self {
-        let mut spectrum = Self::with_capacity(ACEPHATE_PRECURSOR_MZ.into(), ACEPHATE_MZ.len());
-        for (&mz, &intensity) in ACEPHATE_MZ.iter().zip(ACEPHATE_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add acephate peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    AcephateSpectrum,
+    acephate,
+    ACEPHATE_PRECURSOR_MZ,
+    ACEPHATE_MZ,
+    ACEPHATE_INTENSITIES
+);

@@ -75,19 +75,10 @@ pub const EPRINOMECTIN_INTENSITIES: [f32; 50] = [
     789.730835,
 ];
 
-impl<S: SpectrumAlloc> EprinomectinSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn eprinomectin() -> Self {
-        let mut spectrum =
-            Self::with_capacity(EPRINOMECTIN_PRECURSOR_MZ.into(), EPRINOMECTIN_MZ.len());
-        for (&mz, &intensity) in EPRINOMECTIN_MZ.iter().zip(EPRINOMECTIN_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add eprinomectin peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    EprinomectinSpectrum,
+    eprinomectin,
+    EPRINOMECTIN_PRECURSOR_MZ,
+    EPRINOMECTIN_MZ,
+    EPRINOMECTIN_INTENSITIES
+);

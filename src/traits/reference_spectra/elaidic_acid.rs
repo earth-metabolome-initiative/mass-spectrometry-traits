@@ -30,19 +30,10 @@ pub const ELAIDIC_ACID_INTENSITIES: [f32; 10] = [
     2537840.75,
 ];
 
-impl<S: SpectrumAlloc> ElaidicAcidSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn elaidic_acid() -> Self {
-        let mut spectrum =
-            Self::with_capacity(ELAIDIC_ACID_PRECURSOR_MZ.into(), ELAIDIC_ACID_MZ.len());
-        for (&mz, &intensity) in ELAIDIC_ACID_MZ.iter().zip(ELAIDIC_ACID_INTENSITIES.iter()) {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add elaidic acid peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ElaidicAcidSpectrum,
+    elaidic_acid,
+    ELAIDIC_ACID_PRECURSOR_MZ,
+    ELAIDIC_ACID_MZ,
+    ELAIDIC_ACID_INTENSITIES
+);

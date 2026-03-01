@@ -75,24 +75,10 @@ pub const CHLORANTRANILIPROLE_INTENSITIES: [f32; 50] = [
     3283.13916,
 ];
 
-impl<S: SpectrumAlloc> ChlorantraniliproleSpectrum for S
-where
-    S::Mz: From<f32>,
-    S::Intensity: From<f32>,
-{
-    fn chlorantraniliprole() -> Self {
-        let mut spectrum = Self::with_capacity(
-            CHLORANTRANILIPROLE_PRECURSOR_MZ.into(),
-            CHLORANTRANILIPROLE_MZ.len(),
-        );
-        for (&mz, &intensity) in CHLORANTRANILIPROLE_MZ
-            .iter()
-            .zip(CHLORANTRANILIPROLE_INTENSITIES.iter())
-        {
-            spectrum
-                .add_peak(mz.into(), intensity.into())
-                .expect("Failed to add chlorantraniliprole peak to spectrum");
-        }
-        spectrum
-    }
-}
+super::impl_reference_spectrum!(
+    ChlorantraniliproleSpectrum,
+    chlorantraniliprole,
+    CHLORANTRANILIPROLE_PRECURSOR_MZ,
+    CHLORANTRANILIPROLE_MZ,
+    CHLORANTRANILIPROLE_INTENSITIES
+);
