@@ -43,6 +43,28 @@ fn matching_peaks_rejects_infinite_tolerance() {
 }
 
 #[test]
+fn matching_peaks_rejects_negative_tolerance() {
+    let left = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+    let right = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+
+    let error = left
+        .matching_peaks(&right, -0.1)
+        .expect_err("negative tolerance should be rejected");
+    assert_eq!(error, SimilarityComputationError::NegativeTolerance);
+}
+
+#[test]
+fn modified_matching_peaks_rejects_negative_tolerance() {
+    let left = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+    let right = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+
+    let error = left
+        .modified_matching_peaks(&right, -0.1, 0.0)
+        .expect_err("negative tolerance should be rejected");
+    assert_eq!(error, SimilarityComputationError::NegativeTolerance);
+}
+
+#[test]
 fn matching_peaks_rejects_non_finite_left_mz() {
     let left = spectrum_from_peaks(100.0, &[(f32::INFINITY, 1.0)]);
     let right = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
