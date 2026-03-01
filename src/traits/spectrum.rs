@@ -245,7 +245,12 @@ pub trait Spectrum {
                     }
                 }
                 let col = to_matrix_index(j)?;
-                let _ = MatrixMut::add(&mut matching_peaks, (row, col));
+                match MatrixMut::add(&mut matching_peaks, (row, col)) {
+                    Ok(()) | Err(geometric_traits::impls::MutabilityError::DuplicatedEntry(_)) => {}
+                    Err(_) => {
+                        return Err(SimilarityComputationError::GraphConstructionFailed);
+                    }
+                }
             }
             *second_lowest = new_second_lowest;
         }

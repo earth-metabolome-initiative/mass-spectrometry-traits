@@ -118,6 +118,15 @@ fn entropy_pair(a: f64, b: f64) -> f64 {
     result
 }
 
+#[inline]
+fn ensure_finite_f64(value: f64, name: &'static str) -> Result<(), SimilarityComputationError> {
+    if value.is_finite() {
+        Ok(())
+    } else {
+        Err(SimilarityComputationError::NonFiniteValue(name))
+    }
+}
+
 impl<S1, S2> ScalarSimilarity<S1, S2> for EntropySimilarity<S1::Mz>
 where
     S1::Mz: Float + Number,
@@ -134,11 +143,13 @@ where
             let Some(mz_f64) = mz.to_f64() else {
                 return Err(SimilarityComputationError::ValueNotRepresentable("left_mz"));
             };
+            ensure_finite_f64(mz_f64, "left_mz")?;
             let Some(int_f64) = intensity.to_f64() else {
                 return Err(SimilarityComputationError::ValueNotRepresentable(
                     "left_intensity",
                 ));
             };
+            ensure_finite_f64(int_f64, "left_intensity")?;
             left_mz.push(mz_f64);
             left_int.push(int_f64);
         }
@@ -151,11 +162,13 @@ where
                     "right_mz",
                 ));
             };
+            ensure_finite_f64(mz_f64, "right_mz")?;
             let Some(int_f64) = intensity.to_f64() else {
                 return Err(SimilarityComputationError::ValueNotRepresentable(
                     "right_intensity",
                 ));
             };
+            ensure_finite_f64(int_f64, "right_intensity")?;
             right_mz.push(mz_f64);
             right_int.push(int_f64);
         }
@@ -163,6 +176,8 @@ where
         // Normalize intensities to sum to 1.
         let left_sum: f64 = left_int.iter().sum();
         let right_sum: f64 = right_int.iter().sum();
+        ensure_finite_f64(left_sum, "left_intensity_sum")?;
+        ensure_finite_f64(right_sum, "right_intensity_sum")?;
 
         if left_sum == 0.0 || right_sum == 0.0 {
             return Ok((S1::Mz::zero(), 0));
@@ -170,15 +185,23 @@ where
 
         for v in left_int.iter_mut() {
             *v /= left_sum;
+            ensure_finite_f64(*v, "left_normalized_intensity")?;
         }
         for v in right_int.iter_mut() {
             *v /= right_sum;
+            ensure_finite_f64(*v, "right_normalized_intensity")?;
         }
 
         // Apply entropy-based weighting if enabled.
         if self.weighted {
             apply_entropy_weight(&mut left_int);
             apply_entropy_weight(&mut right_int);
+            for &v in &left_int {
+                ensure_finite_f64(v, "left_weighted_intensity")?;
+            }
+            for &v in &right_int {
+                ensure_finite_f64(v, "right_weighted_intensity")?;
+            }
         }
 
         // Two-pointer greedy matching within m/z tolerance.
@@ -187,6 +210,7 @@ where
                 "mz_tolerance",
             ));
         };
+        ensure_finite_f64(tolerance, "mz_tolerance")?;
         let mut i = 0usize;
         let mut j = 0usize;
         let mut score = 0.0f64;
@@ -194,8 +218,10 @@ where
 
         while i < left_mz.len() && j < right_mz.len() {
             let diff = left_mz[i] - right_mz[j];
+            ensure_finite_f64(diff, "mz_difference")?;
             if diff.abs() <= tolerance {
                 score += entropy_pair(left_int[i], right_int[j]);
+                ensure_finite_f64(score, "entropy_score_accumulator")?;
                 n_matches += 1;
                 i += 1;
                 j += 1;
@@ -208,6 +234,7 @@ where
 
         // Divide by 2 to normalize JSD to [0, 1].
         let similarity = (score / 2.0).clamp(0.0, 1.0);
+        ensure_finite_f64(similarity, "similarity_score")?;
 
         let sim: S1::Mz = NumCast::from(similarity).ok_or(
             SimilarityComputationError::ValueNotRepresentable("similarity_score"),

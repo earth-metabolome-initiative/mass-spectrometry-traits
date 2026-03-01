@@ -7,16 +7,12 @@
 //! Unlike matchms `ModifiedCosine` (greedy assignment), this uses Crouse
 //! rectangular LAPJV for optimal assignment.
 
-use geometric_traits::prelude::{
-    Crouse, Finite, GenericImplicitValuedMatrix2D, Number, RangedCSR2D, ScalarSimilarity,
-    SparseMatrix, TotalOrd,
-};
+use geometric_traits::prelude::{Finite, Number, ScalarSimilarity, TotalOrd};
 use multi_ranged::BiRange;
-use num_traits::{Float, One, Pow, ToPrimitive, Zero};
+use num_traits::{Float, Pow, ToPrimitive, Zero};
 
 use super::cosine_common::{
-    accumulate_assignment_scores, prepare_peak_products, validate_non_negative_tolerance,
-    validate_numeric_parameter,
+    compute_cosine_similarity, validate_non_negative_tolerance, validate_numeric_parameter,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
@@ -101,73 +97,18 @@ where
     type Similarity = Result<(S1::Mz, usize), SimilarityComputationError>;
 
     fn similarity(&self, left: &S1, right: &S2) -> Self::Similarity {
-        let left_peaks = prepare_peak_products(left, self.mz_power, self.intensity_power)?;
-        let right_peaks = prepare_peak_products(right, self.mz_power, self.intensity_power)?;
-
         // Compute shift before the swap: shift = left.precursor_mz() - right.precursor_mz()
         let shift = left.precursor_mz() - right.precursor_mz();
+        let negated_shift = S1::Mz::zero() - shift;
 
-        if left_peaks.max_f64 == 0.0 || right_peaks.max_f64 == 0.0 {
-            return Ok((S1::Mz::zero(), 0));
-        }
-
-        // Sort spectra so the smaller one is on the row side of the bipartite
-        // graph. When swapping, negate the shift.
-        let (matching, row_f64, col_f64, row_products, col_products, max_row, max_col) =
-            if left.len() <= right.len() {
-                let matching = left.modified_matching_peaks(right, self.mz_tolerance, shift)?;
-                (
-                    matching,
-                    &left_peaks.as_f64,
-                    &right_peaks.as_f64,
-                    &left_peaks.products,
-                    &right_peaks.products,
-                    left_peaks.max_f64,
-                    right_peaks.max_f64,
-                )
-            } else {
-                // Negate shift when swapping row/column roles.
-                let negated_shift = S1::Mz::zero() - shift;
-                let matching =
-                    right.modified_matching_peaks(left, self.mz_tolerance, negated_shift)?;
-                (
-                    matching,
-                    &right_peaks.as_f64,
-                    &left_peaks.as_f64,
-                    &right_peaks.products,
-                    &left_peaks.products,
-                    right_peaks.max_f64,
-                    left_peaks.max_f64,
-                )
-            };
-
-        let map: GenericImplicitValuedMatrix2D<RangedCSR2D<u32, u32, BiRange<u32>>, _, f64> =
-            GenericImplicitValuedMatrix2D::new(matching, |(i, j)| {
-                1.0f64 + f64::EPSILON
-                    - (row_f64[i as usize] / max_row) * (col_f64[j as usize] / max_col)
-            });
-
-        if map.is_empty() {
-            return Ok((S1::Mz::zero(), 0));
-        }
-
-        let non_edge_cost: f64 = 1.0f64 + f64::EPSILON;
-        let max_cost: f64 = non_edge_cost + 1.0;
-
-        let assignments: Vec<(u32, u32)> = map
-            .crouse(non_edge_cost, max_cost)
-            .map_err(|_| SimilarityComputationError::AssignmentFailed)?;
-
-        let (score_sum, n_matches) =
-            accumulate_assignment_scores(&assignments, row_products, col_products);
-
-        let similarity = score_sum / (left_peaks.norm * right_peaks.norm);
-
-        if similarity > S1::Mz::one() {
-            Ok((S1::Mz::one(), n_matches))
-        } else {
-            Ok((similarity, n_matches))
-        }
+        compute_cosine_similarity::<_, _, _, BiRange<u32>, _, _>(
+            left,
+            right,
+            self.mz_power,
+            self.intensity_power,
+            |row, col| row.modified_matching_peaks(col, self.mz_tolerance, shift),
+            |row, col| row.modified_matching_peaks(col, self.mz_tolerance, negated_shift),
+        )
     }
 }
 
