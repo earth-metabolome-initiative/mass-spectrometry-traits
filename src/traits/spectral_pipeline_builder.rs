@@ -1,5 +1,7 @@
 //! Submodule defining a builder for a [`SpectralPipeline`].
 
+use alloc::boxed::Box;
+
 use super::SpectralProcessor;
 use crate::prelude::{SpectralFilter, SpectralPipeline, Spectrum};
 

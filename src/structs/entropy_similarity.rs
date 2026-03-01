@@ -4,6 +4,8 @@
 //! similarity for small-molecule compound identification",
 //! Nature Methods 18, 1524–1531 (2021).
 
+use alloc::vec::Vec;
+
 use geometric_traits::prelude::{Number, ScalarSimilarity};
 use num_traits::{Float, NumCast, ToPrimitive, Zero};
 

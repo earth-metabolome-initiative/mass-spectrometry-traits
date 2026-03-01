@@ -1,5 +1,7 @@
 //! A naively implemented generic spectrum struct.
 
+use alloc::vec::Vec;
+
 use geometric_traits::prelude::{Number, SortedVec};
 
 use crate::traits::{Spectrum, SpectrumAlloc, SpectrumMut};

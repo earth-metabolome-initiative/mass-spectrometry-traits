@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use geometric_traits::prelude::{
     Crouse, Finite, GenericImplicitValuedMatrix2D, Number, RangedCSR2D, SparseMatrix, TotalOrd,
 };

@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits" }
-num-traits = "0.2"
-multi_ranged = "0.1.1"
-thiserror = "2"
+geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", default-features = false, features = ["alloc"] }
+num-traits = { version = "0.2", default-features = false }
+multi_ranged = { version = "0.1.1", default-features = false }
+thiserror = { version = "2", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
