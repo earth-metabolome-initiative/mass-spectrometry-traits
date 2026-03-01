@@ -27,15 +27,6 @@ pub struct EntropySimilarity<MZ> {
 }
 
 impl<MZ: Number> EntropySimilarity<MZ> {
-    /// Creates a new `EntropySimilarity` without validating numeric parameters.
-    #[inline]
-    pub fn new_unchecked(mz_tolerance: MZ, weighted: bool) -> Self {
-        Self {
-            mz_tolerance,
-            weighted,
-        }
-    }
-
     /// Returns the m/z tolerance.
     #[inline]
     pub fn mz_tolerance(&self) -> MZ {
@@ -63,7 +54,10 @@ where
     #[inline]
     pub fn new(mz_tolerance: MZ, weighted: bool) -> Result<Self, SimilarityConfigError> {
         validate_non_negative_tolerance(mz_tolerance)?;
-        Ok(Self::new_unchecked(mz_tolerance, weighted))
+        Ok(Self {
+            mz_tolerance,
+            weighted,
+        })
     }
 
     /// Creates a new weighted `EntropySimilarity`.

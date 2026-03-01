@@ -1,6 +1,6 @@
 use mass_spectrometry::prelude::{
     EntropySimilarity, HungarianCosine, ModifiedHungarianCosine, ScalarSimilarity,
-    SimilarityComputationError, Spectrum,
+    SimilarityComputationError, SimilarityConfigError, Spectrum,
 };
 
 struct RawSpectrum {
@@ -114,27 +114,19 @@ fn entropy_similarity_rejects_non_finite_input() {
 }
 
 #[test]
-fn hungarian_cosine_unchecked_rejects_negative_tolerance_at_runtime() {
-    let left = RawSpectrum::new(100.0, vec![50.0], vec![1.0]);
-    let right = RawSpectrum::new(100.0, vec![50.0], vec![1.0]);
-    let scorer = HungarianCosine::new_unchecked(1.0_f32, 1.0_f32, -0.1_f32);
-
-    let result = scorer.similarity(&left, &right);
+fn hungarian_cosine_rejects_negative_tolerance_at_construction() {
+    let result = HungarianCosine::new(1.0_f32, 1.0_f32, -0.1_f32);
     assert!(matches!(
         result,
-        Err(SimilarityComputationError::NegativeTolerance)
+        Err(SimilarityConfigError::NegativeTolerance)
     ));
 }
 
 #[test]
-fn modified_hungarian_cosine_unchecked_rejects_negative_tolerance_at_runtime() {
-    let left = RawSpectrum::new(100.0, vec![50.0], vec![1.0]);
-    let right = RawSpectrum::new(101.0, vec![50.0], vec![1.0]);
-    let scorer = ModifiedHungarianCosine::new_unchecked(1.0_f32, 1.0_f32, -0.1_f32);
-
-    let result = scorer.similarity(&left, &right);
+fn modified_hungarian_cosine_rejects_negative_tolerance_at_construction() {
+    let result = ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, -0.1_f32);
     assert!(matches!(
         result,
-        Err(SimilarityComputationError::NegativeTolerance)
+        Err(SimilarityConfigError::NegativeTolerance)
     ));
 }
