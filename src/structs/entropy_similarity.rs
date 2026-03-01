@@ -7,7 +7,7 @@
 use geometric_traits::prelude::{Number, ScalarSimilarity};
 use num_traits::{Float, NumCast, ToPrimitive, Zero};
 
-use super::cosine_common::validate_non_negative_tolerance;
+use super::cosine_common::{ensure_finite_f64, validate_non_negative_tolerance};
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 
@@ -116,15 +116,6 @@ fn entropy_pair(a: f64, b: f64) -> f64 {
         result -= b * b.log2();
     }
     result
-}
-
-#[inline]
-fn ensure_finite_f64(value: f64, name: &'static str) -> Result<(), SimilarityComputationError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(SimilarityComputationError::NonFiniteValue(name))
-    }
 }
 
 impl<S1, S2> ScalarSimilarity<S1, S2> for EntropySimilarity<S1::Mz>

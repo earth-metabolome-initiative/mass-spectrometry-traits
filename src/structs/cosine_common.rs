@@ -26,8 +26,56 @@ pub(crate) struct MatchingScoreInputs<'a, MZ, R: MultiRanged<Step = u32>> {
     pub(crate) right_norm: MZ,
 }
 
+pub(crate) struct CosineConfig<EXP, MZ> {
+    mz_power: EXP,
+    intensity_power: EXP,
+    mz_tolerance: MZ,
+}
+
+impl<EXP: Number, MZ: Number> CosineConfig<EXP, MZ> {
+    pub(crate) fn new_unchecked(mz_power: EXP, intensity_power: EXP, mz_tolerance: MZ) -> Self {
+        Self {
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+        }
+    }
+
+    pub(crate) fn mz_tolerance(&self) -> MZ {
+        self.mz_tolerance
+    }
+
+    pub(crate) fn mz_power(&self) -> EXP {
+        self.mz_power
+    }
+
+    pub(crate) fn intensity_power(&self) -> EXP {
+        self.intensity_power
+    }
+}
+
+impl<EXP, MZ> CosineConfig<EXP, MZ>
+where
+    EXP: Number + ToPrimitive,
+    MZ: Number + ToPrimitive + PartialOrd,
+{
+    pub(crate) fn new(
+        mz_power: EXP,
+        intensity_power: EXP,
+        mz_tolerance: MZ,
+    ) -> Result<Self, SimilarityConfigError> {
+        validate_numeric_parameter(mz_power, "mz_power")?;
+        validate_numeric_parameter(intensity_power, "intensity_power")?;
+        validate_non_negative_tolerance(mz_tolerance)?;
+        Ok(Self::new_unchecked(mz_power, intensity_power, mz_tolerance))
+    }
+}
+
 #[inline]
-fn ensure_finite_f64(value: f64, name: &'static str) -> Result<(), SimilarityComputationError> {
+pub(crate) fn ensure_finite_f64(
+    value: f64,
+    name: &'static str,
+) -> Result<(), SimilarityComputationError> {
     if value.is_finite() {
         Ok(())
     } else {
