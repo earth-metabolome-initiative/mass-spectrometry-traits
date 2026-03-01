@@ -8,6 +8,9 @@ pub trait SpectrumMut: Spectrum {
     type MutationError: core::error::Error;
 
     /// Add a peak to the Spectrum.
+    ///
+    /// Implementations are expected to reject non-finite values and negative
+    /// intensity values.
     fn add_peak(
         &mut self,
         mz: Self::Mz,
@@ -23,5 +26,8 @@ pub trait SpectrumAlloc: SpectrumMut {
     ///
     /// * `precursor_mz`: The precursor mass over charge.
     /// * `capacity`: The capacity of the Spectrum.
+    ///
+    /// Implementations are expected to enforce constructor-time invariants for
+    /// `precursor_mz`.
     fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Self;
 }

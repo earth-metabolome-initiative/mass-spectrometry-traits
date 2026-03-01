@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use geometric_traits::prelude::{Number, SortedVec};
+use geometric_traits::prelude::{Finite, Number, SortedVec};
 
 use crate::traits::{Spectrum, SpectrumAlloc, SpectrumMut};
 
@@ -11,6 +11,52 @@ pub struct GenericSpectrum<Mz, Intensity> {
     mz: SortedVec<Mz>,
     intensity: Vec<Intensity>,
     precursor_mz: Mz,
+}
+
+/// Error returned when mutating a [`GenericSpectrum`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum GenericSpectrumMutationError {
+    /// Peaks must be added in sorted m/z order.
+    #[error("mz values must be added in sorted order")]
+    UnsortedMz,
+    /// Peak m/z values must be finite.
+    #[error("mz values must be finite")]
+    NonFiniteMz,
+    /// Precursor m/z values must be finite.
+    #[error("precursor_mz must be finite")]
+    NonFinitePrecursorMz,
+    /// Intensities must be finite.
+    #[error("intensity values must be finite")]
+    NonFiniteIntensity,
+    /// Intensities must be zero or positive.
+    #[error("intensity values must be >= 0")]
+    NegativeIntensity,
+}
+
+impl<Mz, Intensity> GenericSpectrum<Mz, Intensity>
+where
+    Mz: Number + Finite,
+    Intensity: Number + PartialOrd + Finite,
+{
+    /// Creates a new `GenericSpectrum` with a given capacity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenericSpectrumMutationError::NonFinitePrecursorMz`] if
+    /// `precursor_mz` is not finite.
+    pub fn try_with_capacity(
+        precursor_mz: Mz,
+        capacity: usize,
+    ) -> Result<Self, GenericSpectrumMutationError> {
+        if !precursor_mz.is_finite() {
+            return Err(GenericSpectrumMutationError::NonFinitePrecursorMz);
+        }
+        Ok(Self {
+            mz: SortedVec::with_capacity(capacity),
+            intensity: Vec::with_capacity(capacity),
+            precursor_mz,
+        })
+    }
 }
 
 impl<Mz, Intensity> Spectrum for GenericSpectrum<Mz, Intensity>
@@ -73,17 +119,28 @@ where
 
 impl<Mz, Intensity> SpectrumMut for GenericSpectrum<Mz, Intensity>
 where
-    Mz: Number,
-    Intensity: Number,
+    Mz: Number + Finite,
+    Intensity: Number + PartialOrd + Finite,
 {
-    type MutationError = geometric_traits::errors::SortedError<Mz>;
+    type MutationError = GenericSpectrumMutationError;
 
     fn add_peak(
         &mut self,
         mz: Self::Mz,
         intensity: Self::Intensity,
     ) -> Result<(), Self::MutationError> {
-        self.mz.push(mz)?;
+        if !mz.is_finite() {
+            return Err(GenericSpectrumMutationError::NonFiniteMz);
+        }
+        if !intensity.is_finite() {
+            return Err(GenericSpectrumMutationError::NonFiniteIntensity);
+        }
+        if intensity < Self::Intensity::zero() {
+            return Err(GenericSpectrumMutationError::NegativeIntensity);
+        }
+        self.mz
+            .push(mz)
+            .map_err(|_| GenericSpectrumMutationError::UnsortedMz)?;
         self.intensity.push(intensity);
         Ok(())
     }
@@ -91,14 +148,11 @@ where
 
 impl<Mz, Intensity> SpectrumAlloc for GenericSpectrum<Mz, Intensity>
 where
-    Mz: Number,
-    Intensity: Number,
+    Mz: Number + Finite,
+    Intensity: Number + PartialOrd + Finite,
 {
     fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Self {
-        Self {
-            mz: SortedVec::with_capacity(capacity),
-            intensity: Vec::with_capacity(capacity),
-            precursor_mz,
-        }
+        Self::try_with_capacity(precursor_mz, capacity)
+            .expect("GenericSpectrum invariant violated: precursor_mz must be finite")
     }
 }

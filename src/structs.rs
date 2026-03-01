@@ -11,7 +11,7 @@ pub mod modified_hungarian_cosine;
 pub mod similarity_errors;
 
 pub use entropy_similarity::EntropySimilarity;
-pub use generic_spectrum::GenericSpectrum;
+pub use generic_spectrum::{GenericSpectrum, GenericSpectrumMutationError};
 pub use greedy_cosine::GreedyCosine;
 pub use hungarian_cosine::HungarianCosine;
 pub use iterators::GreedySharedPeaks;
