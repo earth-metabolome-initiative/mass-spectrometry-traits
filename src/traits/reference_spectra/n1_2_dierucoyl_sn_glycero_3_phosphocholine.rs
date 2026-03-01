@@ -5,7 +5,8 @@ use crate::traits::SpectrumAlloc;
 /// Trait for a spectrum of n1 2 dierucoyl sn glycero 3 phosphocholine.
 pub trait N12DierucoylSnGlycero3PhosphocholineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of n1 2 dierucoyl sn glycero 3 phosphocholine.
-    fn n1_2_dierucoyl_sn_glycero_3_phosphocholine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
+    fn n1_2_dierucoyl_sn_glycero_3_phosphocholine()
+    -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for n1 2 dierucoyl sn glycero 3 phosphocholine.

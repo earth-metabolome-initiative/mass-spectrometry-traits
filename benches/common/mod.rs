@@ -19,7 +19,8 @@ pub struct BenchmarkSpectra {
 pub fn benchmark_spectra() -> BenchmarkSpectra {
     BenchmarkSpectra {
         salicin: GenericSpectrum::salicin().expect("reference spectrum should build"),
-        hydroxy_cholesterol: GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
+        hydroxy_cholesterol: GenericSpectrum::hydroxy_cholesterol()
+            .expect("reference spectrum should build"),
         epimeloscine: GenericSpectrum::epimeloscine().expect("reference spectrum should build"),
     }
 }
