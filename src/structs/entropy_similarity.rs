@@ -28,6 +28,7 @@ pub struct EntropySimilarity<MZ> {
 
 impl<MZ: Number> EntropySimilarity<MZ> {
     /// Creates a new `EntropySimilarity` without validating numeric parameters.
+    #[inline]
     pub fn new_unchecked(mz_tolerance: MZ, weighted: bool) -> Self {
         Self {
             mz_tolerance,
@@ -36,11 +37,13 @@ impl<MZ: Number> EntropySimilarity<MZ> {
     }
 
     /// Returns the m/z tolerance.
+    #[inline]
     pub fn mz_tolerance(&self) -> MZ {
         self.mz_tolerance
     }
 
     /// Returns whether entropy-based intensity weighting is enabled.
+    #[inline]
     pub fn is_weighted(&self) -> bool {
         self.weighted
     }
@@ -57,17 +60,20 @@ where
     ///
     /// Returns [`SimilarityConfigError`] if `mz_tolerance` is not finite,
     /// not representable as `f64`, or negative.
+    #[inline]
     pub fn new(mz_tolerance: MZ, weighted: bool) -> Result<Self, SimilarityConfigError> {
         validate_non_negative_tolerance(mz_tolerance)?;
         Ok(Self::new_unchecked(mz_tolerance, weighted))
     }
 
     /// Creates a new weighted `EntropySimilarity`.
+    #[inline]
     pub fn weighted(mz_tolerance: MZ) -> Result<Self, SimilarityConfigError> {
         Self::new(mz_tolerance, true)
     }
 
     /// Creates a new unweighted `EntropySimilarity`.
+    #[inline]
     pub fn unweighted(mz_tolerance: MZ) -> Result<Self, SimilarityConfigError> {
         Self::new(mz_tolerance, false)
     }

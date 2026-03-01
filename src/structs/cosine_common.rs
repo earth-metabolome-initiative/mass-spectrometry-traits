@@ -35,6 +35,7 @@ pub(crate) struct CosineConfig<EXP, MZ> {
 }
 
 impl<EXP: Number, MZ: Number> CosineConfig<EXP, MZ> {
+    #[inline]
     pub(crate) fn new_unchecked(mz_power: EXP, intensity_power: EXP, mz_tolerance: MZ) -> Self {
         Self {
             mz_power,
@@ -43,14 +44,17 @@ impl<EXP: Number, MZ: Number> CosineConfig<EXP, MZ> {
         }
     }
 
+    #[inline]
     pub(crate) fn mz_tolerance(&self) -> MZ {
         self.mz_tolerance
     }
 
+    #[inline]
     pub(crate) fn mz_power(&self) -> EXP {
         self.mz_power
     }
 
+    #[inline]
     pub(crate) fn intensity_power(&self) -> EXP {
         self.intensity_power
     }
@@ -61,6 +65,7 @@ where
     EXP: Number + ToPrimitive,
     MZ: Number + ToPrimitive + PartialOrd,
 {
+    #[inline]
     pub(crate) fn new(
         mz_power: EXP,
         intensity_power: EXP,
