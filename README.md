@@ -29,5 +29,6 @@ The pre-commit hook and CI both run the same strict checks:
 1. `cargo fmt --all -- --check`
 2. `cargo clippy --all-targets --all-features -- -D warnings`
 3. `cargo test --all-targets --all-features --locked`
+4. `cargo doc --all-features --no-deps`
 
 `cargo test --all-targets` includes bench targets as test runs.

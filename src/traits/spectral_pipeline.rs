@@ -1,8 +1,8 @@
-//! A pipeline to process a [`Spectra`] library.
+//! A pipeline to process a [`crate::traits::Spectra`] library.
 
 use super::{SpectralFilter, SpectralProcessor, Spectrum};
 
-/// A pipeline to process a [`Spectra`] library.
+/// A pipeline to process a [`crate::traits::Spectra`] library.
 pub trait SpectralPipeline {
     /// The type of [`Spectrum`] processed by the pipeline.
     type Spectrum: Spectrum;

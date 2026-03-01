@@ -33,3 +33,13 @@ pass_filenames = false
 always_run = true
 require_serial = true
 priority = 30
+
+[[repos.hooks]]
+id = "cargo-doc"
+name = "cargo doc (all features, no deps)"
+language = "system"
+entry = "cargo doc --all-features --no-deps"
+pass_filenames = false
+always_run = true
+require_serial = true
+priority = 40
