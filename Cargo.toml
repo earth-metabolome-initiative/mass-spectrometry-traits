@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-geometric-traits = { path = "../geometric-traits", default-features = false, features = ["alloc"] }
+geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", default-features = false, features = ["alloc"] }
 num-traits = { version = "0.2", default-features = false }
 multi_ranged = { version = "0.1.1", default-features = false }
 thiserror = { version = "2", default-features = false }

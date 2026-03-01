@@ -317,6 +317,7 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 [[package]]
 name = "geometric-traits"
 version = "0.1.0"
+source = "git+https://github.com/earth-metabolome-initiative/geometric-traits#5ad58a9c72ac758d9b9f46b441331deacf82316e"
 dependencies = [
  "bitvec",
  "hashbrown 0.16.1",
