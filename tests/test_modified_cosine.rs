@@ -248,7 +248,10 @@ fn synthetic_no_matches() {
     let modified = ModifiedCosine::new(1.0_f32, 1.0_f32, 0.1_f32);
     let (score, matches) = modified.similarity(&a, &b);
 
-    assert!(score.abs() < 1e-9, "No-match score should be ~0, got {score}");
+    assert!(
+        score.abs() < 1e-9,
+        "No-match score should be ~0, got {score}"
+    );
     assert_eq!(matches, 0);
 }
 

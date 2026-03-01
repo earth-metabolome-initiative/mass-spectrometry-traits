@@ -160,9 +160,21 @@ pub trait Spectrum {
             // indices in ascending order (required by BiRange).
             let (first_centre, first_lowest, second_centre, second_lowest, first_is_direct) =
                 if mz <= shifted_centre {
-                    (mz, &mut lowest_direct, shifted_centre, &mut lowest_shifted, true)
+                    (
+                        mz,
+                        &mut lowest_direct,
+                        shifted_centre,
+                        &mut lowest_shifted,
+                        true,
+                    )
                 } else {
-                    (shifted_centre, &mut lowest_shifted, mz, &mut lowest_direct, false)
+                    (
+                        shifted_centre,
+                        &mut lowest_shifted,
+                        mz,
+                        &mut lowest_direct,
+                        false,
+                    )
                 };
 
             // --- First (lower-centre) window ---
@@ -186,8 +198,7 @@ pub trait Spectrum {
                 // asymmetry at the tolerance boundary).
                 if !first_is_direct {
                     let shifted_diff = mz - other_mz - mz_shift;
-                    if shifted_diff < Self::Mz::zero() - mz_tolerance
-                        || shifted_diff > mz_tolerance
+                    if shifted_diff < Self::Mz::zero() - mz_tolerance || shifted_diff > mz_tolerance
                     {
                         continue;
                     }
@@ -218,8 +229,7 @@ pub trait Spectrum {
                 // shifted window (see comment in first window above).
                 if first_is_direct {
                     let shifted_diff = mz - other_mz - mz_shift;
-                    if shifted_diff < Self::Mz::zero() - mz_tolerance
-                        || shifted_diff > mz_tolerance
+                    if shifted_diff < Self::Mz::zero() - mz_tolerance || shifted_diff > mz_tolerance
                     {
                         continue;
                     }

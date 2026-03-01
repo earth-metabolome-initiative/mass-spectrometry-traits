@@ -5,7 +5,7 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use mass_spectrometry::prelude::{
-    EpimeloscineSpectrum, EntropySimilarity, GenericSpectrum, HydroxyCholesterolSpectrum,
+    EntropySimilarity, EpimeloscineSpectrum, GenericSpectrum, HydroxyCholesterolSpectrum,
     SalicinSpectrum, ScalarSimilarity,
 };
 
@@ -66,14 +66,9 @@ fn bench_entropy_similarity(c: &mut Criterion) {
     epimeloscine_group.bench_function("entropy_weighted_salicin_epimeloscine", |b| {
         b.iter(|| weighted.similarity(black_box(&salicin), black_box(&epimeloscine)))
     });
-    epimeloscine_group.bench_function(
-        "entropy_weighted_hydroxy_cholesterol_epimeloscine",
-        |b| {
-            b.iter(|| {
-                weighted.similarity(black_box(&hydroxy_cholesterol), black_box(&epimeloscine))
-            })
-        },
-    );
+    epimeloscine_group.bench_function("entropy_weighted_hydroxy_cholesterol_epimeloscine", |b| {
+        b.iter(|| weighted.similarity(black_box(&hydroxy_cholesterol), black_box(&epimeloscine)))
+    });
     epimeloscine_group.bench_function("entropy_weighted_epimeloscine_epimeloscine", |b| {
         b.iter(|| weighted.similarity(black_box(&epimeloscine), black_box(&epimeloscine)))
     });
@@ -81,14 +76,9 @@ fn bench_entropy_similarity(c: &mut Criterion) {
     epimeloscine_group.bench_function("entropy_unweighted_salicin_epimeloscine", |b| {
         b.iter(|| unweighted.similarity(black_box(&salicin), black_box(&epimeloscine)))
     });
-    epimeloscine_group.bench_function(
-        "entropy_unweighted_hydroxy_cholesterol_epimeloscine",
-        |b| {
-            b.iter(|| {
-                unweighted.similarity(black_box(&hydroxy_cholesterol), black_box(&epimeloscine))
-            })
-        },
-    );
+    epimeloscine_group.bench_function("entropy_unweighted_hydroxy_cholesterol_epimeloscine", |b| {
+        b.iter(|| unweighted.similarity(black_box(&hydroxy_cholesterol), black_box(&epimeloscine)))
+    });
     epimeloscine_group.bench_function("entropy_unweighted_epimeloscine_epimeloscine", |b| {
         b.iter(|| unweighted.similarity(black_box(&epimeloscine), black_box(&epimeloscine)))
     });

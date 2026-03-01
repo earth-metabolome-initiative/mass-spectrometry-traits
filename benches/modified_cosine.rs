@@ -45,14 +45,9 @@ fn bench_modified_cosine(c: &mut Criterion) {
         b.iter(|| cosine.similarity(black_box(&salicin), black_box(&epimeloscine)))
     });
 
-    epimeloscine_group.bench_function(
-        "modified_cosine_hydroxy_cholesterol_epimeloscine",
-        |b| {
-            b.iter(|| {
-                cosine.similarity(black_box(&hydroxy_cholesterol), black_box(&epimeloscine))
-            })
-        },
-    );
+    epimeloscine_group.bench_function("modified_cosine_hydroxy_cholesterol_epimeloscine", |b| {
+        b.iter(|| cosine.similarity(black_box(&hydroxy_cholesterol), black_box(&epimeloscine)))
+    });
 
     epimeloscine_group.bench_function("modified_cosine_epimeloscine_epimeloscine", |b| {
         b.iter(|| cosine.similarity(black_box(&epimeloscine), black_box(&epimeloscine)))
