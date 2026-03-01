@@ -11,6 +11,7 @@ csv = "1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1.6"
 
 [[bench]]
 name = "exact_cosine"
