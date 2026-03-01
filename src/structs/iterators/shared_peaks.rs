@@ -31,23 +31,12 @@ impl core::fmt::Display for GreedySharedPeaksAttribute {
 }
 
 /// Error type for building a [`GreedySharedPeaks`] iterator.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum GreedySharedPeaksBuilderError {
     /// The builder is missing a required attribute.
+    #[error("Incomplete build: missing attribute `{0}`")]
     IncompleteBuild(GreedySharedPeaksAttribute),
 }
-
-impl core::fmt::Display for GreedySharedPeaksBuilderError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::IncompleteBuild(attr) => {
-                write!(f, "Incomplete build: missing attribute `{attr}`")
-            }
-        }
-    }
-}
-
-impl core::error::Error for GreedySharedPeaksBuilderError {}
 
 /// Iterator over the shared peaks in two spectra, within a given tolerance.
 pub struct GreedySharedPeaks<'a, LeftSpectrum, RightSpectrum>

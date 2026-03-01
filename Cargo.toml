@@ -8,6 +8,7 @@ geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geome
 num-traits = "0.2"
 multi_ranged = "0.1.1"
 csv = "1"
+thiserror = "2"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
