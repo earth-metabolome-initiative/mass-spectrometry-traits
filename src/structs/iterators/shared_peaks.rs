@@ -2,7 +2,7 @@
 
 use core::iter::Peekable;
 
-use num_traits::Zero;
+use num_traits::{ToPrimitive, Zero};
 
 use crate::prelude::Spectrum;
 
@@ -54,6 +54,7 @@ impl<LeftSpectrum, RightSpectrum> Iterator for GreedySharedPeaks<'_, LeftSpectru
 where
     LeftSpectrum: Spectrum,
     RightSpectrum: Spectrum<Mz = LeftSpectrum::Mz>,
+    LeftSpectrum::Mz: ToPrimitive,
 {
     type Item = (
         (LeftSpectrum::Mz, LeftSpectrum::Intensity),
@@ -67,9 +68,18 @@ where
                 return None;
             };
 
-            let shifted_right_mz = *right_mz + self.right_shift;
-            if shifted_right_mz <= *left_mz + self.tolerance
-                && *left_mz <= shifted_right_mz + self.tolerance
+            let (Some(left_mz_f64), Some(right_mz_f64), Some(tolerance_f64), Some(right_shift_f64)) = (
+                left_mz.to_f64(),
+                right_mz.to_f64(),
+                self.tolerance.to_f64(),
+                self.right_shift.to_f64(),
+            ) else {
+                return None;
+            };
+
+            let shifted_right_mz = right_mz_f64 + right_shift_f64;
+            if shifted_right_mz <= left_mz_f64 + tolerance_f64
+                && left_mz_f64 <= shifted_right_mz + tolerance_f64
             {
                 let (Some(left), Some(right)) = (self.left.next(), self.right.next()) else {
                     return None;
@@ -77,7 +87,7 @@ where
                 return Some((left, right));
             }
 
-            if shifted_right_mz < *left_mz {
+            if shifted_right_mz < left_mz_f64 {
                 self.right.next();
             } else {
                 self.left.next();

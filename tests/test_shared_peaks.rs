@@ -77,3 +77,26 @@ fn long_nonmatching_sequence_completes() {
 
     assert_eq!(count, 0);
 }
+
+#[test]
+fn unsigned_mz_shift_addition_does_not_overflow() {
+    let mut left = GenericSpectrum::with_capacity(100_u32, 1);
+    left.add_peak(10_u32, 1_u32).expect("sorted");
+
+    let mut right = GenericSpectrum::with_capacity(100_u32, 1);
+    right.add_peak(u32::MAX, 1_u32).expect("sorted");
+
+    let result = std::panic::catch_unwind(|| {
+        GreedySharedPeaksBuilder::default()
+            .left(&left)
+            .right(&right)
+            .tolerance(1_u32)
+            .right_shift(1_u32)
+            .build()
+            .expect("builder is complete")
+            .count()
+    });
+
+    assert!(result.is_ok(), "shared peaks iteration panicked");
+    assert_eq!(result.expect("catch_unwind succeeded"), 0);
+}
