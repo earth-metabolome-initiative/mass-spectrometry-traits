@@ -22,25 +22,17 @@ enum TolerancePosition {
 }
 
 #[inline]
-fn tolerance_position<T>(target: T, candidate: T, tolerance: T) -> TolerancePosition
-where
-    T: Number + PartialOrd,
-{
-    if candidate > target {
-        if candidate - target > tolerance {
-            TolerancePosition::Above
-        } else {
-            TolerancePosition::Within
-        }
-    } else if target > candidate {
-        if target - candidate > tolerance {
-            TolerancePosition::Below
-        } else {
-            TolerancePosition::Within
-        }
-    } else {
-        TolerancePosition::Within
+fn to_f64_checked<T: ToPrimitive>(
+    value: T,
+    name: &'static str,
+) -> Result<f64, SimilarityComputationError> {
+    let value = value
+        .to_f64()
+        .ok_or(SimilarityComputationError::ValueNotRepresentable(name))?;
+    if !value.is_finite() {
+        return Err(SimilarityComputationError::NonFiniteValue(name));
     }
+    Ok(value)
 }
 
 #[inline]
@@ -153,7 +145,11 @@ pub trait Spectrum {
         &self,
         other: &S,
         mz_tolerance: Self::Mz,
-    ) -> Result<RangedCSR2D<u32, u32, SimpleRange<u32>>, SimilarityComputationError> {
+    ) -> Result<RangedCSR2D<u32, u32, SimpleRange<u32>>, SimilarityComputationError>
+    where
+        Self::Mz: ToPrimitive,
+    {
+        let mz_tolerance_f64 = to_f64_checked(mz_tolerance, "mz_tolerance")?;
         let number_of_rows =
             u32::try_from(self.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
         let number_of_columns =
@@ -165,13 +161,15 @@ pub trait Spectrum {
         let mut lowest_other_index = 0;
         for (i, mz) in self.mz().enumerate() {
             let row = to_matrix_index(i)?;
+            let mz_f64 = to_f64_checked(mz, "mz")?;
             let mut new_lowest = lowest_other_index;
             for (j, other_mz) in other
                 .mz_from(lowest_other_index)
                 .enumerate()
                 .map(|(j, mz)| (j + lowest_other_index, mz))
             {
-                match tolerance_position(mz, other_mz, mz_tolerance) {
+                let other_mz_f64 = to_f64_checked(other_mz, "other_mz")?;
+                match tolerance_position_f64(mz_f64, other_mz_f64, mz_tolerance_f64) {
                     TolerancePosition::Above => {
                         // other_mz is above the tolerance window.
                         break;
@@ -216,21 +214,8 @@ pub trait Spectrum {
     where
         Self::Mz: ToPrimitive,
     {
-        let mz_tolerance_f64 = mz_tolerance
-            .to_f64()
-            .ok_or(SimilarityComputationError::ValueNotRepresentable(
-                "mz_tolerance",
-            ))?;
-        if !mz_tolerance_f64.is_finite() {
-            return Err(SimilarityComputationError::NonFiniteValue("mz_tolerance"));
-        }
-
-        let mz_shift_f64 = mz_shift
-            .to_f64()
-            .ok_or(SimilarityComputationError::ValueNotRepresentable("mz_shift"))?;
-        if !mz_shift_f64.is_finite() {
-            return Err(SimilarityComputationError::NonFiniteValue("mz_shift"));
-        }
+        let mz_tolerance_f64 = to_f64_checked(mz_tolerance, "mz_tolerance")?;
+        let mz_shift_f64 = to_f64_checked(mz_shift, "mz_shift")?;
 
         let number_of_rows =
             u32::try_from(self.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
@@ -245,12 +230,7 @@ pub trait Spectrum {
 
         for (i, mz) in self.mz().enumerate() {
             let row = to_matrix_index(i)?;
-            let mz_f64 = mz
-                .to_f64()
-                .ok_or(SimilarityComputationError::ValueNotRepresentable("mz"))?;
-            if !mz_f64.is_finite() {
-                return Err(SimilarityComputationError::NonFiniteValue("mz"));
-            }
+            let mz_f64 = to_f64_checked(mz, "mz")?;
 
             let mut row_matches: Vec<u32> = Vec::new();
 
@@ -261,15 +241,7 @@ pub trait Spectrum {
                 .enumerate()
                 .map(|(j, mz)| (j + lowest_direct, mz))
             {
-                let other_mz_f64 =
-                    other_mz
-                        .to_f64()
-                        .ok_or(SimilarityComputationError::ValueNotRepresentable(
-                            "other_mz",
-                        ))?;
-                if !other_mz_f64.is_finite() {
-                    return Err(SimilarityComputationError::NonFiniteValue("other_mz"));
-                }
+                let other_mz_f64 = to_f64_checked(other_mz, "other_mz")?;
 
                 match tolerance_position_f64(mz_f64, other_mz_f64, mz_tolerance_f64) {
                     TolerancePosition::Above => break,
@@ -290,15 +262,7 @@ pub trait Spectrum {
                 .enumerate()
                 .map(|(j, mz)| (j + lowest_shifted, mz))
             {
-                let other_mz_f64 =
-                    other_mz
-                        .to_f64()
-                        .ok_or(SimilarityComputationError::ValueNotRepresentable(
-                            "other_mz",
-                        ))?;
-                if !other_mz_f64.is_finite() {
-                    return Err(SimilarityComputationError::NonFiniteValue("other_mz"));
-                }
+                let other_mz_f64 = to_f64_checked(other_mz, "other_mz")?;
 
                 let shifted_other_mz_f64 = other_mz_f64 + mz_shift_f64;
                 if !shifted_other_mz_f64.is_finite() {
