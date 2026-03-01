@@ -103,7 +103,14 @@ pub trait Spectrum {
         other: &S,
         mz_tolerance: Self::Mz,
     ) -> Result<RangedCSR2D<u32, u32, SimpleRange<u32>>, SimilarityComputationError> {
-        let mut matching_peaks = RangedCSR2D::default();
+        let number_of_rows =
+            u32::try_from(self.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let number_of_columns =
+            u32::try_from(other.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let mut matching_peaks: RangedCSR2D<u32, u32, SimpleRange<u32>> =
+            SparseMatrixMut::with_sparse_shape((number_of_rows, number_of_columns));
+        MatrixMut::increase_shape(&mut matching_peaks, (number_of_rows, number_of_columns))
+            .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
         let mut lowest_other_index = 0;
         for (i, mz) in self.mz().enumerate() {
             let row = to_matrix_index(i)?;
@@ -156,7 +163,14 @@ pub trait Spectrum {
         mz_tolerance: Self::Mz,
         mz_shift: Self::Mz,
     ) -> Result<RangedCSR2D<u32, u32, BiRange<u32>>, SimilarityComputationError> {
-        let mut matching_peaks: RangedCSR2D<u32, u32, BiRange<u32>> = RangedCSR2D::default();
+        let number_of_rows =
+            u32::try_from(self.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let number_of_columns =
+            u32::try_from(other.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let mut matching_peaks: RangedCSR2D<u32, u32, BiRange<u32>> =
+            SparseMatrixMut::with_sparse_shape((number_of_rows, number_of_columns));
+        MatrixMut::increase_shape(&mut matching_peaks, (number_of_rows, number_of_columns))
+            .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
         let mut lowest_direct = 0usize;
         let mut lowest_shifted = 0usize;
 

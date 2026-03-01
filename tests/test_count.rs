@@ -33,6 +33,14 @@ fn count_edges() {
         let n_rows = graph.number_of_rows() as usize;
         let n_cols = graph.number_of_columns() as usize;
         let n_edges = graph.number_of_defined_values();
+        assert_eq!(
+            n_rows, n_left,
+            "row count must match left spectrum length for {ln} vs {rn}"
+        );
+        assert_eq!(
+            n_cols, n_right,
+            "column count must match right spectrum length for {ln} vs {rn}"
+        );
         let padded = n_rows.max(n_cols);
         println!(
             "{ln}({n_left}) x {rn}({n_right}): graph={n_rows}x{n_cols}, edges={n_edges}, padded={padded}x{padded} = {} entries",
