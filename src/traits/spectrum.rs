@@ -36,6 +36,7 @@ pub trait Spectrum {
     fn len(&self) -> usize;
 
     /// Returns whether the Spectrum is empty.
+    #[inline]
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
