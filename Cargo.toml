@@ -25,3 +25,11 @@ harness = false
 [[bench]]
 name = "modified_hungarian_cosine"
 harness = false
+
+[[bench]]
+name = "greedy_cosine"
+harness = false
+
+[[bench]]
+name = "modified_greedy_cosine"
+harness = false
