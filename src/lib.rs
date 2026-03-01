@@ -3,6 +3,8 @@
 
 extern crate alloc;
 
+mod numeric_validation;
+
 pub mod structs;
 pub mod traits;
 

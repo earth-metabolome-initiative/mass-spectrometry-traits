@@ -6,6 +6,7 @@ use geometric_traits::prelude::*;
 use multi_ranged::{BiRange, SimpleRange};
 use num_traits::ToPrimitive;
 
+use crate::numeric_validation::{NumericValidationError, checked_to_f64};
 use crate::prelude::Annotation;
 use crate::structs::SimilarityComputationError;
 
@@ -26,13 +27,12 @@ fn to_f64_checked<T: ToPrimitive>(
     value: T,
     name: &'static str,
 ) -> Result<f64, SimilarityComputationError> {
-    let value = value
-        .to_f64()
-        .ok_or(SimilarityComputationError::ValueNotRepresentable(name))?;
-    if !value.is_finite() {
-        return Err(SimilarityComputationError::NonFiniteValue(name));
-    }
-    Ok(value)
+    checked_to_f64(value, name).map_err(|error| match error {
+        NumericValidationError::NonRepresentable(name) => {
+            SimilarityComputationError::ValueNotRepresentable(name)
+        }
+        NumericValidationError::NonFinite(name) => SimilarityComputationError::NonFiniteValue(name),
+    })
 }
 
 #[inline]

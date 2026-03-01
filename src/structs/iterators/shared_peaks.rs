@@ -4,6 +4,7 @@ use core::iter::Peekable;
 
 use num_traits::{ToPrimitive, Zero};
 
+use crate::numeric_validation::{NumericValidationError, checked_to_f64};
 use crate::prelude::Spectrum;
 
 #[inline]
@@ -11,13 +12,14 @@ fn to_f64_checked<T: ToPrimitive>(
     value: T,
     name: &'static str,
 ) -> Result<f64, GreedySharedPeaksBuilderError> {
-    let value = value
-        .to_f64()
-        .ok_or(GreedySharedPeaksBuilderError::ValueNotRepresentable(name))?;
-    if !value.is_finite() {
-        return Err(GreedySharedPeaksBuilderError::NonFiniteValue(name));
-    }
-    Ok(value)
+    checked_to_f64(value, name).map_err(|error| match error {
+        NumericValidationError::NonRepresentable(name) => {
+            GreedySharedPeaksBuilderError::ValueNotRepresentable(name)
+        }
+        NumericValidationError::NonFinite(name) => {
+            GreedySharedPeaksBuilderError::NonFiniteValue(name)
+        }
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
