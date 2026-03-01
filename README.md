@@ -2,6 +2,11 @@
 
 A crate for traits and data structures for mass spectrometry.
 
+## `no_std` support
+
+The library supports `#![no_std]` and requires `alloc`.
+Targets without an allocator are not supported.
+
 ## Quality Gates
 
 This repository uses [`prek`](https://prek.j178.dev/) for local pre-commit
