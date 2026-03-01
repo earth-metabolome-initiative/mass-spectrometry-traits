@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of pymetrozine.
-pub trait PymetrozineSpectrum: SpectrumAlloc {
+pub trait PymetrozineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of pymetrozine.
-    fn pymetrozine() -> Self;
+    fn pymetrozine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for pymetrozine.

@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of nitenpyram.
-pub trait NitenpyramSpectrum: SpectrumAlloc {
+pub trait NitenpyramSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of nitenpyram.
-    fn nitenpyram() -> Self;
+    fn nitenpyram() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for nitenpyram.

@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of clothianidin.
-pub trait ClothianidinSpectrum: SpectrumAlloc {
+pub trait ClothianidinSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of clothianidin.
-    fn clothianidin() -> Self;
+    fn clothianidin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for clothianidin.

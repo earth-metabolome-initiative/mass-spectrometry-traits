@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of acetyl coenzyme a.
-pub trait AcetylCoenzymeASpectrum: SpectrumAlloc {
+pub trait AcetylCoenzymeASpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of acetyl coenzyme a.
-    fn acetyl_coenzyme_a() -> Self;
+    fn acetyl_coenzyme_a() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for acetyl coenzyme a.

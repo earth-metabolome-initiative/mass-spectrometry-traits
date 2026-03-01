@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of n4 aminobenzoic acid.
-pub trait N4AminobenzoicAcidSpectrum: SpectrumAlloc {
+pub trait N4AminobenzoicAcidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of n4 aminobenzoic acid.
-    fn n4_aminobenzoic_acid() -> Self;
+    fn n4_aminobenzoic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for n4 aminobenzoic acid.

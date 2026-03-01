@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of glucose.
-pub trait GlucoseSpectrum: SpectrumAlloc {
+pub trait GlucoseSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of glucose.
-    fn glucose() -> Self;
+    fn glucose() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for glucose.

@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of thiophanate.
-pub trait ThiophanateSpectrum: SpectrumAlloc {
+pub trait ThiophanateSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of thiophanate.
-    fn thiophanate() -> Self;
+    fn thiophanate() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for thiophanate.

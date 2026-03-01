@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of ethiprole.
-pub trait EthiproleSpectrum: SpectrumAlloc {
+pub trait EthiproleSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of ethiprole.
-    fn ethiprole() -> Self;
+    fn ethiprole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for ethiprole.

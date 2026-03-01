@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of triadimefon.
-pub trait TriadimefonSpectrum: SpectrumAlloc {
+pub trait TriadimefonSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of triadimefon.
-    fn triadimefon() -> Self;
+    fn triadimefon() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for triadimefon.

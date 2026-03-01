@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of lufenuron.
-pub trait LufenuronSpectrum: SpectrumAlloc {
+pub trait LufenuronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of lufenuron.
-    fn lufenuron() -> Self;
+    fn lufenuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for lufenuron.

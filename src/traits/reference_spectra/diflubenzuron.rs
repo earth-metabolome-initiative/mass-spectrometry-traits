@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of diflubenzuron.
-pub trait DiflubenzuronSpectrum: SpectrumAlloc {
+pub trait DiflubenzuronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of diflubenzuron.
-    fn diflubenzuron() -> Self;
+    fn diflubenzuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for diflubenzuron.

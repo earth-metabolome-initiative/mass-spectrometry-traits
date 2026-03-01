@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of prothioconazole.
-pub trait ProthioconazoleSpectrum: SpectrumAlloc {
+pub trait ProthioconazoleSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of prothioconazole.
-    fn prothioconazole() -> Self;
+    fn prothioconazole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for prothioconazole.

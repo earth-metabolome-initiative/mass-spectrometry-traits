@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of novaluron.
-pub trait NovaluronSpectrum: SpectrumAlloc {
+pub trait NovaluronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of novaluron.
-    fn novaluron() -> Self;
+    fn novaluron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for novaluron.

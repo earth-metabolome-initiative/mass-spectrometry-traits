@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of arachidonic acid.
-pub trait ArachidonicAcidSpectrum: SpectrumAlloc {
+pub trait ArachidonicAcidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of arachidonic acid.
-    fn arachidonic_acid() -> Self;
+    fn arachidonic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for arachidonic acid.

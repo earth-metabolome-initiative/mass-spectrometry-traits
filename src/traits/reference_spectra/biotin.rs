@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of biotin.
-pub trait BiotinSpectrum: SpectrumAlloc {
+pub trait BiotinSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of biotin.
-    fn biotin() -> Self;
+    fn biotin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for biotin.

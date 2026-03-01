@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of metaflumizone.
-pub trait MetaflumizoneSpectrum: SpectrumAlloc {
+pub trait MetaflumizoneSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of metaflumizone.
-    fn metaflumizone() -> Self;
+    fn metaflumizone() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for metaflumizone.

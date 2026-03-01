@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of chlorfluazuron.
-pub trait ChlorfluazuronSpectrum: SpectrumAlloc {
+pub trait ChlorfluazuronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of chlorfluazuron.
-    fn chlorfluazuron() -> Self;
+    fn chlorfluazuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for chlorfluazuron.

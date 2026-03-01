@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of flutolanil.
-pub trait FlutolanilSpectrum: SpectrumAlloc {
+pub trait FlutolanilSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of flutolanil.
-    fn flutolanil() -> Self;
+    fn flutolanil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for flutolanil.

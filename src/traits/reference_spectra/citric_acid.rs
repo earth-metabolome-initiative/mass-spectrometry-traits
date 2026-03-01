@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of citric acid.
-pub trait CitricAcidSpectrum: SpectrumAlloc {
+pub trait CitricAcidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of citric acid.
-    fn citric_acid() -> Self;
+    fn citric_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for citric acid.

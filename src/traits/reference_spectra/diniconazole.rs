@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of diniconazole.
-pub trait DiniconazoleSpectrum: SpectrumAlloc {
+pub trait DiniconazoleSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of diniconazole.
-    fn diniconazole() -> Self;
+    fn diniconazole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for diniconazole.

@@ -5,8 +5,8 @@ use num_traits::Pow;
 
 #[test]
 fn diagnose_adenine_adenosine() {
-    let left: GenericSpectrum<f32, f32> = GenericSpectrum::adenine();
-    let right: GenericSpectrum<f32, f32> = GenericSpectrum::adenosine();
+    let left: GenericSpectrum<f32, f32> = GenericSpectrum::adenine().expect("reference spectrum should build");
+    let right: GenericSpectrum<f32, f32> = GenericSpectrum::adenosine().expect("reference spectrum should build");
     let tolerance: f32 = 2.0;
     let mz_power: f32 = 0.0;
     let intensity_power: f32 = 1.0;

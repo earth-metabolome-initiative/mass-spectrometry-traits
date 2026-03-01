@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of n1 2 dioleoyl rac glycerol.
-pub trait N12DioleoylRacGlycerolSpectrum: SpectrumAlloc {
+pub trait N12DioleoylRacGlycerolSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of n1 2 dioleoyl rac glycerol.
-    fn n1_2_dioleoyl_rac_glycerol() -> Self;
+    fn n1_2_dioleoyl_rac_glycerol() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for n1 2 dioleoyl rac glycerol.

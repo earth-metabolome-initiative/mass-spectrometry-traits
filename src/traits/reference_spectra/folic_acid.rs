@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of folic acid.
-pub trait FolicAcidSpectrum: SpectrumAlloc {
+pub trait FolicAcidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of folic acid.
-    fn folic_acid() -> Self;
+    fn folic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for folic acid.

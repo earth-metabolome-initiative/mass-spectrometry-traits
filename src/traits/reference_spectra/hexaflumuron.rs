@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of hexaflumuron.
-pub trait HexaflumuronSpectrum: SpectrumAlloc {
+pub trait HexaflumuronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of hexaflumuron.
-    fn hexaflumuron() -> Self;
+    fn hexaflumuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for hexaflumuron.

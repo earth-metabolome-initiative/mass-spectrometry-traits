@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of acephate.
-pub trait AcephateSpectrum: SpectrumAlloc {
+pub trait AcephateSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of acephate.
-    fn acephate() -> Self;
+    fn acephate() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for acephate.

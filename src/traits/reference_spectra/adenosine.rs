@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of adenosine.
-pub trait AdenosineSpectrum: SpectrumAlloc {
+pub trait AdenosineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of adenosine.
-    fn adenosine() -> Self;
+    fn adenosine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for adenosine.

@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of flonicamid.
-pub trait FlonicamidSpectrum: SpectrumAlloc {
+pub trait FlonicamidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of flonicamid.
-    fn flonicamid() -> Self;
+    fn flonicamid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for flonicamid.

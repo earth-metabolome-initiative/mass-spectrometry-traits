@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of doramectin.
-pub trait DoramectinSpectrum: SpectrumAlloc {
+pub trait DoramectinSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of doramectin.
-    fn doramectin() -> Self;
+    fn doramectin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for doramectin.

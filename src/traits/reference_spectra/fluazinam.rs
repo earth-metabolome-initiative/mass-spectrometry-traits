@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fluazinam.
-pub trait FluazinamSpectrum: SpectrumAlloc {
+pub trait FluazinamSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of fluazinam.
-    fn fluazinam() -> Self;
+    fn fluazinam() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for fluazinam.

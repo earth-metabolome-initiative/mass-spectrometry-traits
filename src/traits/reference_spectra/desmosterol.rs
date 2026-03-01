@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of desmosterol.
-pub trait DesmosterolSpectrum: SpectrumAlloc {
+pub trait DesmosterolSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of desmosterol.
-    fn desmosterol() -> Self;
+    fn desmosterol() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for desmosterol.

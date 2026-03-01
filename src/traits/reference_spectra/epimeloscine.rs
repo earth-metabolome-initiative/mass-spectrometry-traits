@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of epimeloscine.
-pub trait EpimeloscineSpectrum: SpectrumAlloc {
+pub trait EpimeloscineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of Epimeloscine.
-    fn epimeloscine() -> Self;
+    fn epimeloscine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for epimeloscine.

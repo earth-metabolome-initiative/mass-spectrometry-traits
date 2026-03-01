@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of chlorantraniliprole.
-pub trait ChlorantraniliproleSpectrum: SpectrumAlloc {
+pub trait ChlorantraniliproleSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of chlorantraniliprole.
-    fn chlorantraniliprole() -> Self;
+    fn chlorantraniliprole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for chlorantraniliprole.

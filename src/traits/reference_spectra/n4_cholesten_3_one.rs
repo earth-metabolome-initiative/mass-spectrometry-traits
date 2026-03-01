@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of n4 cholesten 3 one.
-pub trait N4Cholesten3OneSpectrum: SpectrumAlloc {
+pub trait N4Cholesten3OneSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of n4 cholesten 3 one.
-    fn n4_cholesten_3_one() -> Self;
+    fn n4_cholesten_3_one() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for n4 cholesten 3 one.

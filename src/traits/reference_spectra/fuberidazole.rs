@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fuberidazole.
-pub trait FuberidazoleSpectrum: SpectrumAlloc {
+pub trait FuberidazoleSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of fuberidazole.
-    fn fuberidazole() -> Self;
+    fn fuberidazole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for fuberidazole.

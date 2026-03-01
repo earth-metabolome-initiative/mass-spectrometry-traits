@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of phenylalanine.
-pub trait PhenylalanineSpectrum: SpectrumAlloc {
+pub trait PhenylalanineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of phenylalanine.
-    fn phenylalanine() -> Self;
+    fn phenylalanine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for Phenylalanine.

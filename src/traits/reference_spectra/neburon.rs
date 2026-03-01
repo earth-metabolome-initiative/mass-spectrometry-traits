@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of neburon.
-pub trait NeburonSpectrum: SpectrumAlloc {
+pub trait NeburonSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of neburon.
-    fn neburon() -> Self;
+    fn neburon() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for neburon.

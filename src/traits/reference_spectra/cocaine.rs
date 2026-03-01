@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cocaine.
-pub trait CocaineSpectrum: SpectrumAlloc {
+pub trait CocaineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of cocaine.
-    fn cocaine() -> Self;
+    fn cocaine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for cocaine.

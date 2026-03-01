@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cymoxanil.
-pub trait CymoxanilSpectrum: SpectrumAlloc {
+pub trait CymoxanilSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of cymoxanil.
-    fn cymoxanil() -> Self;
+    fn cymoxanil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for cymoxanil.

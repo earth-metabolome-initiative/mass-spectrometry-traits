@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of thidiazuron.
-pub trait ThidiazuronSpectrum: SpectrumAlloc {
+pub trait ThidiazuronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of thidiazuron.
-    fn thidiazuron() -> Self;
+    fn thidiazuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for thidiazuron.

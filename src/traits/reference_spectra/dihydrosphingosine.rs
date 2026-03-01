@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of dihydrosphingosine.
-pub trait DihydrosphingosineSpectrum: SpectrumAlloc {
+pub trait DihydrosphingosineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of dihydrosphingosine.
-    fn dihydrosphingosine() -> Self;
+    fn dihydrosphingosine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for dihydrosphingosine.

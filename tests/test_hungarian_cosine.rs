@@ -29,43 +29,43 @@ fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
 
 #[test]
 fn self_similarity_cocaine() {
-    assert_self_similarity("cocaine", &GenericSpectrum::cocaine());
+    assert_self_similarity("cocaine", &GenericSpectrum::cocaine().expect("reference spectrum should build"));
 }
 
 #[test]
 fn self_similarity_glucose() {
-    assert_self_similarity("glucose", &GenericSpectrum::glucose());
+    assert_self_similarity("glucose", &GenericSpectrum::glucose().expect("reference spectrum should build"));
 }
 
 #[test]
 fn self_similarity_aspirin() {
-    assert_self_similarity("aspirin", &GenericSpectrum::aspirin());
+    assert_self_similarity("aspirin", &GenericSpectrum::aspirin().expect("reference spectrum should build"));
 }
 
 #[test]
 fn self_similarity_hydroxy_cholesterol() {
     assert_self_similarity(
         "hydroxy_cholesterol",
-        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
     );
 }
 
 #[test]
 fn self_similarity_salicin() {
-    assert_self_similarity("salicin", &GenericSpectrum::salicin());
+    assert_self_similarity("salicin", &GenericSpectrum::salicin().expect("reference spectrum should build"));
 }
 
 #[test]
 fn self_similarity_phenylalanine() {
-    assert_self_similarity("phenylalanine", &GenericSpectrum::phenylalanine());
+    assert_self_similarity("phenylalanine", &GenericSpectrum::phenylalanine().expect("reference spectrum should build"));
 }
 
 // ---------- cross-similarity (matchms CosineHungarian reference) ----------
 
 #[test]
 fn cocaine_vs_glucose() {
-    let cocaine = GenericSpectrum::cocaine();
-    let glucose = GenericSpectrum::glucose();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&cocaine, &glucose)
         .expect("similarity computation should succeed");
@@ -75,8 +75,8 @@ fn cocaine_vs_glucose() {
 
 #[test]
 fn cocaine_vs_aspirin() {
-    let cocaine = GenericSpectrum::cocaine();
-    let aspirin = GenericSpectrum::aspirin();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let aspirin = GenericSpectrum::aspirin().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&cocaine, &aspirin)
         .expect("similarity computation should succeed");
@@ -89,8 +89,8 @@ fn cocaine_vs_aspirin() {
 
 #[test]
 fn cocaine_vs_hydroxy_cholesterol() {
-    let cocaine = GenericSpectrum::cocaine();
-    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let hc = GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&cocaine, &hc)
         .expect("similarity computation should succeed");
@@ -100,8 +100,8 @@ fn cocaine_vs_hydroxy_cholesterol() {
 
 #[test]
 fn cocaine_vs_salicin() {
-    let cocaine = GenericSpectrum::cocaine();
-    let salicin = GenericSpectrum::salicin();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let salicin = GenericSpectrum::salicin().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&cocaine, &salicin)
         .expect("similarity computation should succeed");
@@ -111,8 +111,8 @@ fn cocaine_vs_salicin() {
 
 #[test]
 fn cocaine_vs_phenylalanine() {
-    let cocaine = GenericSpectrum::cocaine();
-    let phe = GenericSpectrum::phenylalanine();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let phe = GenericSpectrum::phenylalanine().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&cocaine, &phe)
         .expect("similarity computation should succeed");
@@ -122,8 +122,8 @@ fn cocaine_vs_phenylalanine() {
 
 #[test]
 fn glucose_vs_aspirin() {
-    let glucose = GenericSpectrum::glucose();
-    let aspirin = GenericSpectrum::aspirin();
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let aspirin = GenericSpectrum::aspirin().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&glucose, &aspirin)
         .expect("similarity computation should succeed");
@@ -136,8 +136,8 @@ fn glucose_vs_aspirin() {
 
 #[test]
 fn glucose_vs_hydroxy_cholesterol() {
-    let glucose = GenericSpectrum::glucose();
-    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let hc = GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&glucose, &hc)
         .expect("similarity computation should succeed");
@@ -150,8 +150,8 @@ fn glucose_vs_hydroxy_cholesterol() {
 
 #[test]
 fn glucose_vs_salicin() {
-    let glucose = GenericSpectrum::glucose();
-    let salicin = GenericSpectrum::salicin();
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let salicin = GenericSpectrum::salicin().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&glucose, &salicin)
         .expect("similarity computation should succeed");
@@ -161,8 +161,8 @@ fn glucose_vs_salicin() {
 
 #[test]
 fn glucose_vs_phenylalanine() {
-    let glucose = GenericSpectrum::glucose();
-    let phe = GenericSpectrum::phenylalanine();
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let phe = GenericSpectrum::phenylalanine().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&glucose, &phe)
         .expect("similarity computation should succeed");
@@ -175,8 +175,8 @@ fn glucose_vs_phenylalanine() {
 
 #[test]
 fn aspirin_vs_hydroxy_cholesterol() {
-    let aspirin = GenericSpectrum::aspirin();
-    let hc = GenericSpectrum::hydroxy_cholesterol();
+    let aspirin = GenericSpectrum::aspirin().expect("reference spectrum should build");
+    let hc = GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&aspirin, &hc)
         .expect("similarity computation should succeed");
@@ -189,8 +189,8 @@ fn aspirin_vs_hydroxy_cholesterol() {
 
 #[test]
 fn aspirin_vs_salicin() {
-    let aspirin = GenericSpectrum::aspirin();
-    let salicin = GenericSpectrum::salicin();
+    let aspirin = GenericSpectrum::aspirin().expect("reference spectrum should build");
+    let salicin = GenericSpectrum::salicin().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&aspirin, &salicin)
         .expect("similarity computation should succeed");
@@ -203,8 +203,8 @@ fn aspirin_vs_salicin() {
 
 #[test]
 fn aspirin_vs_phenylalanine() {
-    let aspirin = GenericSpectrum::aspirin();
-    let phe = GenericSpectrum::phenylalanine();
+    let aspirin = GenericSpectrum::aspirin().expect("reference spectrum should build");
+    let phe = GenericSpectrum::phenylalanine().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&aspirin, &phe)
         .expect("similarity computation should succeed");
@@ -217,8 +217,8 @@ fn aspirin_vs_phenylalanine() {
 
 #[test]
 fn hydroxy_cholesterol_vs_salicin() {
-    let hc = GenericSpectrum::hydroxy_cholesterol();
-    let salicin = GenericSpectrum::salicin();
+    let hc = GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build");
+    let salicin = GenericSpectrum::salicin().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&hc, &salicin)
         .expect("similarity computation should succeed");
@@ -228,8 +228,8 @@ fn hydroxy_cholesterol_vs_salicin() {
 
 #[test]
 fn hydroxy_cholesterol_vs_phenylalanine() {
-    let hc = GenericSpectrum::hydroxy_cholesterol();
-    let phe = GenericSpectrum::phenylalanine();
+    let hc = GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build");
+    let phe = GenericSpectrum::phenylalanine().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&hc, &phe)
         .expect("similarity computation should succeed");
@@ -242,8 +242,8 @@ fn hydroxy_cholesterol_vs_phenylalanine() {
 
 #[test]
 fn salicin_vs_phenylalanine() {
-    let salicin = GenericSpectrum::salicin();
-    let phe = GenericSpectrum::phenylalanine();
+    let salicin = GenericSpectrum::salicin().expect("reference spectrum should build");
+    let phe = GenericSpectrum::phenylalanine().expect("reference spectrum should build");
     let (sim, peaks) = cosine()
         .similarity(&salicin, &phe)
         .expect("similarity computation should succeed");

@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of sulfentrazone.
-pub trait SulfentrazoneSpectrum: SpectrumAlloc {
+pub trait SulfentrazoneSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of sulfentrazone.
-    fn sulfentrazone() -> Self;
+    fn sulfentrazone() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for sulfentrazone.

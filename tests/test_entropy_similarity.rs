@@ -75,38 +75,38 @@ fn assert_symmetry(
 
 #[test]
 fn weighted_self_cocaine() {
-    assert_self_similarity("cocaine", &GenericSpectrum::cocaine(), &weighted());
+    assert_self_similarity("cocaine", &GenericSpectrum::cocaine().expect("reference spectrum should build"), &weighted());
 }
 
 #[test]
 fn weighted_self_glucose() {
-    assert_self_similarity("glucose", &GenericSpectrum::glucose(), &weighted());
+    assert_self_similarity("glucose", &GenericSpectrum::glucose().expect("reference spectrum should build"), &weighted());
 }
 
 #[test]
 fn weighted_self_aspirin() {
-    assert_self_similarity("aspirin", &GenericSpectrum::aspirin(), &weighted());
+    assert_self_similarity("aspirin", &GenericSpectrum::aspirin().expect("reference spectrum should build"), &weighted());
 }
 
 #[test]
 fn weighted_self_hydroxy_cholesterol() {
     assert_self_similarity(
         "hydroxy_cholesterol",
-        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
         &weighted(),
     );
 }
 
 #[test]
 fn weighted_self_salicin() {
-    assert_self_similarity("salicin", &GenericSpectrum::salicin(), &weighted());
+    assert_self_similarity("salicin", &GenericSpectrum::salicin().expect("reference spectrum should build"), &weighted());
 }
 
 #[test]
 fn weighted_self_phenylalanine() {
     assert_self_similarity(
         "phenylalanine",
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &weighted(),
     );
 }
@@ -115,38 +115,38 @@ fn weighted_self_phenylalanine() {
 
 #[test]
 fn unweighted_self_cocaine() {
-    assert_self_similarity("cocaine", &GenericSpectrum::cocaine(), &unweighted());
+    assert_self_similarity("cocaine", &GenericSpectrum::cocaine().expect("reference spectrum should build"), &unweighted());
 }
 
 #[test]
 fn unweighted_self_glucose() {
-    assert_self_similarity("glucose", &GenericSpectrum::glucose(), &unweighted());
+    assert_self_similarity("glucose", &GenericSpectrum::glucose().expect("reference spectrum should build"), &unweighted());
 }
 
 #[test]
 fn unweighted_self_aspirin() {
-    assert_self_similarity("aspirin", &GenericSpectrum::aspirin(), &unweighted());
+    assert_self_similarity("aspirin", &GenericSpectrum::aspirin().expect("reference spectrum should build"), &unweighted());
 }
 
 #[test]
 fn unweighted_self_hydroxy_cholesterol() {
     assert_self_similarity(
         "hydroxy_cholesterol",
-        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
         &unweighted(),
     );
 }
 
 #[test]
 fn unweighted_self_salicin() {
-    assert_self_similarity("salicin", &GenericSpectrum::salicin(), &unweighted());
+    assert_self_similarity("salicin", &GenericSpectrum::salicin().expect("reference spectrum should build"), &unweighted());
 }
 
 #[test]
 fn unweighted_self_phenylalanine() {
     assert_self_similarity(
         "phenylalanine",
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &unweighted(),
     );
 }
@@ -157,8 +157,8 @@ fn unweighted_self_phenylalanine() {
 fn weighted_cocaine_vs_glucose() {
     assert_cross(
         "cocaine_vs_glucose",
-        &GenericSpectrum::cocaine(),
-        &GenericSpectrum::glucose(),
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
         &weighted(),
         0.0,
         0,
@@ -170,8 +170,8 @@ fn weighted_cocaine_vs_glucose() {
 fn weighted_cocaine_vs_aspirin() {
     assert_cross(
         "cocaine_vs_aspirin",
-        &GenericSpectrum::cocaine(),
-        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
         &weighted(),
         0.026_026_2,
         1,
@@ -183,8 +183,8 @@ fn weighted_cocaine_vs_aspirin() {
 fn weighted_cocaine_vs_hydroxy_cholesterol() {
     assert_cross(
         "cocaine_vs_hydroxy_cholesterol",
-        &GenericSpectrum::cocaine(),
-        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
         &weighted(),
         0.0,
         0,
@@ -196,8 +196,8 @@ fn weighted_cocaine_vs_hydroxy_cholesterol() {
 fn weighted_cocaine_vs_salicin() {
     assert_cross(
         "cocaine_vs_salicin",
-        &GenericSpectrum::cocaine(),
-        &GenericSpectrum::salicin(),
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
         &weighted(),
         0.0,
         0,
@@ -209,8 +209,8 @@ fn weighted_cocaine_vs_salicin() {
 fn weighted_cocaine_vs_phenylalanine() {
     assert_cross(
         "cocaine_vs_phenylalanine",
-        &GenericSpectrum::cocaine(),
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &weighted(),
         0.0,
         0,
@@ -222,8 +222,8 @@ fn weighted_cocaine_vs_phenylalanine() {
 fn weighted_glucose_vs_aspirin() {
     assert_cross(
         "glucose_vs_aspirin",
-        &GenericSpectrum::glucose(),
-        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
         &weighted(),
         0.043_315_06,
         1,
@@ -235,8 +235,8 @@ fn weighted_glucose_vs_aspirin() {
 fn weighted_glucose_vs_hydroxy_cholesterol() {
     assert_cross(
         "glucose_vs_hydroxy_cholesterol",
-        &GenericSpectrum::glucose(),
-        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
         &weighted(),
         0.037_349_56,
         6,
@@ -248,8 +248,8 @@ fn weighted_glucose_vs_hydroxy_cholesterol() {
 fn weighted_glucose_vs_salicin() {
     assert_cross(
         "glucose_vs_salicin",
-        &GenericSpectrum::glucose(),
-        &GenericSpectrum::salicin(),
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
         &weighted(),
         0.0,
         0,
@@ -261,8 +261,8 @@ fn weighted_glucose_vs_salicin() {
 fn weighted_glucose_vs_phenylalanine() {
     assert_cross(
         "glucose_vs_phenylalanine",
-        &GenericSpectrum::glucose(),
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &weighted(),
         0.055_385_83,
         2,
@@ -274,8 +274,8 @@ fn weighted_glucose_vs_phenylalanine() {
 fn weighted_aspirin_vs_hydroxy_cholesterol() {
     assert_cross(
         "aspirin_vs_hydroxy_cholesterol",
-        &GenericSpectrum::aspirin(),
-        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
         &weighted(),
         0.053_310_06,
         8,
@@ -287,8 +287,8 @@ fn weighted_aspirin_vs_hydroxy_cholesterol() {
 fn weighted_aspirin_vs_salicin() {
     assert_cross(
         "aspirin_vs_salicin",
-        &GenericSpectrum::aspirin(),
-        &GenericSpectrum::salicin(),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
         &weighted(),
         0.005_232_96,
         1,
@@ -300,8 +300,8 @@ fn weighted_aspirin_vs_salicin() {
 fn weighted_aspirin_vs_phenylalanine() {
     assert_cross(
         "aspirin_vs_phenylalanine",
-        &GenericSpectrum::aspirin(),
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &weighted(),
         0.229_214_96,
         3,
@@ -313,8 +313,8 @@ fn weighted_aspirin_vs_phenylalanine() {
 fn weighted_hydroxy_cholesterol_vs_salicin() {
     assert_cross(
         "hydroxy_cholesterol_vs_salicin",
-        &GenericSpectrum::hydroxy_cholesterol(),
-        &GenericSpectrum::salicin(),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
         &weighted(),
         0.0,
         0,
@@ -326,8 +326,8 @@ fn weighted_hydroxy_cholesterol_vs_salicin() {
 fn weighted_hydroxy_cholesterol_vs_phenylalanine() {
     assert_cross(
         "hydroxy_cholesterol_vs_phenylalanine",
-        &GenericSpectrum::hydroxy_cholesterol(),
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &weighted(),
         0.028_153_34,
         3,
@@ -339,8 +339,8 @@ fn weighted_hydroxy_cholesterol_vs_phenylalanine() {
 fn weighted_salicin_vs_phenylalanine() {
     assert_cross(
         "salicin_vs_phenylalanine",
-        &GenericSpectrum::salicin(),
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &weighted(),
         0.021_864_35,
         1,
@@ -354,8 +354,8 @@ fn weighted_salicin_vs_phenylalanine() {
 fn unweighted_cocaine_vs_aspirin() {
     assert_cross(
         "cocaine_vs_aspirin",
-        &GenericSpectrum::cocaine(),
-        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
         &unweighted(),
         0.010_192_22,
         1,
@@ -367,8 +367,8 @@ fn unweighted_cocaine_vs_aspirin() {
 fn unweighted_glucose_vs_aspirin() {
     assert_cross(
         "glucose_vs_aspirin",
-        &GenericSpectrum::glucose(),
-        &GenericSpectrum::aspirin(),
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
         &unweighted(),
         0.027_876_1,
         1,
@@ -380,8 +380,8 @@ fn unweighted_glucose_vs_aspirin() {
 fn unweighted_glucose_vs_phenylalanine() {
     assert_cross(
         "glucose_vs_phenylalanine",
-        &GenericSpectrum::glucose(),
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &unweighted(),
         0.007_554_79,
         2,
@@ -393,8 +393,8 @@ fn unweighted_glucose_vs_phenylalanine() {
 fn unweighted_aspirin_vs_hydroxy_cholesterol() {
     assert_cross(
         "aspirin_vs_hydroxy_cholesterol",
-        &GenericSpectrum::aspirin(),
-        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
         &unweighted(),
         0.038_041_51,
         8,
@@ -406,8 +406,8 @@ fn unweighted_aspirin_vs_hydroxy_cholesterol() {
 fn unweighted_aspirin_vs_phenylalanine() {
     assert_cross(
         "aspirin_vs_phenylalanine",
-        &GenericSpectrum::aspirin(),
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
         &unweighted(),
         0.098_100_87,
         3,
@@ -420,12 +420,12 @@ fn unweighted_aspirin_vs_phenylalanine() {
 #[test]
 fn weighted_symmetry() {
     let scorer = weighted();
-    let cocaine = GenericSpectrum::cocaine();
-    let aspirin = GenericSpectrum::aspirin();
-    let glucose = GenericSpectrum::glucose();
-    let hc = GenericSpectrum::hydroxy_cholesterol();
-    let phe = GenericSpectrum::phenylalanine();
-    let salicin = GenericSpectrum::salicin();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let aspirin = GenericSpectrum::aspirin().expect("reference spectrum should build");
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let hc = GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build");
+    let phe = GenericSpectrum::phenylalanine().expect("reference spectrum should build");
+    let salicin = GenericSpectrum::salicin().expect("reference spectrum should build");
 
     assert_symmetry("cocaine_aspirin", &cocaine, &aspirin, &scorer);
     assert_symmetry("glucose_aspirin", &glucose, &aspirin, &scorer);
@@ -440,11 +440,11 @@ fn weighted_symmetry() {
 #[test]
 fn unweighted_symmetry() {
     let scorer = unweighted();
-    let cocaine = GenericSpectrum::cocaine();
-    let aspirin = GenericSpectrum::aspirin();
-    let glucose = GenericSpectrum::glucose();
-    let hc = GenericSpectrum::hydroxy_cholesterol();
-    let phe = GenericSpectrum::phenylalanine();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let aspirin = GenericSpectrum::aspirin().expect("reference spectrum should build");
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let hc = GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build");
+    let phe = GenericSpectrum::phenylalanine().expect("reference spectrum should build");
 
     assert_symmetry("cocaine_aspirin", &cocaine, &aspirin, &scorer);
     assert_symmetry("glucose_aspirin", &glucose, &aspirin, &scorer);

@@ -30,35 +30,35 @@ fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
 
 #[test]
 fn self_similarity_cocaine() {
-    assert_self_similarity("cocaine", &GenericSpectrum::cocaine());
+    assert_self_similarity("cocaine", &GenericSpectrum::cocaine().expect("reference spectrum should build"));
 }
 
 #[test]
 fn self_similarity_glucose() {
-    assert_self_similarity("glucose", &GenericSpectrum::glucose());
+    assert_self_similarity("glucose", &GenericSpectrum::glucose().expect("reference spectrum should build"));
 }
 
 #[test]
 fn self_similarity_aspirin() {
-    assert_self_similarity("aspirin", &GenericSpectrum::aspirin());
+    assert_self_similarity("aspirin", &GenericSpectrum::aspirin().expect("reference spectrum should build"));
 }
 
 #[test]
 fn self_similarity_hydroxy_cholesterol() {
     assert_self_similarity(
         "hydroxy_cholesterol",
-        &GenericSpectrum::hydroxy_cholesterol(),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
     );
 }
 
 #[test]
 fn self_similarity_salicin() {
-    assert_self_similarity("salicin", &GenericSpectrum::salicin());
+    assert_self_similarity("salicin", &GenericSpectrum::salicin().expect("reference spectrum should build"));
 }
 
 #[test]
 fn self_similarity_phenylalanine() {
-    assert_self_similarity("phenylalanine", &GenericSpectrum::phenylalanine());
+    assert_self_similarity("phenylalanine", &GenericSpectrum::phenylalanine().expect("reference spectrum should build"));
 }
 
 // ---------- shift=0 equivalence with HungarianCosine ----------
@@ -109,22 +109,22 @@ fn assert_shift0_equivalence(
 
 #[test]
 fn shift0_equivalence_self() {
-    let cocaine = GenericSpectrum::cocaine();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
     assert_shift0_equivalence("cocaine_self", &cocaine, &cocaine);
 
-    let glucose = GenericSpectrum::glucose();
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
     assert_shift0_equivalence("glucose_self", &glucose, &glucose);
 
-    let salicin = GenericSpectrum::salicin();
+    let salicin = GenericSpectrum::salicin().expect("reference spectrum should build");
     assert_shift0_equivalence("salicin_self", &salicin, &salicin);
 }
 
 #[test]
 fn shift0_equivalence_cross() {
     // Cross-similarity between spectra with different precursors.
-    let cocaine = GenericSpectrum::cocaine();
-    let glucose = GenericSpectrum::glucose();
-    let aspirin = GenericSpectrum::aspirin();
+    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let aspirin = GenericSpectrum::aspirin().expect("reference spectrum should build");
     assert_shift0_equivalence("cocaine_vs_glucose", &cocaine, &glucose);
     assert_shift0_equivalence("cocaine_vs_aspirin", &cocaine, &aspirin);
     assert_shift0_equivalence("glucose_vs_aspirin", &glucose, &aspirin);
@@ -158,8 +158,8 @@ fn assert_symmetry(
 fn symmetry_cocaine_glucose() {
     assert_symmetry(
         "cocaine_glucose",
-        &GenericSpectrum::cocaine(),
-        &GenericSpectrum::glucose(),
+        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
+        &GenericSpectrum::glucose().expect("reference spectrum should build"),
     );
 }
 
@@ -167,8 +167,8 @@ fn symmetry_cocaine_glucose() {
 fn symmetry_aspirin_salicin() {
     assert_symmetry(
         "aspirin_salicin",
-        &GenericSpectrum::aspirin(),
-        &GenericSpectrum::salicin(),
+        &GenericSpectrum::aspirin().expect("reference spectrum should build"),
+        &GenericSpectrum::salicin().expect("reference spectrum should build"),
     );
 }
 
@@ -176,8 +176,8 @@ fn symmetry_aspirin_salicin() {
 fn symmetry_hydroxy_cholesterol_phenylalanine() {
     assert_symmetry(
         "hc_phe",
-        &GenericSpectrum::hydroxy_cholesterol(),
-        &GenericSpectrum::phenylalanine(),
+        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
+        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
     );
 }
 

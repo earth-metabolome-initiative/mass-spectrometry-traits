@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of n2 5 dihydroxybenzoic acid.
-pub trait N25DihydroxybenzoicAcidSpectrum: SpectrumAlloc {
+pub trait N25DihydroxybenzoicAcidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of n2 5 dihydroxybenzoic acid.
-    fn n2_5_dihydroxybenzoic_acid() -> Self;
+    fn n2_5_dihydroxybenzoic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for n2 5 dihydroxybenzoic acid.

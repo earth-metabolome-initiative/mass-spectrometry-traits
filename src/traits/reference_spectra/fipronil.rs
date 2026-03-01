@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fipronil.
-pub trait FipronilSpectrum: SpectrumAlloc {
+pub trait FipronilSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of fipronil.
-    fn fipronil() -> Self;
+    fn fipronil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for fipronil.

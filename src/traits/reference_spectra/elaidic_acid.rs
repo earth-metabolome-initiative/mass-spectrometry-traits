@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of elaidic acid.
-pub trait ElaidicAcidSpectrum: SpectrumAlloc {
+pub trait ElaidicAcidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of elaidic acid.
-    fn elaidic_acid() -> Self;
+    fn elaidic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for elaidic acid.

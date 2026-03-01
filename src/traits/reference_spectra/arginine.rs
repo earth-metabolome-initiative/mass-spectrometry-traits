@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of arginine.
-pub trait ArginineSpectrum: SpectrumAlloc {
+pub trait ArginineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of arginine.
-    fn arginine() -> Self;
+    fn arginine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for arginine.

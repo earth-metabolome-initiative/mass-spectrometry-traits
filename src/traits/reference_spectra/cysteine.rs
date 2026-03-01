@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cysteine.
-pub trait CysteineSpectrum: SpectrumAlloc {
+pub trait CysteineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of cysteine.
-    fn cysteine() -> Self;
+    fn cysteine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for cysteine.

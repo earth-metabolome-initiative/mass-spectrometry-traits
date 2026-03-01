@@ -2,7 +2,10 @@ use std::iter;
 
 use mass_spectrometry::prelude::*;
 
-type SpectrumBuilder = fn() -> GenericSpectrum<f32, f32>;
+type SpectrumBuilder = fn() -> Result<
+    GenericSpectrum<f32, f32>,
+    <GenericSpectrum<f32, f32> as SpectrumMut>::MutationError,
+>;
 
 struct SpectrumEntry {
     canonical: &'static str,
@@ -141,7 +144,7 @@ pub fn known_spectrum_names() -> Vec<&'static str> {
 pub fn build_spectrum(name: &str) -> Option<GenericSpectrum<f32, f32>> {
     for entry in SPECTRUM_REGISTRY {
         if name == entry.canonical || entry.aliases.contains(&name) {
-            return Some((entry.builder)());
+            return (entry.builder)().ok();
         }
     }
     None

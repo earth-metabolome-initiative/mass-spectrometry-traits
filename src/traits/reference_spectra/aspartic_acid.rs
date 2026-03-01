@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of aspartic acid.
-pub trait AsparticAcidSpectrum: SpectrumAlloc {
+pub trait AsparticAcidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of aspartic acid.
-    fn aspartic_acid() -> Self;
+    fn aspartic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for aspartic acid.

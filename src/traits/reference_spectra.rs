@@ -8,14 +8,12 @@ macro_rules! impl_reference_spectrum {
             S::Mz: From<f32>,
             S::Intensity: From<f32>,
         {
-            fn $method_name() -> Self {
+            fn $method_name() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError> {
                 let mut spectrum = Self::with_capacity($precursor.into(), $mz.len());
                 for (&mz, &intensity) in $mz.iter().zip($intensities.iter()) {
-                    spectrum
-                        .add_peak(mz.into(), intensity.into())
-                        .expect("Failed to add reference peak to spectrum");
+                    spectrum.add_peak(mz.into(), intensity.into())?;
                 }
-                spectrum
+                Ok(spectrum)
             }
         }
     };

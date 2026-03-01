@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fludioxinil.
-pub trait FludioxinilSpectrum: SpectrumAlloc {
+pub trait FludioxinilSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of fludioxinil.
-    fn fludioxinil() -> Self;
+    fn fludioxinil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for fludioxinil.

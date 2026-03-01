@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of hydramethylnon.
-pub trait HydramethylnonSpectrum: SpectrumAlloc {
+pub trait HydramethylnonSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of hydramethylnon.
-    fn hydramethylnon() -> Self;
+    fn hydramethylnon() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for hydramethylnon.

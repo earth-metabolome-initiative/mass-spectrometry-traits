@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of ethirimol.
-pub trait EthirimolSpectrum: SpectrumAlloc {
+pub trait EthirimolSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of ethirimol.
-    fn ethirimol() -> Self;
+    fn ethirimol() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for ethirimol.

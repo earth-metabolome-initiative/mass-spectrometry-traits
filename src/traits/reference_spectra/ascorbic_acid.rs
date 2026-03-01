@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of ascorbic acid.
-pub trait AscorbicAcidSpectrum: SpectrumAlloc {
+pub trait AscorbicAcidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of ascorbic acid.
-    fn ascorbic_acid() -> Self;
+    fn ascorbic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for ascorbic acid.

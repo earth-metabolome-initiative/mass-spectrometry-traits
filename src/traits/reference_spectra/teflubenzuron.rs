@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of teflubenzuron.
-pub trait TeflubenzuronSpectrum: SpectrumAlloc {
+pub trait TeflubenzuronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of teflubenzuron.
-    fn teflubenzuron() -> Self;
+    fn teflubenzuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for teflubenzuron.

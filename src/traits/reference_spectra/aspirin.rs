@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of aspirin.
-pub trait AspirinSpectrum: SpectrumAlloc {
+pub trait AspirinSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of aspirin.
-    fn aspirin() -> Self;
+    fn aspirin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for aspirin.

@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of hydroxy-cholesterol.
-pub trait HydroxyCholesterolSpectrum: SpectrumAlloc {
+pub trait HydroxyCholesterolSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of hydroxy-cholesterol.
-    fn hydroxy_cholesterol() -> Self;
+    fn hydroxy_cholesterol() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for hydroxy-cholesterol.

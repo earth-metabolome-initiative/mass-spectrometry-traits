@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of boscalid.
-pub trait BoscalidSpectrum: SpectrumAlloc {
+pub trait BoscalidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of boscalid.
-    fn boscalid() -> Self;
+    fn boscalid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for boscalid.

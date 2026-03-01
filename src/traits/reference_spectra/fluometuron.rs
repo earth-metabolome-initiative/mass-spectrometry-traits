@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fluometuron.
-pub trait FluometuronSpectrum: SpectrumAlloc {
+pub trait FluometuronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of fluometuron.
-    fn fluometuron() -> Self;
+    fn fluometuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for fluometuron.

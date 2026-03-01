@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of alanine.
-pub trait AlanineSpectrum: SpectrumAlloc {
+pub trait AlanineSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of alanine.
-    fn alanine() -> Self;
+    fn alanine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for alanine.

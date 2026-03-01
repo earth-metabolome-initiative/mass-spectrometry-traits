@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of triflumuron.
-pub trait TriflumuronSpectrum: SpectrumAlloc {
+pub trait TriflumuronSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of triflumuron.
-    fn triflumuron() -> Self;
+    fn triflumuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for triflumuron.

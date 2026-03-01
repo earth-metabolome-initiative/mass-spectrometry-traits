@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of adenosine 5 monophosphate.
-pub trait Adenosine5MonophosphateSpectrum: SpectrumAlloc {
+pub trait Adenosine5MonophosphateSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of adenosine 5 monophosphate.
-    fn adenosine_5_monophosphate() -> Self;
+    fn adenosine_5_monophosphate() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for adenosine 5 monophosphate.

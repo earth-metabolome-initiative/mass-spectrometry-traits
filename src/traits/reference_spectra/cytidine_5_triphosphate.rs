@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cytidine 5 triphosphate.
-pub trait Cytidine5TriphosphateSpectrum: SpectrumAlloc {
+pub trait Cytidine5TriphosphateSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of cytidine 5 triphosphate.
-    fn cytidine_5_triphosphate() -> Self;
+    fn cytidine_5_triphosphate() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for cytidine 5 triphosphate.

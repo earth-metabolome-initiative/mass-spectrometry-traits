@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of salicin.
-pub trait SalicinSpectrum: SpectrumAlloc {
+pub trait SalicinSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of salicin.
-    fn salicin() -> Self;
+    fn salicin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for salicin.

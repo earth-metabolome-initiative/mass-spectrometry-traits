@@ -3,9 +3,9 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cyazofamid.
-pub trait CyazofamidSpectrum: SpectrumAlloc {
+pub trait CyazofamidSpectrum: SpectrumAlloc + Sized {
     /// Create a new spectrum of cyazofamid.
-    fn cyazofamid() -> Self;
+    fn cyazofamid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }
 
 /// The precursor mass over charge value for cyazofamid.
