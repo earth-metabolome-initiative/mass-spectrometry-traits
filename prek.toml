@@ -1,0 +1,35 @@
+minimum_prek_version = "0.3.4"
+default_install_hook_types = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "cargo-fmt"
+name = "cargo fmt (check)"
+language = "system"
+entry = "cargo fmt --all -- --check"
+pass_filenames = false
+always_run = true
+require_serial = true
+priority = 10
+
+[[repos.hooks]]
+id = "cargo-clippy"
+name = "cargo clippy (strict)"
+language = "system"
+entry = "cargo clippy --all-targets --all-features -- -D warnings"
+pass_filenames = false
+always_run = true
+require_serial = true
+priority = 20
+
+[[repos.hooks]]
+id = "cargo-test"
+name = "cargo test (all targets)"
+language = "system"
+entry = "cargo test --all-targets --all-features --locked"
+pass_filenames = false
+always_run = true
+require_serial = true
+priority = 30
