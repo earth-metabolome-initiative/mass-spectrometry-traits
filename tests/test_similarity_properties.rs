@@ -143,4 +143,44 @@ proptest! {
         prop_assert_eq!(modified_matches, spectrum.len());
         prop_assert_eq!(entropy_matches, spectrum.len());
     }
+
+    /// Regression test for the Crouse rectangular LAPJV epsilon-tolerance fix.
+    ///
+    /// With `mz_power=0` and `tolerance=2.0`, the affine cost matrix becomes
+    /// near-degenerate: m/z position contributes nothing to the cost, and all
+    /// peaks within the wide tolerance window have costs that differ only by
+    /// intensity ratios (all clustering near 1 + f64::EPSILON).  This creates
+    /// the pathological case identified by Bijsterbosch & Volgenant (2010)
+    /// where the augmentation-only rectangular LAPJV accumulates enough
+    /// floating-point rounding in dual variables that exact-equality frontier
+    /// comparisons miss true minimum-distance ties, yielding suboptimal
+    /// augmenting paths.
+    ///
+    /// Before the fix, self-similarity for spectra with ~200+ peaks scored as
+    /// low as 0.999938 instead of 1.0 (87 failures observed in the matchms
+    /// validation suite, worst case: stypoltrione with 218 peaks).
+    ///
+    /// See `geometric-traits/.../crouse/inner.rs` module docs for the full
+    /// analysis and literature references (Crouse 2016, Bijsterbosch &
+    /// Volgenant 2010, Jonker & Volgenant 1987).
+    #[test]
+    fn self_similarity_wide_tolerance_mz_power_zero(
+        precursor in 10.0_f32..1500.0_f32,
+        peaks in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..256),
+    ) {
+        let spectrum = build_spectrum(precursor, peaks);
+        let scorer = HungarianCosine::new(0.0, 1.0, 2.0).expect("valid scorer config");
+
+        let (score, matches) = scorer
+            .similarity(&spectrum, &spectrum)
+            .expect("similarity computation should succeed");
+
+        prop_assert!(
+            (1.0 - score).abs() < 1e-6,
+            "self-similarity score {} deviates from 1.0 (spectrum has {} peaks)",
+            score,
+            spectrum.len()
+        );
+        prop_assert_eq!(matches, spectrum.len());
+    }
 }
