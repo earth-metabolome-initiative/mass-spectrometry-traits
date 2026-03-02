@@ -115,6 +115,7 @@ spectrum_registry!(
     ("pymetrozine", pymetrozine, []),
     ("pyrimethanil", pyrimethanil, []),
     ("salicin", salicin, []),
+    ("stypoltrione", stypoltrione, []),
     ("sulfentrazone", sulfentrazone, []),
     ("tebufenozide", tebufenozide, []),
     ("teflubenzuron", teflubenzuron, []),

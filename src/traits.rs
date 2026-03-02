@@ -31,9 +31,9 @@ pub use reference_spectra::{
     N4Cholesten3OneSpectrum, N12DierucoylSnGlycero3PhosphocholineSpectrum,
     N12DioleoylRacGlycerolSpectrum, N25DihydroxybenzoicAcidSpectrum, NeburonSpectrum,
     NitenpyramSpectrum, NovaluronSpectrum, PhenylalanineSpectrum, ProthioconazoleSpectrum,
-    PymetrozineSpectrum, PyrimethanilSpectrum, SalicinSpectrum, SulfentrazoneSpectrum,
-    TebufenozideSpectrum, TeflubenzuronSpectrum, ThidiazuronSpectrum, ThiophanateSpectrum,
-    TriadimefonSpectrum, TriflumuronSpectrum,
+    PymetrozineSpectrum, PyrimethanilSpectrum, SalicinSpectrum, StypolTrioneSpectrum,
+    SulfentrazoneSpectrum, TebufenozideSpectrum, TeflubenzuronSpectrum, ThidiazuronSpectrum,
+    ThiophanateSpectrum, TriadimefonSpectrum, TriflumuronSpectrum,
 };
 pub use spectra::Spectra;
 pub use spectral_filter::SpectralFilter;
