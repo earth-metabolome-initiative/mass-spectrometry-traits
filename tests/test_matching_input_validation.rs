@@ -188,6 +188,32 @@ fn generic_spectrum_rejects_non_finite_mz() {
 }
 
 #[test]
+fn generic_spectrum_rejects_duplicate_mz() {
+    let mut spectrum =
+        GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    spectrum
+        .add_peak(10.0_f32, 1.0_f32)
+        .expect("first peak should be accepted");
+    let error = spectrum
+        .add_peak(10.0_f32, 2.0_f32)
+        .expect_err("duplicate mz should be rejected");
+    assert_eq!(error, GenericSpectrumMutationError::DuplicateMz);
+}
+
+#[test]
+fn generic_spectrum_rejects_descending_mz() {
+    let mut spectrum =
+        GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    spectrum
+        .add_peak(10.0_f32, 1.0_f32)
+        .expect("first peak should be accepted");
+    let error = spectrum
+        .add_peak(9.0_f32, 2.0_f32)
+        .expect_err("descending mz should be rejected");
+    assert_eq!(error, GenericSpectrumMutationError::UnsortedMz);
+}
+
+#[test]
 fn generic_spectrum_rejects_negative_mz() {
     let mut spectrum =
         GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
