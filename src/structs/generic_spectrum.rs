@@ -19,6 +19,9 @@ pub enum GenericSpectrumMutationError {
     /// Peaks must be added in sorted m/z order.
     #[error("mz values must be added in sorted order")]
     UnsortedMz,
+    /// Duplicate peak m/z values are not allowed.
+    #[error("mz values must be strictly increasing; duplicate mz values are not allowed")]
+    DuplicateMz,
     /// Peak m/z values must be finite.
     #[error("mz values must be finite")]
     NonFiniteMz,
@@ -151,6 +154,14 @@ where
         }
         if intensity < Self::Intensity::zero() {
             return Err(GenericSpectrumMutationError::NegativeIntensity);
+        }
+        if let Some(last_mz) = self.mz.last() {
+            if mz == *last_mz {
+                return Err(GenericSpectrumMutationError::DuplicateMz);
+            }
+            if mz < *last_mz {
+                return Err(GenericSpectrumMutationError::UnsortedMz);
+            }
         }
         self.mz
             .push(mz)

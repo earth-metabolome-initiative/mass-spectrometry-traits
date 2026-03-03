@@ -9,8 +9,9 @@ pub trait SpectrumMut: Spectrum {
 
     /// Add a peak to the Spectrum.
     ///
-    /// Implementations are expected to reject non-finite values and negative
-    /// intensity values.
+    /// Implementations are expected to reject non-finite values, enforce
+    /// strictly increasing `mz` ordering (rejecting duplicates), and reject
+    /// negative intensity values.
     fn add_peak(
         &mut self,
         mz: Self::Mz,
