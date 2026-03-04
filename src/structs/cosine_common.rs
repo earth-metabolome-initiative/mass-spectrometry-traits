@@ -579,6 +579,54 @@ pub(crate) fn collect_linear_matches(
     matches
 }
 
+/// Collect direct and (when `|shift| > tolerance`) shifted linear matches,
+/// merge and deduplicate, then greedy-select non-conflicting pairs by
+/// descending weight.
+///
+/// `weight_fn(i, j)` returns the priority weight for a candidate pair. Pairs
+/// are selected in descending weight order; each left/right index is used at
+/// most once. The returned pairs are in greedy-selection order.
+pub(crate) fn greedy_modified_linear_matches(
+    left_mz: &[f64],
+    right_mz: &[f64],
+    tolerance: f64,
+    shift: f64,
+    weight_fn: impl Fn(usize, usize) -> f64,
+) -> Vec<(usize, usize)> {
+    let direct = collect_linear_matches(left_mz, right_mz, tolerance, 0.0);
+    let matched_pairs: Vec<(usize, usize)> = if shift.abs() <= tolerance {
+        direct
+    } else {
+        let shifted = collect_linear_matches(left_mz, right_mz, tolerance, shift);
+        let mut pairs = Vec::with_capacity(direct.len() + shifted.len());
+        pairs.extend(direct);
+        pairs.extend(shifted);
+        pairs.sort_unstable();
+        pairs.dedup();
+        pairs
+    };
+
+    let mut candidates: Vec<(f64, usize, usize)> = Vec::with_capacity(matched_pairs.len());
+    for (i, j) in matched_pairs {
+        candidates.push((weight_fn(i, j), i, j));
+    }
+    candidates.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+
+    let mut used_left = alloc::vec![false; left_mz.len()];
+    let mut used_right = alloc::vec![false; right_mz.len()];
+    let mut selected = Vec::new();
+
+    for &(_, i, j) in &candidates {
+        if !used_left[i] && !used_right[j] {
+            used_left[i] = true;
+            used_right[j] = true;
+            selected.push((i, j));
+        }
+    }
+
+    selected
+}
+
 /// Runtime validation that consecutive peaks in the given mz slice are
 /// greater than `2 * tolerance` apart.
 pub(crate) fn validate_well_separated(

@@ -14,7 +14,7 @@ use geometric_traits::prelude::{Finite, Number, ScalarSimilarity, TotalOrd};
 use num_traits::{Float, Pow, ToPrimitive, Zero};
 
 use super::cosine_common::{
-    CosineConfig, collect_linear_matches, finalize_similarity_score,
+    CosineConfig, finalize_similarity_score, greedy_modified_linear_matches,
     impl_cosine_wrapper_config_api, prepare_peak_products, to_f64_checked_for_computation,
     validate_well_separated,
 };
@@ -82,43 +82,19 @@ where
             to_f64_checked_for_computation(right.precursor_mz(), "right_precursor_mz")?;
         let shift = left_precursor - right_precursor;
 
-        // Collect direct and shifted matches.
-        let direct = collect_linear_matches(&left_mz, &right_mz, tolerance, 0.0);
-        let matched_pairs: Vec<(usize, usize)> = if shift.abs() <= tolerance {
-            direct
-        } else {
-            let shifted = collect_linear_matches(&left_mz, &right_mz, tolerance, shift);
-            let mut pairs = Vec::with_capacity(direct.len() + shifted.len());
-            pairs.extend(direct);
-            pairs.extend(shifted);
-            pairs.sort_unstable();
-            pairs.dedup();
-            pairs
-        };
+        // Collect direct + shifted matches, merge, greedy-select.
+        let selected = greedy_modified_linear_matches(
+            &left_mz,
+            &right_mz,
+            tolerance,
+            shift,
+            |i, j| left_peaks.as_f64[i] * right_peaks.as_f64[j],
+        );
 
-        // Merge candidates with their product weights.
-        let mut candidates: Vec<(f64, usize, usize)> = Vec::with_capacity(matched_pairs.len());
-        for (i, j) in matched_pairs {
-            let weight = left_peaks.as_f64[i] * right_peaks.as_f64[j];
-            candidates.push((weight, i, j));
-        }
-
-        // Sort by descending weight for greedy assignment.
-        candidates.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-
-        // Greedy selection: each peak used at most once.
-        let mut used_left = alloc::vec![false; left_mz.len()];
-        let mut used_right = alloc::vec![false; right_mz.len()];
         let mut score_sum = S1::Mz::zero();
-        let mut n_matches = 0usize;
-
-        for &(_, i, j) in &candidates {
-            if !used_left[i] && !used_right[j] {
-                used_left[i] = true;
-                used_right[j] = true;
-                score_sum += left_peaks.products[i] * right_peaks.products[j];
-                n_matches += 1;
-            }
+        let n_matches = selected.len();
+        for (i, j) in selected {
+            score_sum += left_peaks.products[i] * right_peaks.products[j];
         }
 
         finalize_similarity_score(score_sum, n_matches, left_peaks.norm, right_peaks.norm)
