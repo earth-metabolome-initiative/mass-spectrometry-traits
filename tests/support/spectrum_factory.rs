@@ -88,25 +88,6 @@ spectrum_registry!(
     ("ivermectin", ivermectin, []),
     ("lufenuron", lufenuron, []),
     ("metaflumizone", metaflumizone, []),
-    (
-        "n1_2_dierucoyl_sn_glycero_3_phosphocholine",
-        n1_2_dierucoyl_sn_glycero_3_phosphocholine,
-        []
-    ),
-    ("n1_2_dioleoyl_rac_glycerol", n1_2_dioleoyl_rac_glycerol, []),
-    (
-        "n1_oleoyl_sn_glycero_3_phosphocholine",
-        n1_oleoyl_sn_glycero_3_phosphocholine,
-        []
-    ),
-    (
-        "n1_palmitoyl_sn_glycero_3_phosphocholine",
-        n1_palmitoyl_sn_glycero_3_phosphocholine,
-        []
-    ),
-    ("n2_5_dihydroxybenzoic_acid", n2_5_dihydroxybenzoic_acid, []),
-    ("n4_aminobenzoic_acid", n4_aminobenzoic_acid, []),
-    ("n4_cholesten_3_one", n4_cholesten_3_one, []),
     ("neburon", neburon, []),
     ("nitenpyram", nitenpyram, []),
     ("novaluron", novaluron, []),

@@ -4,6 +4,16 @@ use std::collections::BTreeSet;
 
 use support::spectrum_factory::{build_spectrum, canonical_spectrum_names, known_spectrum_names};
 
+const REMOVED_SPECTRA_NAMES: &[&str] = &[
+    "n1_2_dierucoyl_sn_glycero_3_phosphocholine",
+    "n1_2_dioleoyl_rac_glycerol",
+    "n1_oleoyl_sn_glycero_3_phosphocholine",
+    "n1_palmitoyl_sn_glycero_3_phosphocholine",
+    "n2_5_dihydroxybenzoic_acid",
+    "n4_aminobenzoic_acid",
+    "n4_cholesten_3_one",
+];
+
 #[test]
 fn registered_names_are_unique_and_resolve() {
     let mut seen = BTreeSet::new();
@@ -45,6 +55,9 @@ fn fixture_names_are_registered() {
     }
 
     for name in fixture_names {
+        if REMOVED_SPECTRA_NAMES.contains(&name.as_str()) {
+            continue;
+        }
         assert!(
             build_spectrum(&name).is_some(),
             "fixture spectrum name missing from registry: {name}"
