@@ -4,10 +4,10 @@
 //! ModifiedHungarianEntropy, ModifiedLinearEntropy.
 
 use mass_spectrometry::prelude::{
-    AspirinSpectrum, CocaineSpectrum, GenericSpectrum, GlucoseSpectrum,
-    HungarianEntropy, HydroxyCholesterolSpectrum, LinearEntropy,
-    ModifiedHungarianEntropy, ModifiedLinearEntropy, PhenylalanineSpectrum, SalicinSpectrum,
-    ScalarSimilarity, SimilarityComputationError, Spectrum, SpectrumMut,
+    AspirinSpectrum, CocaineSpectrum, GenericSpectrum, GlucoseSpectrum, HungarianEntropy,
+    HydroxyCholesterolSpectrum, LinearEntropy, ModifiedHungarianEntropy, ModifiedLinearEntropy,
+    PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, SimilarityComputationError, Spectrum,
+    SpectrumMut,
 };
 
 // ========== Helper spectra ==========
@@ -47,16 +47,25 @@ fn build_spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum<f64, 
 
 /// Well-separated spectrum (peaks > 2 * 0.1 = 0.2 apart) for linear variants.
 fn well_separated_a() -> GenericSpectrum<f64, f64> {
-    build_spectrum(50.0, &[(100.0, 10.0), (200.0, 20.0), (300.0, 30.0), (400.0, 40.0)])
+    build_spectrum(
+        50.0,
+        &[(100.0, 10.0), (200.0, 20.0), (300.0, 30.0), (400.0, 40.0)],
+    )
 }
 
 fn well_separated_b() -> GenericSpectrum<f64, f64> {
-    build_spectrum(55.0, &[(100.05, 15.0), (200.05, 25.0), (300.05, 35.0), (500.0, 5.0)])
+    build_spectrum(
+        55.0,
+        &[(100.05, 15.0), (200.05, 25.0), (300.05, 35.0), (500.0, 5.0)],
+    )
 }
 
 /// Spectrum with same mz as well_separated_a but different precursor.
 fn well_separated_shifted() -> GenericSpectrum<f64, f64> {
-    build_spectrum(60.0, &[(100.0, 10.0), (200.0, 20.0), (300.0, 30.0), (400.0, 40.0)])
+    build_spectrum(
+        60.0,
+        &[(100.0, 10.0), (200.0, 20.0), (300.0, 30.0), (400.0, 40.0)],
+    )
 }
 
 fn empty_spectrum() -> GenericSpectrum<f64, f64> {
@@ -134,10 +143,12 @@ macro_rules! test_symmetry {
             let scorer = $scorer;
             let a = $a_fn();
             let b = $b_fn();
-            let (sim_ab, peaks_ab): (f64, usize) =
-                scorer.similarity(&a, &b).expect("similarity should succeed");
-            let (sim_ba, peaks_ba): (f64, usize) =
-                scorer.similarity(&b, &a).expect("similarity should succeed");
+            let (sim_ab, peaks_ab): (f64, usize) = scorer
+                .similarity(&a, &b)
+                .expect("similarity should succeed");
+            let (sim_ba, peaks_ba): (f64, usize) = scorer
+                .similarity(&b, &a)
+                .expect("similarity should succeed");
             assert!(
                 (sim_ab - sim_ba).abs() < 1e-10,
                 "symmetry: {sim_ab} vs {sim_ba}"
@@ -198,7 +209,10 @@ macro_rules! test_empty_zero {
     };
 }
 
-test_empty_zero!(hungarian_entropy_empty_zero, HungarianEntropy::weighted(0.1).unwrap());
+test_empty_zero!(
+    hungarian_entropy_empty_zero,
+    HungarianEntropy::weighted(0.1).unwrap()
+);
 test_empty_zero!(
     modified_hungarian_entropy_empty_zero,
     ModifiedHungarianEntropy::weighted(0.1).unwrap()
@@ -254,8 +268,7 @@ fn entropy_variant_config_accessors() {
     assert_eq!(linear.mz_tolerance(), 0.25);
     assert!(linear.is_weighted());
 
-    let modified_hungarian =
-        ModifiedHungarianEntropy::weighted(0.35).expect("valid scorer config");
+    let modified_hungarian = ModifiedHungarianEntropy::weighted(0.35).expect("valid scorer config");
     assert_eq!(modified_hungarian.mz_tolerance(), 0.35);
     assert!(modified_hungarian.is_weighted());
 
@@ -336,8 +349,9 @@ fn hungarian_geq_greedy_weighted() {
 
     for (i, (name_a, a)) in pairs.iter().enumerate() {
         for (name_b, b) in pairs.iter().skip(i + 1) {
-            let (sim_h, _): (f64, usize) =
-                hungarian.similarity(a, b).expect("hungarian should succeed");
+            let (sim_h, _): (f64, usize) = hungarian
+                .similarity(a, b)
+                .expect("hungarian should succeed");
             assert!(
                 sim_h >= -1e-10,
                 "hungarian score should be non-negative for {name_a} vs {name_b}: {sim_h}"
@@ -355,8 +369,9 @@ fn modified_hungarian_equals_hungarian_within_tolerance() {
     let hungarian = HungarianEntropy::weighted(0.1).unwrap();
     let modified = ModifiedHungarianEntropy::weighted(0.1).unwrap();
 
-    let (sim_h, n_h): (f64, usize) =
-        hungarian.similarity(&a, &a).expect("hungarian should succeed");
+    let (sim_h, n_h): (f64, usize) = hungarian
+        .similarity(&a, &a)
+        .expect("hungarian should succeed");
     let (sim_m, n_m): (f64, usize) = modified
         .similarity(&a, &a)
         .expect("modified hungarian should succeed");
@@ -398,9 +413,12 @@ fn modified_hungarian_boundary_at_tolerance() {
     let hungarian = HungarianEntropy::weighted(tolerance).unwrap();
     let modified = ModifiedHungarianEntropy::weighted(tolerance).unwrap();
 
-    let (sim_h, n_h): (f64, usize) = hungarian.similarity(&a, &b).expect("hungarian should succeed");
-    let (sim_m, n_m): (f64, usize) =
-        modified.similarity(&a, &b).expect("modified should succeed");
+    let (sim_h, n_h): (f64, usize) = hungarian
+        .similarity(&a, &b)
+        .expect("hungarian should succeed");
+    let (sim_m, n_m): (f64, usize) = modified
+        .similarity(&a, &b)
+        .expect("modified should succeed");
 
     assert!(
         (sim_h - sim_m).abs() < 1e-10,
@@ -420,8 +438,9 @@ fn modified_hungarian_boundary_beyond_tolerance() {
     );
 
     let modified = ModifiedHungarianEntropy::weighted(tolerance).unwrap();
-    let (sim_m, _n_m): (f64, usize) =
-        modified.similarity(&a, &b).expect("modified should succeed");
+    let (sim_m, _n_m): (f64, usize) = modified
+        .similarity(&a, &b)
+        .expect("modified should succeed");
 
     // Score should still be valid (>= 0) even with shifted matching
     assert!(sim_m >= 0.0);
@@ -439,7 +458,10 @@ fn linear_entropy_rejects_close_peaks() {
     let result: Result<(f64, usize), SimilarityComputationError> =
         linear.similarity(&close, &other);
     assert!(
-        matches!(result, Err(SimilarityComputationError::InvalidPeakSpacing(_))),
+        matches!(
+            result,
+            Err(SimilarityComputationError::InvalidPeakSpacing(_))
+        ),
         "expected InvalidPeakSpacing, got {:?}",
         result
     );
@@ -454,7 +476,10 @@ fn modified_linear_entropy_rejects_close_peaks() {
     let result: Result<(f64, usize), SimilarityComputationError> =
         modified.similarity(&close, &other);
     assert!(
-        matches!(result, Err(SimilarityComputationError::InvalidPeakSpacing(_))),
+        matches!(
+            result,
+            Err(SimilarityComputationError::InvalidPeakSpacing(_))
+        ),
         "expected InvalidPeakSpacing, got {:?}",
         result
     );

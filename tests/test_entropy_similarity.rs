@@ -9,7 +9,7 @@
 //! because HungarianEntropy uses optimal (Crouse LAPJV) assignment.
 
 use mass_spectrometry::prelude::{
-    AspirinSpectrum, CocaineSpectrum, GenericSpectrum, HungarianEntropy, GlucoseSpectrum,
+    AspirinSpectrum, CocaineSpectrum, GenericSpectrum, GlucoseSpectrum, HungarianEntropy,
     HydroxyCholesterolSpectrum, PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, Spectrum,
 };
 

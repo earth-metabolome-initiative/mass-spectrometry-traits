@@ -83,13 +83,10 @@ where
         let shift = left_precursor - right_precursor;
 
         // Collect direct + shifted matches, merge, greedy-select.
-        let selected = greedy_modified_linear_matches(
-            &left_mz,
-            &right_mz,
-            tolerance,
-            shift,
-            |i, j| left_peaks.as_f64[i] * right_peaks.as_f64[j],
-        );
+        let selected =
+            greedy_modified_linear_matches(&left_mz, &right_mz, tolerance, shift, |i, j| {
+                left_peaks.as_f64[i] * right_peaks.as_f64[j]
+            });
 
         let mut score_sum = S1::Mz::zero();
         let n_matches = selected.len();

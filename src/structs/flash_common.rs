@@ -119,7 +119,6 @@ impl SearchState {
             matched_products: bitvec![0; n_products],
         }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -163,11 +162,11 @@ impl<K: FlashKernel> FlashIndex<K> {
         tolerance: f64,
         spectra: Vec<(f64, Vec<f64>, Vec<f64>)>,
     ) -> Result<Self, SimilarityComputationError> {
-        let n_spectra: u32 = u32::try_from(spectra.len())
-            .map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let n_spectra: u32 =
+            u32::try_from(spectra.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
         let total_peaks: usize = spectra.iter().map(|(_, mz, _)| mz.len()).sum();
-        let _: u32 = u32::try_from(total_peaks)
-            .map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let _: u32 =
+            u32::try_from(total_peaks).map_err(|_| SimilarityComputationError::IndexOverflow)?;
 
         let mut spectrum_meta_vec: Vec<K::SpectrumMeta> = Vec::with_capacity(spectra.len());
 
@@ -356,7 +355,10 @@ impl<K: FlashKernel> FlashIndex<K> {
         }
 
         // Destructure state to avoid borrow conflicts between fields.
-        let SearchState { acc, matched_products } = state;
+        let SearchState {
+            acc,
+            matched_products,
+        } = state;
 
         // Track which product indices we set so we can reset them efficiently.
         let mut set_indices: Vec<usize> = Vec::new();

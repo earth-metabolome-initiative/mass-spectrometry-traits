@@ -27,10 +27,7 @@ fn reference_spectra() -> Vec<(&'static str, GenericSpectrum<f64, f64>)> {
             GenericSpectrum::hydroxy_cholesterol().unwrap(),
         ),
         ("salicin", GenericSpectrum::salicin().unwrap()),
-        (
-            "phenylalanine",
-            GenericSpectrum::phenylalanine().unwrap(),
-        ),
+        ("phenylalanine", GenericSpectrum::phenylalanine().unwrap()),
     ]
 }
 
@@ -40,9 +37,8 @@ fn reference_spectra() -> Vec<(&'static str, GenericSpectrum<f64, f64>)> {
 fn self_similarity_all_reference() {
     let spectra = reference_spectra();
 
-    let index =
-        FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     for (i, (name, spectrum)) in spectra.iter().enumerate() {
         let results = index.search(spectrum).expect("search should succeed");
@@ -72,12 +68,11 @@ fn equivalence_with_linear_cosine() {
     let spectra = reference_spectra();
     let linear = LinearCosine::new(1.0_f64, 1.0_f64, 0.1_f64).expect("valid scorer config");
 
-    let index =
-        FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     // Test every pair.
-    for (_qi, (qname, query)) in spectra.iter().enumerate() {
+    for (qname, query) in spectra.iter() {
         let results = index.search(query).expect("search should succeed");
 
         for (li, (lname, library)) in spectra.iter().enumerate() {
@@ -123,9 +118,8 @@ fn equivalence_with_linear_cosine() {
 fn equivalence_mz_power_0() {
     let spectra = reference_spectra();
     let linear = LinearCosine::new(0.0_f64, 1.0_f64, 0.1_f64).expect("valid config");
-    let index =
-        FlashCosineIndex::new(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = FlashCosineIndex::new(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     let query = &spectra[0].1;
     let results = index.search(query).expect("search should succeed");
@@ -150,7 +144,7 @@ fn equivalence_mz_power_0() {
 #[test]
 fn empty_library() {
     let empty: Vec<&GenericSpectrum<f64, f64>> = Vec::new();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, empty.into_iter())
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, empty)
         .expect("empty index build should succeed");
     assert_eq!(index.n_spectra(), 0);
 
@@ -162,9 +156,8 @@ fn empty_library() {
 #[test]
 fn empty_query() {
     let spectra = reference_spectra();
-    let index =
-        FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     let empty = make_spectrum_f64(100.0, &[]);
     let results = index.search(&empty).expect("search should succeed");
@@ -188,7 +181,10 @@ fn zero_intensity_spectrum() {
     // The zero-intensity spectrum should yield score 0 or not appear.
     for r in &results {
         if r.spectrum_id == 0 {
-            assert!(r.score.abs() < 1e-12, "zero-intensity spectrum should score 0");
+            assert!(
+                r.score.abs() < 1e-12,
+                "zero-intensity spectrum should score 0"
+            );
         }
     }
     // The normal spectrum should have self-similarity ~1.0.
@@ -203,14 +199,14 @@ fn zero_intensity_spectrum() {
 fn rejects_non_well_separated_library() {
     // Gap = 0.15, tolerance = 0.1, min_gap = 0.2 → gap < min_gap.
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
-    let result = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&bad].into_iter());
+    let result = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&bad]);
     assert!(result.is_err());
 }
 
 #[test]
 fn rejects_non_well_separated_query() {
     let good = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 8.0)]);
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&good].into_iter())
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&good])
         .expect("index build should succeed");
 
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
@@ -223,7 +219,7 @@ fn rejects_non_well_separated_query() {
 #[test]
 fn single_spectrum_library() {
     let cocaine: GenericSpectrum<f64, f64> = GenericSpectrum::cocaine().unwrap();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&cocaine].into_iter())
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&cocaine])
         .expect("index build should succeed");
 
     let results = index.search(&cocaine).expect("search should succeed");
@@ -243,7 +239,7 @@ fn modified_search_includes_shifted_matches() {
     let lib = make_spectrum_f64(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let query = make_spectrum_f64(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib].into_iter())
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib])
         .expect("index build should succeed");
 
     let direct_results = index.search(&query).expect("direct search should succeed");
@@ -273,7 +269,7 @@ fn modified_search_anti_double_counting() {
     let lib = make_spectrum_f64(200.0, &[(100.0, 10.0)]);
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0)]);
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib].into_iter())
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib])
         .expect("index build should succeed");
 
     let direct = index.search(&query).expect("search should succeed");

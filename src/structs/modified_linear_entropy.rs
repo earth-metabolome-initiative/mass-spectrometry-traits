@@ -30,10 +30,7 @@ pub struct ModifiedLinearEntropy<MZ> {
     weighted: bool,
 }
 
-impl_entropy_config_api!(
-    ModifiedLinearEntropy,
-    "modified linear entropy similarity"
-);
+impl_entropy_config_api!(ModifiedLinearEntropy, "modified linear entropy similarity");
 impl_entropy_spectral_similarity!(ModifiedLinearEntropy);
 
 impl<S1, S2> ScalarSimilarity<S1, S2> for ModifiedLinearEntropy<S1::Mz>

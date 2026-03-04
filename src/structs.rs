@@ -20,6 +20,9 @@ pub mod modified_linear_cosine;
 pub mod modified_linear_entropy;
 pub mod similarity_errors;
 
+pub use flash_common::{FlashSearchResult, SearchState};
+pub use flash_cosine_index::{FlashCosineIndex, FlashCosineIndexError};
+pub use flash_entropy_index::{FlashEntropyIndex, FlashEntropyIndexError};
 pub use generic_spectrum::{GenericSpectrum, GenericSpectrumMutationError};
 pub use greedy_cosine::GreedyCosine;
 pub use hungarian_cosine::HungarianCosine;
@@ -33,7 +36,4 @@ pub use modified_hungarian_cosine::ModifiedHungarianCosine;
 pub use modified_hungarian_entropy::ModifiedHungarianEntropy;
 pub use modified_linear_cosine::ModifiedLinearCosine;
 pub use modified_linear_entropy::ModifiedLinearEntropy;
-pub use flash_common::{FlashSearchResult, SearchState};
-pub use flash_cosine_index::{FlashCosineIndex, FlashCosineIndexError};
-pub use flash_entropy_index::{FlashEntropyIndex, FlashEntropyIndexError};
 pub use similarity_errors::{SimilarityComputationError, SimilarityConfigError};

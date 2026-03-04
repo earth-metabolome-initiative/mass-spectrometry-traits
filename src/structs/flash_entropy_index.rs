@@ -10,7 +10,9 @@ use num_traits::{Float, ToPrimitive};
 
 use geometric_traits::prelude::Number;
 
-use super::cosine_common::{to_f64_checked_for_computation, validate_non_negative_tolerance, validate_well_separated};
+use super::cosine_common::{
+    to_f64_checked_for_computation, validate_non_negative_tolerance, validate_well_separated,
+};
 use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
 use super::flash_common::{FlashIndex, FlashKernel, FlashSearchResult, SearchState};
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
@@ -26,7 +28,7 @@ impl FlashKernel for EntropyKernel {
     type SpectrumMeta = ();
 
     #[inline]
-    fn spectrum_meta(_peak_data: &[f64]) -> () {}
+    fn spectrum_meta(_peak_data: &[f64]) {}
 
     #[inline]
     fn pair_score(query: f64, library: f64) -> f64 {
@@ -139,8 +141,8 @@ impl FlashEntropyIndex {
         S::Intensity: Float + Number + ToPrimitive,
     {
         validate_non_negative_tolerance(mz_tolerance).map_err(FlashEntropyIndexError::Config)?;
-        let tolerance =
-            to_f64_checked_for_computation(mz_tolerance, "mz_tolerance").map_err(FlashEntropyIndexError::Computation)?;
+        let tolerance = to_f64_checked_for_computation(mz_tolerance, "mz_tolerance")
+            .map_err(FlashEntropyIndexError::Computation)?;
 
         let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
 
@@ -189,10 +191,7 @@ impl FlashEntropyIndex {
     ///
     /// Returns [`SimilarityComputationError`] if the query violates the
     /// well-separated precondition or contains non-representable values.
-    pub fn search<S>(
-        &self,
-        query: &S,
-    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    pub fn search<S>(&self, query: &S) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
         S::Mz: Float + Number + ToPrimitive,
@@ -215,7 +214,9 @@ impl FlashEntropyIndex {
         S::Intensity: Float + Number + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
-        Ok(self.inner.search_direct_with_state(&query_mz, &query_data, &(), state))
+        Ok(self
+            .inner
+            .search_direct_with_state(&query_mz, &query_data, &(), state))
     }
 
     /// Modified (direct + shifted) search against the library.
@@ -260,9 +261,9 @@ impl FlashEntropyIndex {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let precursor_f64 =
             to_f64_checked_for_computation(query.precursor_mz(), "query_precursor_mz")?;
-        Ok(self.inner.search_modified_with_state(
-            &query_mz, &query_data, &(), precursor_f64, state,
-        ))
+        Ok(self
+            .inner
+            .search_modified_with_state(&query_mz, &query_data, &(), precursor_f64, state))
     }
 
     /// Prepare query peaks: normalize, optionally weight, validate.

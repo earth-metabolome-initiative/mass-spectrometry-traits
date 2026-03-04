@@ -143,12 +143,14 @@ where
     {
         // Validate config.
         validate_non_negative_tolerance(mz_tolerance).map_err(FlashCosineIndexError::Config)?;
-        let tolerance =
-            to_f64_checked_for_computation(mz_tolerance, "mz_tolerance").map_err(FlashCosineIndexError::Computation)?;
+        let tolerance = to_f64_checked_for_computation(mz_tolerance, "mz_tolerance")
+            .map_err(FlashCosineIndexError::Computation)?;
 
         // Validate that power parameters are representable as f64.
-        to_f64_checked_for_computation(mz_power, "mz_power").map_err(FlashCosineIndexError::Computation)?;
-        to_f64_checked_for_computation(intensity_power, "intensity_power").map_err(FlashCosineIndexError::Computation)?;
+        to_f64_checked_for_computation(mz_power, "mz_power")
+            .map_err(FlashCosineIndexError::Computation)?;
+        to_f64_checked_for_computation(intensity_power, "intensity_power")
+            .map_err(FlashCosineIndexError::Computation)?;
 
         // Prepare spectrum data.
         let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
@@ -159,10 +161,10 @@ where
 
             for (mz, intensity) in spectrum.peaks() {
                 let product = mz.pow(mz_power) * intensity.pow(intensity_power);
-                let product_f64 =
-                    to_f64_checked_for_computation(product, "peak_product").map_err(FlashCosineIndexError::Computation)?;
-                let mz_f64 =
-                    to_f64_checked_for_computation(mz, "mz").map_err(FlashCosineIndexError::Computation)?;
+                let product_f64 = to_f64_checked_for_computation(product, "peak_product")
+                    .map_err(FlashCosineIndexError::Computation)?;
+                let mz_f64 = to_f64_checked_for_computation(mz, "mz")
+                    .map_err(FlashCosineIndexError::Computation)?;
                 mz_vals.push(mz_f64);
                 data_vals.push(product_f64);
             }
@@ -171,7 +173,8 @@ where
                 .map_err(FlashCosineIndexError::Computation)?;
 
             let precursor_f64 =
-                to_f64_checked_for_computation(spectrum.precursor_mz(), "precursor_mz").map_err(FlashCosineIndexError::Computation)?;
+                to_f64_checked_for_computation(spectrum.precursor_mz(), "precursor_mz")
+                    .map_err(FlashCosineIndexError::Computation)?;
 
             prepared.push((precursor_f64, mz_vals, data_vals));
         }
@@ -201,10 +204,7 @@ where
     ///
     /// Returns [`SimilarityComputationError`] if the query violates the
     /// well-separated precondition or contains non-representable values.
-    pub fn search<S>(
-        &self,
-        query: &S,
-    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    pub fn search<S>(&self, query: &S) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
         S::Mz: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
@@ -212,7 +212,9 @@ where
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
-        Ok(self.inner.search_direct(&query_mz, &query_data, &query_meta))
+        Ok(self
+            .inner
+            .search_direct(&query_mz, &query_data, &query_meta))
     }
 
     /// Direct search using a caller-provided [`SearchState`] to avoid
@@ -229,7 +231,9 @@ where
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
-        Ok(self.inner.search_direct_with_state(&query_mz, &query_data, &query_meta, state))
+        Ok(self
+            .inner
+            .search_direct_with_state(&query_mz, &query_data, &query_meta, state))
     }
 
     /// Modified (direct + shifted) search against the library.
@@ -277,7 +281,11 @@ where
         let precursor_f64 =
             to_f64_checked_for_computation(query.precursor_mz(), "query_precursor_mz")?;
         Ok(self.inner.search_modified_with_state(
-            &query_mz, &query_data, &query_meta, precursor_f64, state,
+            &query_mz,
+            &query_data,
+            &query_meta,
+            precursor_f64,
+            state,
         ))
     }
 

@@ -210,8 +210,9 @@ pub(crate) fn finalize_entropy_score<MZ: Float + NumCast>(
 ) -> Result<(MZ, usize), SimilarityComputationError> {
     let similarity = (raw_score / 2.0).clamp(0.0, 1.0);
     let _ = to_f64_checked_for_computation(similarity, "similarity_score")?;
-    let sim: MZ = NumCast::from(similarity)
-        .ok_or(SimilarityComputationError::ValueNotRepresentable("similarity_score"))?;
+    let sim: MZ = NumCast::from(similarity).ok_or(
+        SimilarityComputationError::ValueNotRepresentable("similarity_score"),
+    )?;
     Ok((sim, n_matches))
 }
 
@@ -296,10 +297,8 @@ where
     S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
     S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
     R: MultiRanged<Step = u32>,
-    ForwardMatch:
-        FnOnce(&S1, &S2) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
-    ReverseMatch:
-        FnOnce(&S2, &S1) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
+    ForwardMatch: FnOnce(&S1, &S2) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
+    ReverseMatch: FnOnce(&S2, &S1) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
     ScoreFn: Fn(
         RangedCSR2D<u32, u32, R>,
         &[f64],

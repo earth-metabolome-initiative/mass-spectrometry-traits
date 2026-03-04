@@ -8,7 +8,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use mass_spectrometry::prelude::{
     FlashCosineIndex, FlashEntropyIndex, LinearCosine, LinearEntropy, ModifiedLinearCosine,
     ModifiedLinearEntropy, RandomSpectrumConfig, ScalarSimilarity, SpectrumAlloc,

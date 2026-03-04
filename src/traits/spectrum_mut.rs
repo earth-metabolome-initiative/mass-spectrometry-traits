@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use num_traits::{Float, NumCast, ToPrimitive};
 
 use super::Spectrum;
-use crate::numeric_validation::{checked_to_f64, NumericValidationError};
+use crate::numeric_validation::{NumericValidationError, checked_to_f64};
 
 /// Parameters for generating a random spectrum with [`SpectrumAlloc::random`].
 #[derive(Clone, Copy, Debug, PartialEq)]
