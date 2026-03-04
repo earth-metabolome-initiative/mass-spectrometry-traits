@@ -1,12 +1,12 @@
 //! Implementation of modified linear-time cosine similarity for mass spectra.
 //!
 //! Extends [`super::LinearCosine`] by also matching fragment peaks shifted by
-//! the precursor mass difference. Direct and shifted match candidates are
-//! merged and resolved via greedy assignment (sort by descending product
-//! weight, pick best available), identical to [`super::ModifiedGreedyCosine`]
-//! but on the smaller candidate set from two linear sweeps. Unlike
-//! [`super::ModifiedHungarianCosine`], this is not an optimal assignment
-//! solver.
+//! the precursor mass difference when that shift exceeds the configured
+//! tolerance. Direct and shifted match candidates are merged and resolved via
+//! greedy assignment (sort by descending product weight, pick best available),
+//! identical to [`super::ModifiedGreedyCosine`] but on the smaller candidate
+//! set from two linear sweeps. Unlike [`super::ModifiedHungarianCosine`], this
+//! is not an optimal assignment solver.
 
 use alloc::vec::Vec;
 
@@ -23,10 +23,11 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 
 /// Modified linear-time cosine similarity for mass spectra.
 ///
-/// Combines direct and precursor-shifted peak matches from two linear sweeps,
-/// then resolves conflicts via greedy assignment. This matches the greedy
-/// conflict-resolution behavior of [`super::ModifiedGreedyCosine`] rather than
-/// the optimal assignment behavior of [`super::ModifiedHungarianCosine`].
+/// Combines direct and precursor-shifted peak matches from two linear sweeps
+/// when `|precursor_delta| > mz_tolerance`, then resolves conflicts via greedy
+/// assignment. This matches the greedy conflict-resolution behavior of
+/// [`super::ModifiedGreedyCosine`] rather than the optimal assignment behavior
+/// of [`super::ModifiedHungarianCosine`].
 /// Requires the same
 /// strict well-separated precondition as [`super::LinearCosine`]
 /// (consecutive peaks > `2 * mz_tolerance`).
@@ -83,7 +84,7 @@ where
 
         // Collect direct and shifted matches.
         let direct = collect_linear_matches(&left_mz, &right_mz, tolerance, 0.0);
-        let matched_pairs: Vec<(usize, usize)> = if shift == 0.0 {
+        let matched_pairs: Vec<(usize, usize)> = if shift.abs() <= tolerance {
             direct
         } else {
             let shifted = collect_linear_matches(&left_mz, &right_mz, tolerance, shift);

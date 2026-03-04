@@ -1,16 +1,17 @@
 //! Implementation of the modified greedy cosine similarity for mass spectra.
 //!
 //! Modified Greedy Cosine extends Greedy Cosine by also matching fragment peaks
-//! shifted by the precursor mass difference. This matches the matchms
-//! `ModifiedCosine` algorithm.
+//! shifted by the precursor mass difference when the shift exceeds the
+//! configured tolerance. This matches the matchms `ModifiedCosine` algorithm.
 
 use super::cosine_common::{impl_cosine_wrapper_config_api, impl_cosine_wrapper_similarity};
 
 /// Modified greedy cosine similarity for mass spectra.
 ///
 /// Extends [`super::GreedyCosine`] by also matching fragment peaks shifted by
-/// the precursor mass difference, using greedy assignment. This matches the
-/// matchms `ModifiedCosine` algorithm.
+/// the precursor mass difference when that shift exceeds the configured
+/// tolerance, using greedy assignment. This matches the matchms
+/// `ModifiedCosine` algorithm.
 pub struct ModifiedGreedyCosine<EXP, MZ> {
     config: super::cosine_common::CosineConfig<EXP, MZ>,
 }

@@ -1,8 +1,9 @@
 //! Implementation of the modified Hungarian cosine similarity for mass spectra.
 //!
-//! Modified Hungarian Cosine extends Hungarian Cosine by also matching fragment peaks
-//! shifted by the precursor mass difference. This captures neutral-loss-related
-//! peak correspondences between spectra with different precursor masses.
+//! Modified Hungarian Cosine extends Hungarian Cosine by also matching fragment
+//! peaks shifted by the precursor mass difference when that shift exceeds the
+//! configured tolerance. This captures neutral-loss-related peak
+//! correspondences between spectra with different precursor masses.
 //!
 //! Unlike matchms `ModifiedCosine` (greedy assignment), this uses Crouse
 //! rectangular LAPJV for optimal assignment.
@@ -11,8 +12,9 @@ use super::cosine_common::{impl_cosine_wrapper_config_api, impl_cosine_wrapper_s
 
 /// Modified cosine similarity for mass spectra.
 ///
-/// Extends [`super::HungarianCosine`] by also matching fragment peaks shifted by
-/// the precursor mass difference, using optimal (Crouse LAPJV) assignment.
+/// Extends [`super::HungarianCosine`] by also matching fragment peaks shifted
+/// by the precursor mass difference when that shift exceeds the configured
+/// tolerance, using optimal (Crouse LAPJV) assignment.
 pub struct ModifiedHungarianCosine<EXP, MZ> {
     config: super::cosine_common::CosineConfig<EXP, MZ>,
 }

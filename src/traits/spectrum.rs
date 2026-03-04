@@ -239,9 +239,11 @@ pub trait Spectrum {
     /// Returns the matching peaks graph for modified cosine similarity.
     ///
     /// Two windows are used per left peak: a direct window (same as
-    /// `matching_peaks`) and a shifted window offset by `mz_shift`
-    /// (`precursor_mz_self - precursor_mz_other`). This captures both
-    /// direct matches and neutral-loss-related correspondences.
+    /// `matching_peaks`) and, when `|mz_shift| > mz_tolerance`, a shifted
+    /// window offset by `mz_shift` (`precursor_mz_self - precursor_mz_other`).
+    /// This captures both direct matches and neutral-loss-related
+    /// correspondences while remaining identical to non-modified matching for
+    /// precursor differences within tolerance.
     ///
     /// # Arguments
     ///
@@ -262,6 +264,7 @@ pub trait Spectrum {
             return Err(SimilarityComputationError::NegativeTolerance);
         }
         let mz_shift_f64 = to_f64_checked(mz_shift, "mz_shift")?;
+        let use_shifted_window = mz_shift_f64.abs() > mz_tolerance_f64;
         let mut matching_peaks = allocate_matching_peaks::<BiRange<u32>>(self.len(), other.len())?;
         let mut lowest_direct = 0usize;
         let mut lowest_shifted = 0usize;
@@ -283,18 +286,20 @@ pub trait Spectrum {
                 |col| row_matches.push(col),
             )?;
 
-            lowest_shifted = collect_window_matches(
-                other,
-                lowest_shifted,
-                mz_f64,
-                mz_tolerance_f64,
-                mz_shift_f64,
-                "shifted_other_mz",
-                |col| row_matches.push(col),
-            )?;
+            if use_shifted_window {
+                lowest_shifted = collect_window_matches(
+                    other,
+                    lowest_shifted,
+                    mz_f64,
+                    mz_tolerance_f64,
+                    mz_shift_f64,
+                    "shifted_other_mz",
+                    |col| row_matches.push(col),
+                )?;
 
-            row_matches.sort_unstable();
-            row_matches.dedup();
+                row_matches.sort_unstable();
+                row_matches.dedup();
+            }
             for &col in &row_matches {
                 MatrixMut::add(&mut matching_peaks, (row, col))
                     .map_err(|_| SimilarityComputationError::GraphConstructionFailed)?;
