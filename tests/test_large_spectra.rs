@@ -2,7 +2,7 @@
 
 use geometric_traits::prelude::*;
 use mass_spectrometry::prelude::{
-    EntropySimilarity, GenericSpectrum, HungarianCosine, ModifiedHungarianCosine, ScalarSimilarity,
+    GenericSpectrum, HungarianCosine, HungarianEntropy, ModifiedHungarianCosine, ScalarSimilarity,
     Spectrum, SpectrumAlloc, SpectrumMut,
 };
 use multi_ranged::{BiRange, SimpleRange};
@@ -107,7 +107,7 @@ fn entropy_match_count_scales_past_u16() {
     let left = linear_spectrum(n, 1_000_000.0);
     let right = linear_spectrum(n, 1_000_000.0);
 
-    let entropy = EntropySimilarity::unweighted(0.0).expect("valid scorer config");
+    let entropy = HungarianEntropy::unweighted(0.0).expect("valid scorer config");
     let (_score, matches) = entropy
         .similarity(&left, &right)
         .expect("similarity computation should succeed");
@@ -122,7 +122,7 @@ fn similarity_match_count_type_is_usize() {
     let exact = HungarianCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
     let modified =
         ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
-    let entropy = EntropySimilarity::unweighted(0.0_f32).expect("valid scorer config");
+    let entropy = HungarianEntropy::unweighted(0.0_f32).expect("valid scorer config");
 
     let (_s1, m1): (f32, usize) = exact
         .similarity(&left, &right)

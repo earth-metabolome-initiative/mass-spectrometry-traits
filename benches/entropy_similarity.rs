@@ -1,17 +1,17 @@
-//! Criterion benchmark to evaluate the performance of `EntropySimilarity`
+//! Criterion benchmark to evaluate the performance of `HungarianEntropy`
 //! in both weighted and unweighted modes.
 
 mod common;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use mass_spectrometry::prelude::EntropySimilarity;
+use mass_spectrometry::prelude::HungarianEntropy;
 
 fn bench_entropy_similarity(c: &mut Criterion) {
     let spectra = common::benchmark_spectra();
 
     let mz_tolerance = 0.1;
-    let weighted = EntropySimilarity::weighted(mz_tolerance).expect("valid scorer config");
-    let unweighted = EntropySimilarity::unweighted(mz_tolerance).expect("valid scorer config");
+    let weighted = HungarianEntropy::weighted(mz_tolerance).expect("valid scorer config");
+    let unweighted = HungarianEntropy::unweighted(mz_tolerance).expect("valid scorer config");
 
     common::bench_standard_pairs(c, "entropy_weighted", &spectra, &weighted);
     common::bench_standard_pairs(c, "entropy_unweighted", &spectra, &unweighted);

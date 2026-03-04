@@ -1,7 +1,7 @@
 //! Tests for similarity scorer configuration validation.
 
 use mass_spectrometry::prelude::{
-    EntropySimilarity, HungarianCosine, ModifiedHungarianCosine, SimilarityConfigError,
+    HungarianCosine, LinearEntropy, ModifiedHungarianCosine, SimilarityConfigError,
 };
 
 #[test]
@@ -24,7 +24,7 @@ fn modified_hungarian_cosine_rejects_negative_tolerance() {
 
 #[test]
 fn entropy_similarity_rejects_negative_tolerance() {
-    let result = EntropySimilarity::weighted(-0.01_f32);
+    let result = LinearEntropy::weighted(-0.01_f32);
     assert!(matches!(
         result,
         Err(SimilarityConfigError::NegativeTolerance)
@@ -51,7 +51,7 @@ fn modified_hungarian_cosine_rejects_infinite_intensity_power() {
 
 #[test]
 fn entropy_similarity_rejects_nan_tolerance() {
-    let result = EntropySimilarity::unweighted(f32::NAN);
+    let result = LinearEntropy::unweighted(f32::NAN);
     assert!(matches!(
         result,
         Err(SimilarityConfigError::NonFiniteParameter("mz_tolerance"))

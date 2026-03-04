@@ -1,7 +1,7 @@
 //! Property tests for core similarity invariants.
 
 use mass_spectrometry::prelude::{
-    EntropySimilarity, GenericSpectrum, HungarianCosine, LinearCosine, ModifiedHungarianCosine,
+    GenericSpectrum, HungarianCosine, LinearCosine, LinearEntropy, ModifiedHungarianCosine,
     ScalarSimilarity, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 use proptest::prelude::*;
@@ -80,8 +80,8 @@ fn scorer_modified() -> ModifiedHungarianCosine<f32, f32> {
     ModifiedHungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
-fn scorer_entropy() -> EntropySimilarity<f32> {
-    EntropySimilarity::unweighted(0.1).expect("valid scorer config")
+fn scorer_entropy() -> LinearEntropy<f32> {
+    LinearEntropy::unweighted(LINEAR_MZ_TOLERANCE).expect("valid scorer config")
 }
 
 proptest! {
@@ -140,8 +140,8 @@ proptest! {
         peaks1 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
         peaks2 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
     ) {
-        let left = build_spectrum(p1, peaks1);
-        let right = build_spectrum(p2, peaks2);
+        let left = build_well_separated_spectrum(p1, peaks1, STRICT_LINEAR_MIN_GAP);
+        let right = build_well_separated_spectrum(p2, peaks2, STRICT_LINEAR_MIN_GAP);
         let scorer = scorer_entropy();
 
         let (ab_score, ab_matches) = scorer
@@ -165,7 +165,6 @@ proptest! {
         let spectrum = build_spectrum(precursor, peaks);
         let exact = scorer_exact();
         let modified = scorer_modified();
-        let entropy = scorer_entropy();
 
         let (exact_score, exact_matches) = exact
             .similarity(&spectrum, &spectrum)
@@ -173,16 +172,27 @@ proptest! {
         let (modified_score, modified_matches) = modified
             .similarity(&spectrum, &spectrum)
             .expect("similarity computation should succeed");
-        let (entropy_score, entropy_matches) = entropy
-            .similarity(&spectrum, &spectrum)
-            .expect("similarity computation should succeed");
 
         prop_assert!((1.0 - exact_score).abs() < 1e-4);
         prop_assert!((1.0 - modified_score).abs() < 1e-4);
-        prop_assert!((1.0 - entropy_score).abs() < 1e-4);
         prop_assert_eq!(exact_matches, spectrum.len());
         prop_assert_eq!(modified_matches, spectrum.len());
-        prop_assert_eq!(entropy_matches, spectrum.len());
+    }
+
+    #[test]
+    fn entropy_self_similarity_remains_maximal(
+        precursor in 10.0_f32..1500.0_f32,
+        peaks in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+    ) {
+        let spectrum = build_well_separated_spectrum(precursor, peaks, STRICT_LINEAR_MIN_GAP);
+        let scorer = scorer_entropy();
+
+        let (score, matches) = scorer
+            .similarity(&spectrum, &spectrum)
+            .expect("similarity computation should succeed");
+
+        prop_assert!((1.0 - score).abs() < 1e-4);
+        prop_assert_eq!(matches, spectrum.len());
     }
 
     /// Regression test for the Crouse rectangular LAPJV epsilon-tolerance fix.
