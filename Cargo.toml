@@ -7,6 +7,7 @@ edition = "2024"
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", default-features = false, features = ["alloc"] }
 num-traits = { version = "0.2", default-features = false }
 multi_ranged = { version = "0.1.1", default-features = false }
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }
 
 [dev-dependencies]
