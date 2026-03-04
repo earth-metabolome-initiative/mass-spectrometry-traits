@@ -90,7 +90,7 @@ where
         .enumerate()
         .map(|(j, mz)| (j + lowest_other_index, mz))
     {
-        let other_mz_f64 = to_f64_checked(other_mz, "other_mz")?;
+        let other_mz_f64 = to_f64_checked(other_mz, "right_mz")?;
         let shifted_other_mz_f64 = other_mz_f64 + mz_shift_f64;
         if !shifted_other_mz_f64.is_finite() {
             return Err(SimilarityComputationError::NonFiniteValue(
@@ -216,7 +216,7 @@ pub trait Spectrum {
         let mut row_matches: Vec<u32> = Vec::new();
         for (i, mz) in self.mz().enumerate() {
             let row = to_matrix_index(i)?;
-            let mz_f64 = to_f64_checked(mz, "mz")?;
+            let mz_f64 = to_f64_checked(mz, "left_mz")?;
             row_matches.clear();
             lowest_other_index = collect_window_matches(
                 other,
@@ -269,7 +269,7 @@ pub trait Spectrum {
 
         for (i, mz) in self.mz().enumerate() {
             let row = to_matrix_index(i)?;
-            let mz_f64 = to_f64_checked(mz, "mz")?;
+            let mz_f64 = to_f64_checked(mz, "left_mz")?;
 
             row_matches.clear();
 

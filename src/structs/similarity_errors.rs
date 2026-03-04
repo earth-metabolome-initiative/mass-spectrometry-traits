@@ -35,4 +35,9 @@ pub enum SimilarityComputationError {
     /// Assignment solver failed unexpectedly.
     #[error("assignment solver failed")]
     AssignmentFailed,
+    /// Linear cosine precondition violated: peaks must be strictly separated.
+    #[error(
+        "`{0}` violates strict peak spacing precondition: consecutive peaks must be > 2 * mz_tolerance apart"
+    )]
+    InvalidPeakSpacing(&'static str),
 }

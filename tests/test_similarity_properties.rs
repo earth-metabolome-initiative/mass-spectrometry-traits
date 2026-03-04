@@ -1,10 +1,13 @@
 //! Property tests for core similarity invariants.
 
 use mass_spectrometry::prelude::{
-    EntropySimilarity, GenericSpectrum, HungarianCosine, ModifiedHungarianCosine, ScalarSimilarity,
-    Spectrum, SpectrumAlloc, SpectrumMut,
+    EntropySimilarity, GenericSpectrum, HungarianCosine, LinearCosine, ModifiedHungarianCosine,
+    ScalarSimilarity, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 use proptest::prelude::*;
+
+const LINEAR_MZ_TOLERANCE: f32 = 0.1;
+const STRICT_LINEAR_MIN_GAP: f32 = (2.0 * LINEAR_MZ_TOLERANCE) + 1e-4;
 
 fn build_spectrum(precursor_mz: f32, peaks: Vec<(f32, f32)>) -> GenericSpectrum<f32, f32> {
     let mut peaks = peaks;
@@ -31,8 +34,46 @@ fn build_spectrum(precursor_mz: f32, peaks: Vec<(f32, f32)>) -> GenericSpectrum<
     spectrum
 }
 
+/// Build a spectrum where consecutive peaks are at least `min_gap` apart.
+///
+/// For [`LinearCosine`] tests we pass a strict gap (`2*tolerance + epsilon`)
+/// to satisfy the strict well-separated precondition.
+fn build_well_separated_spectrum(
+    precursor_mz: f32,
+    peaks: Vec<(f32, f32)>,
+    min_gap: f32,
+) -> GenericSpectrum<f32, f32> {
+    let mut peaks = peaks;
+    peaks.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    let mut spectrum = GenericSpectrum::with_capacity(precursor_mz.max(0.001), peaks.len())
+        .expect("valid spectrum allocation");
+    let mut last_mz: Option<f32> = None;
+
+    for (mz_raw, intensity_raw) in peaks {
+        let mut mz = mz_raw.max(0.001);
+        if let Some(prev) = last_mz {
+            let required = prev + min_gap;
+            if mz < required {
+                mz = required;
+            }
+        }
+        let intensity = intensity_raw.max(1e-6);
+        spectrum
+            .add_peak(mz, intensity)
+            .expect("generated peaks must be sorted by m/z");
+        last_mz = Some(mz);
+    }
+
+    spectrum
+}
+
 fn scorer_exact() -> HungarianCosine<f32, f32> {
-    HungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
+    HungarianCosine::new(1.0, 1.0, LINEAR_MZ_TOLERANCE).expect("valid scorer config")
+}
+
+fn scorer_linear() -> LinearCosine<f32, f32> {
+    LinearCosine::new(1.0, 1.0, LINEAR_MZ_TOLERANCE).expect("valid scorer config")
 }
 
 fn scorer_modified() -> ModifiedHungarianCosine<f32, f32> {
@@ -181,6 +222,73 @@ proptest! {
             score,
             spectrum.len()
         );
+        prop_assert_eq!(matches, spectrum.len());
+    }
+
+    #[test]
+    fn linear_cosine_is_bounded_and_symmetric(
+        p1 in 10.0_f32..1500.0_f32,
+        p2 in 10.0_f32..1500.0_f32,
+        peaks1 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        peaks2 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+    ) {
+        let left = build_well_separated_spectrum(p1, peaks1, STRICT_LINEAR_MIN_GAP);
+        let right = build_well_separated_spectrum(p2, peaks2, STRICT_LINEAR_MIN_GAP);
+        let scorer = scorer_linear();
+
+        let (ab_score, ab_matches) = scorer
+            .similarity(&left, &right)
+            .expect("similarity computation should succeed");
+        let (ba_score, ba_matches) = scorer
+            .similarity(&right, &left)
+            .expect("similarity computation should succeed");
+
+        prop_assert!((0.0..=1.0).contains(&ab_score));
+        prop_assert!(ab_matches <= left.len().min(right.len()));
+        prop_assert!((ab_score - ba_score).abs() < 1e-4);
+        prop_assert_eq!(ab_matches, ba_matches);
+    }
+
+    #[test]
+    fn linear_cosine_matches_hungarian_on_well_separated(
+        p1 in 10.0_f32..1500.0_f32,
+        p2 in 10.0_f32..1500.0_f32,
+        peaks1 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        peaks2 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+    ) {
+        let left = build_well_separated_spectrum(p1, peaks1, STRICT_LINEAR_MIN_GAP);
+        let right = build_well_separated_spectrum(p2, peaks2, STRICT_LINEAR_MIN_GAP);
+        let linear = scorer_linear();
+        let hungarian = scorer_exact();
+
+        let (linear_score, linear_matches) = linear
+            .similarity(&left, &right)
+            .expect("LinearCosine similarity should succeed");
+        let (hungarian_score, hungarian_matches) = hungarian
+            .similarity(&left, &right)
+            .expect("HungarianCosine similarity should succeed");
+
+        prop_assert!(
+            (linear_score - hungarian_score).abs() < 1e-4,
+            "LinearCosine={} vs HungarianCosine={} (left={} peaks, right={} peaks)",
+            linear_score, hungarian_score, left.len(), right.len()
+        );
+        prop_assert_eq!(linear_matches, hungarian_matches);
+    }
+
+    #[test]
+    fn linear_cosine_self_similarity(
+        precursor in 10.0_f32..1500.0_f32,
+        peaks in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+    ) {
+        let spectrum = build_well_separated_spectrum(precursor, peaks, STRICT_LINEAR_MIN_GAP);
+        let scorer = scorer_linear();
+
+        let (score, matches) = scorer
+            .similarity(&spectrum, &spectrum)
+            .expect("similarity computation should succeed");
+
+        prop_assert!((1.0 - score).abs() < 1e-4);
         prop_assert_eq!(matches, spectrum.len());
     }
 }

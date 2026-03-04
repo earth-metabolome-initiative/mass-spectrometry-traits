@@ -193,7 +193,7 @@ macro_rules! impl_cosine_wrapper_similarity {
 pub(crate) use impl_cosine_wrapper_similarity;
 
 #[inline]
-fn to_f64_checked_for_computation<T: ToPrimitive>(
+pub(crate) fn to_f64_checked_for_computation<T: ToPrimitive>(
     value: T,
     name: &'static str,
 ) -> Result<f64, SimilarityComputationError> {
@@ -511,6 +511,91 @@ where
     validate_numeric_parameter(mz_tolerance, "mz_tolerance")?;
     if mz_tolerance < T::zero() {
         return Err(SimilarityConfigError::NegativeTolerance);
+    }
+    Ok(())
+}
+
+/// Two-pointer sweep that accumulates `left_products[i] * right_products[j]`
+/// for each matched pair, returning `(score_sum, n_matches)`.
+///
+/// `shift` is `left_precursor - right_precursor`: a left peak at `m` matches a
+/// right peak near `m - shift`.  For direct (unshifted) matching, pass 0.0.
+///
+/// Requires that both mz slices are sorted and well-separated (consecutive
+/// peaks > 2 * tolerance apart), guaranteeing at most one match per peak.
+#[inline]
+pub(crate) fn linear_cosine_sweep<MZ>(
+    left_mz: &[f64],
+    right_mz: &[f64],
+    left_products: &[MZ],
+    right_products: &[MZ],
+    tolerance: f64,
+    shift: f64,
+) -> (MZ, usize)
+where
+    MZ: Number + Zero,
+{
+    let mut score_sum = MZ::zero();
+    let mut n_matches = 0usize;
+    let mut j = 0usize;
+
+    for (i, &lmz) in left_mz.iter().enumerate() {
+        let target = lmz - shift;
+        // Advance j past peaks that are below the tolerance window.
+        while j < right_mz.len() && right_mz[j] < target - tolerance {
+            j += 1;
+        }
+        if j < right_mz.len() && (right_mz[j] - target).abs() <= tolerance {
+            score_sum += left_products[i] * right_products[j];
+            n_matches += 1;
+            j += 1;
+        }
+    }
+
+    (score_sum, n_matches)
+}
+
+/// Two-pointer sweep that collects matched `(left_index, right_index)` pairs.
+///
+/// Same semantics as [`linear_cosine_sweep`]: `shift` is `left_precursor -
+/// right_precursor`, so a left peak at `m` matches a right peak near
+/// `m - shift`.
+#[inline]
+pub(crate) fn collect_linear_matches(
+    left_mz: &[f64],
+    right_mz: &[f64],
+    tolerance: f64,
+    shift: f64,
+) -> Vec<(usize, usize)> {
+    let mut matches = Vec::new();
+    let mut j = 0usize;
+
+    for (i, &lmz) in left_mz.iter().enumerate() {
+        let target = lmz - shift;
+        while j < right_mz.len() && right_mz[j] < target - tolerance {
+            j += 1;
+        }
+        if j < right_mz.len() && (right_mz[j] - target).abs() <= tolerance {
+            matches.push((i, j));
+            j += 1;
+        }
+    }
+
+    matches
+}
+
+/// Runtime validation that consecutive peaks in the given mz slice are
+/// greater than `2 * tolerance` apart.
+pub(crate) fn validate_well_separated(
+    mz: &[f64],
+    tolerance: f64,
+    label: &'static str,
+) -> Result<(), SimilarityComputationError> {
+    let min_gap = 2.0 * tolerance;
+    for w in mz.windows(2) {
+        if w[1] - w[0] <= min_gap {
+            return Err(SimilarityComputationError::InvalidPeakSpacing(label));
+        }
     }
     Ok(())
 }
