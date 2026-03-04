@@ -377,3 +377,81 @@ fn boundary_gap_equal_2x_tolerance_returns_error() {
         SimilarityComputationError::InvalidPeakSpacing("left spectrum")
     );
 }
+
+#[test]
+fn equivalence_within_precursor_tolerance() {
+    let tolerance = 0.1_f32;
+
+    let mut left = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    left.add_peak(50.0, 1000.0).unwrap();
+    left.add_peak(80.0, 500.0).unwrap();
+
+    // precursor shift = 100.0 - 99.91 = 0.09, within tolerance.
+    // The peak at 79.85 would only match via shifted matching; this verifies
+    // modified behaves like non-modified inside the precursor-tolerance window.
+    let mut right =
+        GenericSpectrum::with_capacity(99.91_f32, 2).expect("valid spectrum allocation");
+    right.add_peak(50.0, 900.0).unwrap();
+    right.add_peak(79.85, 600.0).unwrap();
+
+    let linear = LinearCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+    let modified =
+        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+
+    let precursor_delta = (left.precursor_mz() - right.precursor_mz()).abs();
+    assert!(
+        precursor_delta <= tolerance,
+        "test setup must satisfy within-tolerance precursor delta"
+    );
+
+    let (linear_score, linear_matches) = linear
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+    let (modified_score, modified_matches) = modified
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+
+    assert!(
+        (linear_score - modified_score).abs() < 1e-6,
+        "Within precursor tolerance: LinearCosine={linear_score} vs ModifiedLinearCosine={modified_score}"
+    );
+    assert_eq!(linear_matches, modified_matches);
+}
+
+#[test]
+fn equivalence_at_precursor_tolerance_boundary() {
+    let tolerance = 0.125_f32;
+
+    let mut left = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    left.add_peak(50.0, 1000.0).unwrap();
+    left.add_peak(80.0, 500.0).unwrap();
+
+    // precursor shift = 100.0 - 99.875 = 0.125, exactly tolerance.
+    let mut right =
+        GenericSpectrum::with_capacity(99.875_f32, 2).expect("valid spectrum allocation");
+    right.add_peak(50.0, 900.0).unwrap();
+    right.add_peak(79.8, 600.0).unwrap();
+
+    let linear = LinearCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+    let modified =
+        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+
+    let precursor_delta = (left.precursor_mz() - right.precursor_mz()).abs();
+    assert!(
+        (precursor_delta - tolerance).abs() < 1e-6,
+        "test setup must hit the tolerance boundary"
+    );
+
+    let (linear_score, linear_matches) = linear
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+    let (modified_score, modified_matches) = modified
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+
+    assert!(
+        (linear_score - modified_score).abs() < 1e-6,
+        "Boundary precursor tolerance: LinearCosine={linear_score} vs ModifiedLinearCosine={modified_score}"
+    );
+    assert_eq!(linear_matches, modified_matches);
+}

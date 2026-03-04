@@ -328,3 +328,123 @@ fn exact_equivalence_same_precursor() {
     );
     assert_eq!(exact_matches, mod_matches);
 }
+
+#[test]
+fn equivalence_within_precursor_tolerance() {
+    let tolerance = 0.1_f32;
+
+    let mut a = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    a.add_peak(50.0, 1000.0).unwrap();
+    a.add_peak(80.0, 500.0).unwrap();
+
+    // precursor shift = 100.0 - 99.91 = 0.09, within tolerance.
+    // The peak at 79.85 would only match via shifted matching; this verifies
+    // modified behaves like non-modified inside the precursor-tolerance window.
+    let mut b = GenericSpectrum::with_capacity(99.91_f32, 2).expect("valid spectrum allocation");
+    b.add_peak(50.0, 900.0).unwrap();
+    b.add_peak(79.85, 600.0).unwrap();
+
+    let exact = HungarianCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+
+    let precursor_delta = (a.precursor_mz() - b.precursor_mz()).abs();
+    assert!(
+        precursor_delta <= tolerance,
+        "test setup must satisfy within-tolerance precursor delta"
+    );
+
+    let (exact_score, exact_matches) = exact
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
+    let (mod_score, mod_matches) = modified
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
+
+    assert!(
+        (exact_score - mod_score).abs() < 1e-6,
+        "Within precursor tolerance: HungarianCosine={exact_score} vs ModifiedHungarianCosine={mod_score}"
+    );
+    assert_eq!(exact_matches, mod_matches);
+}
+
+#[test]
+fn equivalence_at_precursor_tolerance_boundary() {
+    let tolerance = 0.125_f32;
+
+    let mut a = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    a.add_peak(50.0, 1000.0).unwrap();
+    a.add_peak(80.0, 500.0).unwrap();
+
+    // precursor shift = 100.0 - 99.875 = 0.125, exactly tolerance.
+    let mut b = GenericSpectrum::with_capacity(99.875_f32, 2).expect("valid spectrum allocation");
+    b.add_peak(50.0, 900.0).unwrap();
+    b.add_peak(79.8, 600.0).unwrap();
+
+    let exact = HungarianCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+
+    let precursor_delta = (a.precursor_mz() - b.precursor_mz()).abs();
+    assert!(
+        (precursor_delta - tolerance).abs() < 1e-6,
+        "test setup must hit the tolerance boundary"
+    );
+
+    let (exact_score, exact_matches) = exact
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
+    let (mod_score, mod_matches) = modified
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
+
+    assert!(
+        (exact_score - mod_score).abs() < 1e-6,
+        "Boundary precursor tolerance: HungarianCosine={exact_score} vs ModifiedHungarianCosine={mod_score}"
+    );
+    assert_eq!(exact_matches, mod_matches);
+}
+
+#[test]
+fn outside_precursor_tolerance_can_differ() {
+    let tolerance = 0.125_f32;
+
+    let mut a = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    a.add_peak(50.0, 1000.0).unwrap();
+    a.add_peak(80.0, 500.0).unwrap();
+
+    // precursor shift = 100.0 - 99.75 = 0.25, outside tolerance.
+    let mut b = GenericSpectrum::with_capacity(99.75_f32, 2).expect("valid spectrum allocation");
+    b.add_peak(50.0, 900.0).unwrap();
+    b.add_peak(79.8, 600.0).unwrap();
+
+    let exact = HungarianCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+    let modified =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+
+    let precursor_delta = (a.precursor_mz() - b.precursor_mz()).abs();
+    assert!(
+        precursor_delta > tolerance,
+        "test setup must be outside the precursor-tolerance window"
+    );
+
+    let (exact_score, exact_matches) = exact
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
+    let (mod_score, mod_matches) = modified
+        .similarity(&a, &b)
+        .expect("similarity computation should succeed");
+
+    assert_eq!(
+        exact_matches, 1,
+        "HungarianCosine should find one direct match"
+    );
+    assert_eq!(
+        mod_matches, 2,
+        "ModifiedHungarianCosine should use shifted matching outside precursor tolerance"
+    );
+    assert!(
+        mod_score > exact_score,
+        "ModifiedHungarianCosine score ({mod_score}) should exceed HungarianCosine ({exact_score})"
+    );
+}
