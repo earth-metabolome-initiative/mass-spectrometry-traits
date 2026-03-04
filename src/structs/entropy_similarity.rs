@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use geometric_traits::prelude::{Number, ScalarSimilarity};
 use num_traits::{Float, NumCast, ToPrimitive, Zero};
 
-use super::cosine_common::validate_non_negative_tolerance;
+use super::cosine_common::{to_f64_checked_for_computation, validate_non_negative_tolerance};
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 
@@ -21,6 +21,9 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 /// - **Weighted** (default): intensities are raised to a data-driven power
 ///   based on the spectral Shannon entropy, then re-normalized.
 /// - **Unweighted**: raw intensities are normalized to sum to 1 directly.
+///
+/// Runtime computation validates representability and finiteness of numeric
+/// intermediates and returns [`SimilarityComputationError`] on invalid states.
 pub struct EntropySimilarity<MZ> {
     mz_tolerance: MZ,
     weighted: bool,
@@ -133,14 +136,8 @@ where
         let mut left_mz: Vec<f64> = Vec::with_capacity(left.len());
         let mut left_int: Vec<f64> = Vec::with_capacity(left.len());
         for (mz, intensity) in left.peaks() {
-            let Some(mz_f64) = mz.to_f64() else {
-                return Err(SimilarityComputationError::ValueNotRepresentable("left_mz"));
-            };
-            let Some(int_f64) = intensity.to_f64() else {
-                return Err(SimilarityComputationError::ValueNotRepresentable(
-                    "left_intensity",
-                ));
-            };
+            let mz_f64 = to_f64_checked_for_computation(mz, "left_mz")?;
+            let int_f64 = to_f64_checked_for_computation(intensity, "left_intensity")?;
             left_mz.push(mz_f64);
             left_int.push(int_f64);
         }
@@ -148,16 +145,8 @@ where
         let mut right_mz: Vec<f64> = Vec::with_capacity(right.len());
         let mut right_int: Vec<f64> = Vec::with_capacity(right.len());
         for (mz, intensity) in right.peaks() {
-            let Some(mz_f64) = mz.to_f64() else {
-                return Err(SimilarityComputationError::ValueNotRepresentable(
-                    "right_mz",
-                ));
-            };
-            let Some(int_f64) = intensity.to_f64() else {
-                return Err(SimilarityComputationError::ValueNotRepresentable(
-                    "right_intensity",
-                ));
-            };
+            let mz_f64 = to_f64_checked_for_computation(mz, "right_mz")?;
+            let int_f64 = to_f64_checked_for_computation(intensity, "right_intensity")?;
             right_mz.push(mz_f64);
             right_int.push(int_f64);
         }
@@ -165,6 +154,8 @@ where
         // Normalize intensities to sum to 1.
         let left_sum: f64 = left_int.iter().sum();
         let right_sum: f64 = right_int.iter().sum();
+        let _ = to_f64_checked_for_computation(left_sum, "left_intensity_sum")?;
+        let _ = to_f64_checked_for_computation(right_sum, "right_intensity_sum")?;
 
         if left_sum == 0.0 || right_sum == 0.0 {
             return Ok((S1::Mz::zero(), 0));
@@ -181,14 +172,19 @@ where
         if self.weighted {
             apply_entropy_weight(&mut left_int);
             apply_entropy_weight(&mut right_int);
+            let weighted_left_sum: f64 = left_int.iter().sum();
+            let weighted_right_sum: f64 = right_int.iter().sum();
+            let _ =
+                to_f64_checked_for_computation(weighted_left_sum, "weighted_left_intensity_sum")?;
+            let _ =
+                to_f64_checked_for_computation(weighted_right_sum, "weighted_right_intensity_sum")?;
         }
 
         // Two-pointer greedy matching within m/z tolerance.
-        let Some(tolerance) = self.mz_tolerance.to_f64() else {
-            return Err(SimilarityComputationError::ValueNotRepresentable(
-                "mz_tolerance",
-            ));
-        };
+        let tolerance = to_f64_checked_for_computation(self.mz_tolerance, "mz_tolerance")?;
+        if tolerance < 0.0 {
+            return Err(SimilarityComputationError::NegativeTolerance);
+        }
         let mut i = 0usize;
         let mut j = 0usize;
         let mut score = 0.0f64;
@@ -197,7 +193,9 @@ where
         while i < left_mz.len() && j < right_mz.len() {
             let diff = left_mz[i] - right_mz[j];
             if diff.abs() <= tolerance {
-                score += entropy_pair(left_int[i], right_int[j]);
+                let pair_score = entropy_pair(left_int[i], right_int[j]);
+                let _ = to_f64_checked_for_computation(pair_score, "entropy_pair_score")?;
+                score += pair_score;
                 n_matches += 1;
                 i += 1;
                 j += 1;
@@ -210,6 +208,7 @@ where
 
         // Divide by 2 to normalize JSD to [0, 1].
         let similarity = (score / 2.0).clamp(0.0, 1.0);
+        let _ = to_f64_checked_for_computation(similarity, "similarity_score")?;
 
         let sim: S1::Mz = NumCast::from(similarity).ok_or(
             SimilarityComputationError::ValueNotRepresentable("similarity_score"),

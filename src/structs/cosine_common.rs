@@ -306,15 +306,10 @@ where
     MZ: Float + Number + Finite + TotalOrd + ToPrimitive,
     R: MultiRanged<Step = u32>,
 {
-    for &value in inputs.row_f64 {
-        let _ = to_f64_checked_for_computation(value, "row_peak_product_f64")?;
-    }
-    for &value in inputs.col_f64 {
-        let _ = to_f64_checked_for_computation(value, "col_peak_product_f64")?;
-    }
-    let _ = to_f64_checked_for_computation(inputs.max_row, "max_row_peak_product_f64")?;
-    let _ = to_f64_checked_for_computation(inputs.max_col, "max_col_peak_product_f64")?;
-
+    // `row_f64`, `col_f64`, `max_row`, and `max_col` are derived from
+    // `prepare_peak_products`, which already validates representability and
+    // finiteness. Keep runtime checks focused on arithmetic states created
+    // below instead of re-validating immutable inputs.
     let map: GenericImplicitValuedMatrix2D<RangedCSR2D<u32, u32, R>, _, f64> =
         GenericImplicitValuedMatrix2D::new(inputs.matching, |(i, j)| {
             1.0f64 + f64::EPSILON

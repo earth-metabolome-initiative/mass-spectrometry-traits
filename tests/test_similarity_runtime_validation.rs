@@ -1,7 +1,8 @@
 use geometric_traits::prelude::ScalarSimilarity;
 use mass_spectrometry::prelude::{
-    GenericSpectrum, GreedyCosine, HungarianCosine, ModifiedHungarianCosine, ModifiedLinearCosine,
-    SimilarityComputationError, SimilarityConfigError, Spectrum, SpectrumAlloc, SpectrumMut,
+    EntropySimilarity, GenericSpectrum, GreedyCosine, HungarianCosine, ModifiedHungarianCosine,
+    ModifiedLinearCosine, SimilarityComputationError, SimilarityConfigError, Spectrum,
+    SpectrumAlloc, SpectrumMut,
 };
 
 #[derive(Clone)]
@@ -155,5 +156,35 @@ fn modified_linear_cosine_rejects_non_finite_right_precursor_at_runtime() {
     assert_eq!(
         error,
         SimilarityComputationError::NonFiniteValue("right_precursor_mz")
+    );
+}
+
+#[test]
+fn entropy_similarity_rejects_non_finite_left_intensity_at_runtime() {
+    let left = raw_spectrum(100.0, &[(100.0, f32::NAN)]);
+    let right = raw_spectrum(100.0, &[(100.0, 1.0)]);
+    let scorer = EntropySimilarity::unweighted(0.1_f32).expect("valid scorer config");
+
+    let error = scorer
+        .similarity(&left, &right)
+        .expect_err("non-finite left intensity should be rejected");
+    assert_eq!(
+        error,
+        SimilarityComputationError::NonFiniteValue("left_intensity")
+    );
+}
+
+#[test]
+fn entropy_similarity_rejects_non_finite_right_intensity_at_runtime() {
+    let left = raw_spectrum(100.0, &[(100.0, 1.0)]);
+    let right = raw_spectrum(100.0, &[(100.0, f32::INFINITY)]);
+    let scorer = EntropySimilarity::unweighted(0.1_f32).expect("valid scorer config");
+
+    let error = scorer
+        .similarity(&left, &right)
+        .expect_err("non-finite right intensity should be rejected");
+    assert_eq!(
+        error,
+        SimilarityComputationError::NonFiniteValue("right_intensity")
     );
 }
