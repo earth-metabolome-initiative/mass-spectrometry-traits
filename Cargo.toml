@@ -42,3 +42,7 @@ harness = false
 [[bench]]
 name = "modified_linear_cosine"
 harness = false
+
+[[bench]]
+name = "index_search"
+harness = false
