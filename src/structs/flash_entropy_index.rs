@@ -11,7 +11,8 @@ use num_traits::{Float, ToPrimitive};
 use geometric_traits::prelude::Number;
 
 use super::cosine_common::{
-    to_f64_checked_for_computation, validate_non_negative_tolerance, validate_well_separated,
+    to_f64_checked_for_computation, validate_non_negative_tolerance, validate_numeric_parameter,
+    validate_well_separated,
 };
 use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
 use super::flash_common::{FlashIndex, FlashKernel, FlashSearchResult, SearchState};
@@ -60,7 +61,7 @@ impl FlashKernel for EntropyKernel {
 ///     GenericSpectrum::<f64, f64>::cocaine().unwrap(),
 ///     GenericSpectrum::<f64, f64>::glucose().unwrap(),
 /// ];
-/// let index = FlashEntropyIndex::new(0.1_f64, true, library.iter())
+/// let index = FlashEntropyIndex::new(0.0_f64, 1.0_f64, 0.1_f64, true, library.iter())
 ///     .expect("index build should succeed");
 ///
 /// let query = GenericSpectrum::<f64, f64>::cocaine().unwrap();
@@ -70,6 +71,8 @@ impl FlashKernel for EntropyKernel {
 pub struct FlashEntropyIndex {
     inner: FlashIndex<EntropyKernel>,
     weighted: bool,
+    mz_power_f64: f64,
+    intensity_power_f64: f64,
 }
 
 impl FlashEntropyIndex {
@@ -91,7 +94,20 @@ impl FlashEntropyIndex {
         self.inner.n_spectra
     }
 
-    /// Build a weighted entropy flash index (convenience for `new(tol, true, spectra)`).
+    /// Returns the m/z power used for peak weighting.
+    #[inline]
+    pub fn mz_power_f64(&self) -> f64 {
+        self.mz_power_f64
+    }
+
+    /// Returns the intensity power used for peak weighting.
+    #[inline]
+    pub fn intensity_power_f64(&self) -> f64 {
+        self.intensity_power_f64
+    }
+
+    /// Build a weighted entropy flash index with default powers (mz_power=0,
+    /// intensity_power=1).
     pub fn weighted<'a, MZ, S>(
         mz_tolerance: MZ,
         spectra: impl IntoIterator<Item = &'a S>,
@@ -102,10 +118,11 @@ impl FlashEntropyIndex {
         S::Mz: Float + Number + ToPrimitive,
         S::Intensity: Float + Number + ToPrimitive,
     {
-        Self::new(mz_tolerance, true, spectra)
+        Self::new(0.0_f64, 1.0_f64, mz_tolerance, true, spectra)
     }
 
-    /// Build an unweighted entropy flash index (convenience for `new(tol, false, spectra)`).
+    /// Build an unweighted entropy flash index with default powers (mz_power=0,
+    /// intensity_power=1).
     pub fn unweighted<'a, MZ, S>(
         mz_tolerance: MZ,
         spectra: impl IntoIterator<Item = &'a S>,
@@ -116,7 +133,7 @@ impl FlashEntropyIndex {
         S::Mz: Float + Number + ToPrimitive,
         S::Intensity: Float + Number + ToPrimitive,
     {
-        Self::new(mz_tolerance, false, spectra)
+        Self::new(0.0_f64, 1.0_f64, mz_tolerance, false, spectra)
     }
 
     /// Build a new entropy flash index from an iterator of spectra.
@@ -126,29 +143,43 @@ impl FlashEntropyIndex {
     ///
     /// # Errors
     ///
-    /// - [`SimilarityConfigError`] if `mz_tolerance` is invalid.
+    /// - [`SimilarityConfigError`] if `mz_tolerance` is invalid or power
+    ///   parameters are non-finite.
     /// - [`SimilarityComputationError`] if any spectrum violates the
     ///   well-separated precondition or contains non-representable values.
-    pub fn new<'a, MZ, S>(
+    pub fn new<'a, EXP, MZ, S>(
+        mz_power: EXP,
+        intensity_power: EXP,
         mz_tolerance: MZ,
         weighted: bool,
         spectra: impl IntoIterator<Item = &'a S>,
     ) -> Result<Self, FlashEntropyIndexError>
     where
+        EXP: Number + ToPrimitive,
         MZ: Number + ToPrimitive + PartialOrd,
         S: Spectrum + 'a,
         S::Mz: Float + Number + ToPrimitive,
         S::Intensity: Float + Number + ToPrimitive,
     {
+        validate_numeric_parameter(mz_power, "mz_power").map_err(FlashEntropyIndexError::Config)?;
+        validate_numeric_parameter(intensity_power, "intensity_power")
+            .map_err(FlashEntropyIndexError::Config)?;
         validate_non_negative_tolerance(mz_tolerance).map_err(FlashEntropyIndexError::Config)?;
+
         let tolerance = to_f64_checked_for_computation(mz_tolerance, "mz_tolerance")
             .map_err(FlashEntropyIndexError::Computation)?;
+        let mz_power_f64 = to_f64_checked_for_computation(mz_power, "mz_power")
+            .map_err(FlashEntropyIndexError::Computation)?;
+        let intensity_power_f64 =
+            to_f64_checked_for_computation(intensity_power, "intensity_power")
+                .map_err(FlashEntropyIndexError::Computation)?;
 
         let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
 
         for spectrum in spectra {
-            let peaks = prepare_entropy_peaks(spectrum, weighted)
-                .map_err(FlashEntropyIndexError::Computation)?;
+            let peaks =
+                prepare_entropy_peaks(spectrum, weighted, mz_power_f64, intensity_power_f64)
+                    .map_err(FlashEntropyIndexError::Computation)?;
 
             if peaks.int.is_empty() {
                 // Zero-intensity spectrum: include with empty peaks so that
@@ -173,7 +204,12 @@ impl FlashEntropyIndex {
         let inner = FlashIndex::<EntropyKernel>::build(tolerance, prepared)
             .map_err(FlashEntropyIndexError::Computation)?;
 
-        Ok(Self { inner, weighted })
+        Ok(Self {
+            inner,
+            weighted,
+            mz_power_f64,
+            intensity_power_f64,
+        })
     }
 
     /// Create a [`SearchState`] sized for this index, suitable for reuse
@@ -276,7 +312,12 @@ impl FlashEntropyIndex {
         S::Mz: Float + Number + ToPrimitive,
         S::Intensity: Float + Number + ToPrimitive,
     {
-        let peaks = prepare_entropy_peaks(query, self.weighted)?;
+        let peaks = prepare_entropy_peaks(
+            query,
+            self.weighted,
+            self.mz_power_f64,
+            self.intensity_power_f64,
+        )?;
 
         if peaks.int.is_empty() {
             return Ok((Vec::new(), Vec::new()));
