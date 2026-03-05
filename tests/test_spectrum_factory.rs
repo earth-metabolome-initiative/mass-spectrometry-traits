@@ -43,6 +43,7 @@ fn fixture_names_are_registered() {
     for path in [
         "tests/fixtures/expected_similarities.csv",
         "tests/fixtures/expected_modified_cosine_similarities.csv",
+        "tests/fixtures/expected_entropy_similarities.csv",
     ] {
         let mut reader =
             csv::Reader::from_path(path).unwrap_or_else(|e| panic!("failed to open {path}: {e}"));
