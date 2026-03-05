@@ -105,7 +105,7 @@ fn modified_cosine_without_index(
 }
 
 fn entropy_without_index(
-    scorer: &LinearEntropy<f64>,
+    scorer: &LinearEntropy<f64, f64>,
     query: &BenchSpectrum,
     library: &[BenchSpectrum],
 ) -> (f64, usize) {
@@ -122,7 +122,7 @@ fn entropy_without_index(
 }
 
 fn modified_entropy_without_index(
-    scorer: &ModifiedLinearEntropy<f64>,
+    scorer: &ModifiedLinearEntropy<f64, f64>,
     query: &BenchSpectrum,
     library: &[BenchSpectrum],
 ) -> (f64, usize) {
@@ -213,8 +213,9 @@ fn bench_index_search(c: &mut Criterion) {
     let flash_cosine =
         FlashCosineIndex::new(mz_power, intensity_power, mz_tolerance, library.iter())
             .expect("flash cosine index should build");
-    let flash_entropy = FlashEntropyIndex::new(mz_tolerance, true, library.iter())
-        .expect("flash entropy index should build");
+    let flash_entropy =
+        FlashEntropyIndex::new(0.0_f64, 1.0_f64, mz_tolerance, true, library.iter())
+            .expect("flash entropy index should build");
 
     let mut cosine_group = c.benchmark_group("library_search_cosine");
     cosine_group.bench_function("with_index_flash", |b| {
