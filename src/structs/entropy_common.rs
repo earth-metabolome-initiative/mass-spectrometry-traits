@@ -106,7 +106,8 @@ macro_rules! impl_entropy_config_api {
             ///
             /// # Errors
             ///
-            /// Returns [`SimilarityConfigError`] if any numeric parameter is not
+            /// Returns [`crate::structs::SimilarityConfigError`] if any numeric
+            /// parameter is not
             /// finite/representable or if `mz_tolerance` is negative.
             #[inline]
             pub fn new(

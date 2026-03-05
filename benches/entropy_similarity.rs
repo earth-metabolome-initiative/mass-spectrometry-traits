@@ -7,9 +7,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use mass_spectrometry::prelude::LinearEntropy;
 
 fn bench_entropy_similarity(c: &mut Criterion) {
-    let spectra = common::benchmark_spectra();
-
     let mz_tolerance = 0.1;
+    let spectra = common::benchmark_spectra_for_linear(mz_tolerance);
     let weighted = LinearEntropy::weighted(mz_tolerance).expect("valid scorer config");
     let unweighted = LinearEntropy::unweighted(mz_tolerance).expect("valid scorer config");
 
