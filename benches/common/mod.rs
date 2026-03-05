@@ -2,8 +2,8 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkGroup, Criterion, measurement::WallTime};
 use mass_spectrometry::prelude::{
-    EpimeloscineSpectrum, GenericSpectrum, HydroxyCholesterolSpectrum, MergeClosePeaks,
-    SalicinSpectrum, ScalarSimilarity, SimilarityComputationError, SpectralProcessor,
+    EpimeloscineSpectrum, GenericSpectrum, HydroxyCholesterolSpectrum, SalicinSpectrum,
+    ScalarSimilarity, SimilarityComputationError, SiriusMergeClosePeaks, SpectralProcessor,
 };
 
 pub type BenchSpectrum = GenericSpectrum<f64, f64>;
@@ -29,8 +29,8 @@ pub fn benchmark_spectra() -> BenchmarkSpectra {
 pub fn benchmark_spectra_for_linear(mz_tolerance: f64) -> BenchmarkSpectra {
     let spectra = benchmark_spectra();
     // Linear variants require strict peak spacing (> 2 * tolerance).
-    let merger =
-        MergeClosePeaks::new(mz_tolerance).expect("linear benchmark tolerance should be valid");
+    let merger = SiriusMergeClosePeaks::new(mz_tolerance)
+        .expect("linear benchmark tolerance should be valid");
     BenchmarkSpectra {
         salicin: merger.process(&spectra.salicin),
         hydroxy_cholesterol: merger.process(&spectra.hydroxy_cholesterol),

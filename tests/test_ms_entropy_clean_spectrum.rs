@@ -1,0 +1,139 @@
+//! Tests for the ms_entropy-style cleaning spectral processor.
+
+use mass_spectrometry::prelude::{
+    GenericSpectrum, MsEntropyCleanSpectrum, SimilarityConfigError, SpectralProcessor, Spectrum,
+    SpectrumMut,
+};
+
+fn make_spectrum(precursor: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f32> {
+    let mut s =
+        GenericSpectrum::try_with_capacity(precursor, peaks.len()).expect("valid precursor");
+    for &(mz, intensity) in peaks {
+        s.add_peak(mz, intensity).expect("valid sorted peak");
+    }
+    s
+}
+
+#[test]
+fn default_cleaning_centroids_with_weighted_mz_and_normalizes() {
+    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+        .build()
+        .expect("valid default builder config");
+
+    let input = make_spectrum(500.0, &[(100.0, 1.0), (100.04, 3.0), (150.0, 0.5)]);
+    let out = cleaner.process(&input);
+
+    assert_eq!(out.len(), 2);
+
+    let (mz0, int0) = out.peak_nth(0);
+    let (mz1, int1) = out.peak_nth(1);
+
+    // Weighted centroid of first cluster: (100*1 + 100.04*3) / 4 = 100.03
+    assert!(
+        (mz0 - 100.03).abs() < 1e-4,
+        "expected weighted centroid m/z"
+    );
+    assert!(
+        (int0 - (4.0 / 4.5)).abs() < 1e-6,
+        "expected normalized intensity"
+    );
+
+    assert!((mz1 - 150.0).abs() < 1e-6);
+    assert!((int1 - (0.5 / 4.5)).abs() < 1e-6);
+}
+
+#[test]
+fn noise_filter_removes_weak_peaks() {
+    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+        .build()
+        .expect("valid default builder config");
+
+    let input = make_spectrum(500.0, &[(100.0, 10.0), (200.0, 0.05)]);
+    let out = cleaner.process(&input);
+
+    assert_eq!(out.len(), 1);
+    let (mz, intensity) = out.peak_nth(0);
+    assert!((mz - 100.0).abs() < 1e-6);
+    assert!((intensity - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn top_n_keeps_most_intense_then_sorts_by_mz() {
+    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+        .noise_threshold(None)
+        .max_peak_num(Some(2))
+        .build()
+        .expect("valid builder config");
+
+    let input = make_spectrum(500.0, &[(100.0, 5.0), (200.0, 3.0), (300.0, 1.0)]);
+    let out = cleaner.process(&input);
+
+    assert_eq!(out.len(), 2);
+    let (mz0, int0) = out.peak_nth(0);
+    let (mz1, int1) = out.peak_nth(1);
+
+    assert!((mz0 - 100.0).abs() < 1e-6);
+    assert!((mz1 - 200.0).abs() < 1e-6);
+    assert!((int0 - (5.0 / 8.0)).abs() < 1e-6);
+    assert!((int1 - (3.0 / 8.0)).abs() < 1e-6);
+}
+
+#[test]
+fn ppm_centroiding_merges_close_peaks_when_da_disabled() {
+    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+        .noise_threshold(None)
+        .normalize_intensity(false)
+        .min_ms2_difference_in_da(-1.0)
+        .min_ms2_difference_in_ppm(Some(20.0))
+        .build()
+        .expect("valid ppm builder config");
+
+    let input = make_spectrum(500.0, &[(100.0, 1.0), (100.001, 1.0), (120.0, 2.0)]);
+    let out = cleaner.process(&input);
+
+    assert_eq!(out.len(), 2);
+
+    let (mz0, int0) = out.peak_nth(0);
+    let (mz1, int1) = out.peak_nth(1);
+
+    // (100 + 100.001)/2
+    assert!((mz0 - 100.0005).abs() < 1e-4);
+    assert!((int0 - 2.0).abs() < 1e-6);
+
+    assert!((mz1 - 120.0).abs() < 1e-6);
+    assert!((int1 - 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn min_and_max_mz_filters_are_applied() {
+    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+        .noise_threshold(None)
+        .normalize_intensity(false)
+        .min_mz(Some(110.0))
+        .max_mz(Some(210.0))
+        .build()
+        .expect("valid builder config");
+
+    let input = make_spectrum(500.0, &[(100.0, 1.0), (150.0, 2.0), (250.0, 3.0)]);
+    let out = cleaner.process(&input);
+
+    assert_eq!(out.len(), 1);
+    let (mz, intensity) = out.peak_nth(0);
+    assert!((mz - 150.0).abs() < 1e-6);
+    assert!((intensity - 2.0).abs() < 1e-6);
+}
+
+#[test]
+fn builder_rejects_invalid_centroid_configuration() {
+    let result = MsEntropyCleanSpectrum::<f32>::builder()
+        .min_ms2_difference_in_da(-1.0)
+        .min_ms2_difference_in_ppm(Some(-1.0))
+        .build();
+
+    assert!(matches!(
+        result,
+        Err(SimilarityConfigError::InvalidParameter(
+            "min_ms2_difference_in_da/min_ms2_difference_in_ppm"
+        ))
+    ));
+}

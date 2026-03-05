@@ -9,6 +9,9 @@ pub enum SimilarityConfigError {
     /// A numeric parameter could not be represented as an `f64`.
     #[error("parameter `{0}` must be representable as f64")]
     NonRepresentableParameter(&'static str),
+    /// A parameter combination is invalid.
+    #[error("invalid parameter `{0}`")]
+    InvalidParameter(&'static str),
     /// Tolerance must be zero or positive.
     #[error("parameter `mz_tolerance` must be >= 0")]
     NegativeTolerance,

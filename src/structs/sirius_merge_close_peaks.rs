@@ -26,11 +26,11 @@ use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
 /// intensities summed into the dominant peak, which keeps its original m/z.
 /// If the running sum overflows to a non-finite value, it is clamped to the
 /// maximum finite value for `MZ`.
-pub struct MergeClosePeaks<MZ> {
+pub struct SiriusMergeClosePeaks<MZ> {
     mz_tolerance: MZ,
 }
 
-impl<MZ: Number> MergeClosePeaks<MZ> {
+impl<MZ: Number> SiriusMergeClosePeaks<MZ> {
     /// Returns the m/z tolerance used for merging.
     #[inline]
     pub fn mz_tolerance(&self) -> MZ {
@@ -38,11 +38,11 @@ impl<MZ: Number> MergeClosePeaks<MZ> {
     }
 }
 
-impl<MZ> MergeClosePeaks<MZ>
+impl<MZ> SiriusMergeClosePeaks<MZ>
 where
     MZ: Number + ToPrimitive + PartialOrd,
 {
-    /// Creates a new `MergeClosePeaks` processor.
+    /// Creates a new `SiriusMergeClosePeaks` processor.
     ///
     /// # Errors
     ///
@@ -55,7 +55,7 @@ where
     }
 }
 
-impl<MZ> SpectralProcessor for MergeClosePeaks<MZ>
+impl<MZ> SpectralProcessor for SiriusMergeClosePeaks<MZ>
 where
     MZ: Float + Number + Finite + ToPrimitive,
 {

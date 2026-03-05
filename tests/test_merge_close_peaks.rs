@@ -1,14 +1,14 @@
-//! Tests for the MergeClosePeaks spectral processor.
+//! Tests for the SiriusMergeClosePeaks spectral processor.
 
 use mass_spectrometry::prelude::{
-    AspirinSpectrum, GenericSpectrum, HungarianCosine, LinearCosine, MergeClosePeaks,
-    ScalarSimilarity, SpectralProcessor, Spectrum, SpectrumMut,
+    AspirinSpectrum, GenericSpectrum, HungarianCosine, LinearCosine, ScalarSimilarity,
+    SiriusMergeClosePeaks, SpectralProcessor, Spectrum, SpectrumMut,
 };
 
 const TOLERANCE: f32 = 0.1;
 
-fn merger() -> MergeClosePeaks<f32> {
-    MergeClosePeaks::new(TOLERANCE).expect("valid tolerance")
+fn merger() -> SiriusMergeClosePeaks<f32> {
+    SiriusMergeClosePeaks::new(TOLERANCE).expect("valid tolerance")
 }
 
 fn make_spectrum(precursor: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f32> {
