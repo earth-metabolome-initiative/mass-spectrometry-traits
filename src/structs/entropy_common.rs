@@ -5,11 +5,7 @@
 
 use alloc::vec::Vec;
 
-use geometric_traits::prelude::{
-    Crouse, GenericImplicitValuedMatrix2D, Number, RangedCSR2D, SparseMatrix,
-};
-use multi_ranged::MultiRanged;
-use num_traits::{Float, NumCast, ToPrimitive, Zero};
+use num_traits::{Float, NumCast, ToPrimitive};
 
 use super::cosine_common::to_f64_checked_for_computation;
 use super::similarity_errors::SimilarityComputationError;
@@ -269,45 +265,6 @@ pub(crate) fn finalize_entropy_score<MZ: Float + NumCast>(
 }
 
 // ---------------------------------------------------------------------------
-// Graph-based scoring (Hungarian / Crouse)
-// ---------------------------------------------------------------------------
-
-/// Build implicit cost matrix using `1 + ε - entropy_pair(row_int[i], col_int[j])`,
-/// solve via Crouse LAPJV, filter non-edge assignments, accumulate entropy scores.
-pub(crate) fn entropy_score_from_matching<R: MultiRanged<Step = u32>>(
-    matching: RangedCSR2D<u32, u32, R>,
-    row_int: &[f64],
-    col_int: &[f64],
-) -> Result<(f64, usize), SimilarityComputationError> {
-    let map: GenericImplicitValuedMatrix2D<RangedCSR2D<u32, u32, R>, _, f64> =
-        GenericImplicitValuedMatrix2D::new(matching, |(i, j)| {
-            1.0f64 + f64::EPSILON - entropy_pair(row_int[i as usize], col_int[j as usize])
-        });
-
-    if map.is_empty() {
-        return Ok((0.0, 0));
-    }
-
-    let non_edge_cost: f64 = 1.0f64 + f64::EPSILON;
-    let max_cost: f64 = non_edge_cost + 1.0;
-
-    let assignments: Vec<(u32, u32)> = map
-        .crouse(non_edge_cost, max_cost)
-        .map_err(|_| SimilarityComputationError::AssignmentFailed)?;
-
-    let mut score = 0.0f64;
-    let mut n_matches = 0usize;
-    for &(i, j) in &assignments {
-        let pair = entropy_pair(row_int[i as usize], col_int[j as usize]);
-        let _ = to_f64_checked_for_computation(pair, "entropy_pair_score")?;
-        score += pair;
-        n_matches += 1;
-    }
-
-    Ok((score, n_matches))
-}
-
-// ---------------------------------------------------------------------------
 // Pair scoring (linear + inline greedy)
 // ---------------------------------------------------------------------------
 
@@ -326,54 +283,4 @@ pub(crate) fn entropy_score_pairs(
         n_matches += 1;
     }
     Ok((score, n_matches))
-}
-
-// ---------------------------------------------------------------------------
-// Orientation-optimized entropy similarity for graph-based variants
-// ---------------------------------------------------------------------------
-
-/// Shared implementation for graph-based entropy variants (Hungarian, Greedy).
-///
-/// Prepares peaks, picks the shorter spectrum as rows, builds the matching
-/// graph, and scores with the provided `score_fn`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn compute_entropy_from_graph<S1, S2, R, ForwardMatch, ReverseMatch, ScoreFn>(
-    left: &S1,
-    right: &S2,
-    weighted: bool,
-    mz_power_f64: f64,
-    intensity_power_f64: f64,
-    forward_match: ForwardMatch,
-    reverse_match: ReverseMatch,
-    score_fn: ScoreFn,
-) -> Result<(S1::Mz, usize), SimilarityComputationError>
-where
-    S1::Mz: Float + Number,
-    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
-    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
-    R: MultiRanged<Step = u32>,
-    ForwardMatch: FnOnce(&S1, &S2) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
-    ReverseMatch: FnOnce(&S2, &S1) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
-    ScoreFn: Fn(
-        RangedCSR2D<u32, u32, R>,
-        &[f64],
-        &[f64],
-    ) -> Result<(f64, usize), SimilarityComputationError>,
-{
-    let left_peaks = prepare_entropy_peaks(left, weighted, mz_power_f64, intensity_power_f64)?;
-    let right_peaks = prepare_entropy_peaks(right, weighted, mz_power_f64, intensity_power_f64)?;
-
-    if left_peaks.int.is_empty() || right_peaks.int.is_empty() {
-        return Ok((S1::Mz::zero(), 0));
-    }
-
-    let (raw_score, n_matches) = if left.len() <= right.len() {
-        let matching = forward_match(left, right)?;
-        score_fn(matching, &left_peaks.int, &right_peaks.int)?
-    } else {
-        let matching = reverse_match(right, left)?;
-        score_fn(matching, &right_peaks.int, &left_peaks.int)?
-    };
-
-    finalize_entropy_score(raw_score, n_matches)
 }

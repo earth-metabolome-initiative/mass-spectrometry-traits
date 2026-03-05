@@ -1,8 +1,7 @@
 //! Implementation of linear-time spectral entropy similarity.
 //!
-//! Equivalent to [`super::HungarianEntropy`] when spectra are *well-separated*
-//! (consecutive peaks > `2 * mz_tolerance`). Under this invariant the
-//! two-pointer sweep is provably optimal.
+//! When spectra are *well-separated* (consecutive peaks > `2 * mz_tolerance`),
+//! the two-pointer sweep is provably optimal.
 
 use geometric_traits::prelude::{Number, ScalarSimilarity};
 use num_traits::{Float, ToPrimitive, Zero};
@@ -19,10 +18,9 @@ use crate::traits::Spectrum;
 
 /// Linear-time spectral entropy similarity.
 ///
-/// Equivalent to [`super::HungarianEntropy`] when spectra are *well-separated*:
-/// consecutive peaks within each spectrum must be greater than
-/// `2 * mz_tolerance`. Under this invariant the two-pointer sweep is provably
-/// optimal.
+/// Requires spectra to be *well-separated*: consecutive peaks within each
+/// spectrum must be greater than `2 * mz_tolerance`. Under this invariant the
+/// two-pointer sweep is provably optimal.
 ///
 /// Returns an error when the strict peak-spacing precondition is violated.
 pub struct LinearEntropy<EXP, MZ> {
