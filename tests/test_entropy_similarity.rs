@@ -13,18 +13,18 @@ use mass_spectrometry::prelude::{
     HydroxyCholesterolSpectrum, PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, Spectrum,
 };
 
-fn weighted() -> HungarianEntropy<f64> {
+fn weighted() -> HungarianEntropy<f64, f64> {
     HungarianEntropy::weighted(0.1).expect("valid scorer config")
 }
 
-fn unweighted() -> HungarianEntropy<f64> {
+fn unweighted() -> HungarianEntropy<f64, f64> {
     HungarianEntropy::unweighted(0.1).expect("valid scorer config")
 }
 
 fn assert_self_similarity(
     name: &str,
     spectrum: &GenericSpectrum<f64, f64>,
-    scorer: &HungarianEntropy<f64>,
+    scorer: &HungarianEntropy<f64, f64>,
 ) {
     let (sim, peaks) = scorer
         .similarity(spectrum, spectrum)
@@ -40,7 +40,7 @@ fn assert_cross(
     name: &str,
     a: &GenericSpectrum<f64, f64>,
     b: &GenericSpectrum<f64, f64>,
-    scorer: &HungarianEntropy<f64>,
+    scorer: &HungarianEntropy<f64, f64>,
     expected_sim: f64,
     expected_matches: usize,
     tol: f64,
@@ -60,7 +60,7 @@ fn assert_symmetry(
     name: &str,
     a: &GenericSpectrum<f64, f64>,
     b: &GenericSpectrum<f64, f64>,
-    scorer: &HungarianEntropy<f64>,
+    scorer: &HungarianEntropy<f64, f64>,
 ) {
     let (sim_ab, peaks_ab) = scorer
         .similarity(a, b)

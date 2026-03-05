@@ -73,7 +73,9 @@ pub(crate) fn entropy_pair(a: f64, b: f64) -> f64 {
 
 macro_rules! impl_entropy_config_api {
     ($type_name:ident, $doc:expr) => {
-        impl<MZ: geometric_traits::prelude::Number> $type_name<MZ> {
+        impl<EXP: geometric_traits::prelude::Number, MZ: geometric_traits::prelude::Number>
+            $type_name<EXP, MZ>
+        {
             /// Returns the m/z tolerance.
             #[inline]
             pub fn mz_tolerance(&self) -> MZ {
@@ -85,44 +87,78 @@ macro_rules! impl_entropy_config_api {
             pub fn is_weighted(&self) -> bool {
                 self.weighted
             }
+
+            /// Returns the power to which the mass/charge ratio is raised.
+            #[inline]
+            pub fn mz_power(&self) -> EXP {
+                self.mz_power
+            }
+
+            /// Returns the power to which the intensity is raised.
+            #[inline]
+            pub fn intensity_power(&self) -> EXP {
+                self.intensity_power
+            }
         }
 
-        impl<MZ> $type_name<MZ>
+        impl<EXP, MZ> $type_name<EXP, MZ>
         where
+            EXP: geometric_traits::prelude::Number + num_traits::ToPrimitive,
             MZ: geometric_traits::prelude::Number + num_traits::ToPrimitive + PartialOrd,
         {
-            #[doc = concat!("Creates a new `", stringify!($type_name), "` with the given m/z tolerance and weighting mode.")]
+            #[doc = concat!("Creates a new `", stringify!($type_name), "` with the given powers, m/z tolerance and weighting mode.")]
             ///
             /// # Errors
             ///
-            /// Returns [`SimilarityConfigError`] if `mz_tolerance` is not finite,
-            /// not representable as `f64`, or negative.
+            /// Returns [`SimilarityConfigError`] if any numeric parameter is not
+            /// finite/representable or if `mz_tolerance` is negative.
             #[inline]
             pub fn new(
+                mz_power: EXP,
+                intensity_power: EXP,
                 mz_tolerance: MZ,
                 weighted: bool,
             ) -> Result<Self, super::similarity_errors::SimilarityConfigError> {
+                super::cosine_common::validate_numeric_parameter(mz_power, "mz_power")?;
+                super::cosine_common::validate_numeric_parameter(
+                    intensity_power,
+                    "intensity_power",
+                )?;
                 super::cosine_common::validate_non_negative_tolerance(mz_tolerance)?;
                 Ok(Self {
+                    mz_power,
+                    intensity_power,
                     mz_tolerance,
                     weighted,
                 })
             }
 
-            #[doc = concat!("Creates a new weighted `", stringify!($type_name), "`.")]
+        }
+
+        /// Convenience constructors with default powers (`mz_power=0`,
+        /// `intensity_power=1`) where `EXP = MZ`.
+        impl<MZ> $type_name<MZ, MZ>
+        where
+            MZ: geometric_traits::prelude::Number
+                + num_traits::ToPrimitive
+                + PartialOrd
+                + num_traits::Zero
+                + num_traits::One,
+        {
+            #[doc = concat!("Creates a new weighted `", stringify!($type_name), "` with default powers (mz_power=0, intensity_power=1).")]
             #[inline]
             pub fn weighted(
                 mz_tolerance: MZ,
             ) -> Result<Self, super::similarity_errors::SimilarityConfigError> {
-                Self::new(mz_tolerance, true)
+                Self::new(MZ::zero(), MZ::one(), mz_tolerance, true)
             }
 
-            #[doc = concat!("Creates a new unweighted `", stringify!($type_name), "`.")]
+            #[doc = concat!("Creates a new unweighted `", stringify!($type_name), "` with default powers (mz_power=0, intensity_power=1).")]
             #[inline]
             pub fn unweighted(
                 mz_tolerance: MZ,
             ) -> Result<Self, super::similarity_errors::SimilarityConfigError> {
-                Self::new(mz_tolerance, false)
+                Self::new(MZ::zero(), MZ::one(), mz_tolerance, false)
             }
         }
     };
@@ -136,8 +172,10 @@ pub(crate) use impl_entropy_config_api;
 
 macro_rules! impl_entropy_spectral_similarity {
     ($type_name:ident) => {
-        impl<S1, S2> crate::traits::ScalarSpectralSimilarity<S1, S2> for $type_name<S1::Mz>
+        impl<EXP, S1, S2> crate::traits::ScalarSpectralSimilarity<S1, S2>
+            for $type_name<EXP, S1::Mz>
         where
+            EXP: geometric_traits::prelude::Number + num_traits::ToPrimitive,
             S1::Mz: num_traits::Float + geometric_traits::prelude::Number,
             S1: crate::traits::Spectrum<Intensity = <S1 as crate::traits::Spectrum>::Mz>,
             S2: crate::traits::Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
@@ -157,11 +195,17 @@ pub(crate) struct PreparedEntropyPeaks {
     pub(crate) int: Vec<f64>,
 }
 
-/// Collect peaks to f64, validate, normalize to sum=1, optionally apply
-/// entropy weighting. Returns empty vecs when intensity sum is zero.
+/// Collect peaks to f64, compute `mz^p * intensity^q` products, normalize
+/// to sum=1, optionally apply entropy weighting. Returns empty vecs when
+/// the product sum is zero.
+///
+/// When `mz_power_f64 == 0.0` and `intensity_power_f64 == 1.0`, this reduces
+/// to normalizing raw intensities (classic entropy behavior).
 pub(crate) fn prepare_entropy_peaks<S: Spectrum>(
     spectrum: &S,
     weighted: bool,
+    mz_power_f64: f64,
+    intensity_power_f64: f64,
 ) -> Result<PreparedEntropyPeaks, SimilarityComputationError>
 where
     S::Mz: ToPrimitive,
@@ -171,12 +215,20 @@ where
     let mut int = Vec::with_capacity(spectrum.len());
 
     for (m, i) in spectrum.peaks() {
-        mz.push(to_f64_checked_for_computation(m, "mz")?);
-        int.push(to_f64_checked_for_computation(i, "intensity")?);
+        let mz_f64 = to_f64_checked_for_computation(m, "mz")?;
+        let int_f64 = to_f64_checked_for_computation(i, "intensity")?;
+        mz.push(mz_f64);
+
+        let product = if mz_power_f64 == 0.0 {
+            int_f64.powf(intensity_power_f64)
+        } else {
+            mz_f64.powf(mz_power_f64) * int_f64.powf(intensity_power_f64)
+        };
+        int.push(product);
     }
 
     let sum: f64 = int.iter().sum();
-    let _ = to_f64_checked_for_computation(sum, "intensity_sum")?;
+    let _ = to_f64_checked_for_computation(sum, "product_sum")?;
 
     if sum == 0.0 {
         return Ok(PreparedEntropyPeaks {
@@ -192,7 +244,7 @@ where
     if weighted {
         apply_entropy_weight(&mut int);
         let wsum: f64 = int.iter().sum();
-        let _ = to_f64_checked_for_computation(wsum, "weighted_intensity_sum")?;
+        let _ = to_f64_checked_for_computation(wsum, "weighted_product_sum")?;
     }
 
     Ok(PreparedEntropyPeaks { mz, int })
@@ -284,10 +336,13 @@ pub(crate) fn entropy_score_pairs(
 ///
 /// Prepares peaks, picks the shorter spectrum as rows, builds the matching
 /// graph, and scores with the provided `score_fn`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_entropy_from_graph<S1, S2, R, ForwardMatch, ReverseMatch, ScoreFn>(
     left: &S1,
     right: &S2,
     weighted: bool,
+    mz_power_f64: f64,
+    intensity_power_f64: f64,
     forward_match: ForwardMatch,
     reverse_match: ReverseMatch,
     score_fn: ScoreFn,
@@ -305,8 +360,8 @@ where
         &[f64],
     ) -> Result<(f64, usize), SimilarityComputationError>,
 {
-    let left_peaks = prepare_entropy_peaks(left, weighted)?;
-    let right_peaks = prepare_entropy_peaks(right, weighted)?;
+    let left_peaks = prepare_entropy_peaks(left, weighted, mz_power_f64, intensity_power_f64)?;
+    let right_peaks = prepare_entropy_peaks(right, weighted, mz_power_f64, intensity_power_f64)?;
 
     if left_peaks.int.is_empty() || right_peaks.int.is_empty() {
         return Ok((S1::Mz::zero(), 0));

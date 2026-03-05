@@ -5,7 +5,7 @@
 //! two-pointer sweep is provably optimal.
 
 use geometric_traits::prelude::{Number, ScalarSimilarity};
-use num_traits::{Float, Zero};
+use num_traits::{Float, ToPrimitive, Zero};
 
 use super::cosine_common::{
     collect_linear_matches, to_f64_checked_for_computation, validate_well_separated,
@@ -25,7 +25,9 @@ use crate::traits::Spectrum;
 /// optimal.
 ///
 /// Returns an error when the strict peak-spacing precondition is violated.
-pub struct LinearEntropy<MZ> {
+pub struct LinearEntropy<EXP, MZ> {
+    mz_power: EXP,
+    intensity_power: EXP,
     mz_tolerance: MZ,
     weighted: bool,
 }
@@ -33,8 +35,9 @@ pub struct LinearEntropy<MZ> {
 impl_entropy_config_api!(LinearEntropy, "linear entropy similarity");
 impl_entropy_spectral_similarity!(LinearEntropy);
 
-impl<S1, S2> ScalarSimilarity<S1, S2> for LinearEntropy<S1::Mz>
+impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for LinearEntropy<EXP, S1::Mz>
 where
+    EXP: Number + ToPrimitive,
     S1::Mz: Float + Number,
     S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
     S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
@@ -42,8 +45,17 @@ where
     type Similarity = Result<(S1::Mz, usize), SimilarityComputationError>;
 
     fn similarity(&self, left: &S1, right: &S2) -> Self::Similarity {
-        let left_peaks = prepare_entropy_peaks(left, self.weighted)?;
-        let right_peaks = prepare_entropy_peaks(right, self.weighted)?;
+        let mz_power_f64 = to_f64_checked_for_computation(self.mz_power, "mz_power")
+            .map_err(|_| SimilarityComputationError::ValueNotRepresentable("mz_power"))?;
+        let intensity_power_f64 =
+            to_f64_checked_for_computation(self.intensity_power, "intensity_power").map_err(
+                |_| SimilarityComputationError::ValueNotRepresentable("intensity_power"),
+            )?;
+
+        let left_peaks =
+            prepare_entropy_peaks(left, self.weighted, mz_power_f64, intensity_power_f64)?;
+        let right_peaks =
+            prepare_entropy_peaks(right, self.weighted, mz_power_f64, intensity_power_f64)?;
 
         if left_peaks.int.is_empty() || right_peaks.int.is_empty() {
             return Ok((S1::Mz::zero(), 0));

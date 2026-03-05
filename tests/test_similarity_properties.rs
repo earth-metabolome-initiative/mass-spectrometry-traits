@@ -80,7 +80,7 @@ fn scorer_modified() -> ModifiedHungarianCosine<f32, f32> {
     ModifiedHungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
-fn scorer_entropy() -> LinearEntropy<f32> {
+fn scorer_entropy() -> LinearEntropy<f32, f32> {
     LinearEntropy::unweighted(LINEAR_MZ_TOLERANCE).expect("valid scorer config")
 }
 
