@@ -10,7 +10,6 @@
 //! - `normalize_intensity`: `true`
 
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
 use geometric_traits::prelude::{Finite, Number};
 use num_traits::{Float, NumCast, ToPrimitive};
@@ -22,50 +21,57 @@ use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
 
 /// Spectral processor mirroring `ms_entropy.clean_spectrum` behavior.
 pub struct MsEntropyCleanSpectrum<MZ> {
-    min_mz: Option<f64>,
-    max_mz: Option<f64>,
-    noise_threshold: Option<f64>,
-    min_ms2_difference_in_da: f64,
-    min_ms2_difference_in_ppm: Option<f64>,
+    min_mz: Option<MZ>,
+    max_mz: Option<MZ>,
+    noise_threshold: Option<MZ>,
+    min_ms2_difference_in_da: MZ,
+    min_ms2_difference_in_ppm: Option<MZ>,
     max_peak_num: Option<usize>,
     normalize_intensity: bool,
-    _marker: PhantomData<MZ>,
 }
 
-impl<MZ> MsEntropyCleanSpectrum<MZ> {
+impl<MZ> MsEntropyCleanSpectrum<MZ>
+where
+    MZ: NumCast,
+{
     /// Returns a builder configured with `ms_entropy` defaults.
     #[inline]
     pub fn builder() -> MsEntropyCleanSpectrumBuilder<MZ> {
         MsEntropyCleanSpectrumBuilder::default()
     }
+}
 
+impl<MZ> MsEntropyCleanSpectrum<MZ>
+where
+    MZ: Number,
+{
     /// Returns the configured minimum mz filter (enabled only when > 0).
     #[inline]
-    pub fn min_mz(&self) -> Option<f64> {
+    pub fn min_mz(&self) -> Option<MZ> {
         self.min_mz
     }
 
     /// Returns the configured maximum mz filter (enabled only when > 0).
     #[inline]
-    pub fn max_mz(&self) -> Option<f64> {
+    pub fn max_mz(&self) -> Option<MZ> {
         self.max_mz
     }
 
     /// Returns the configured relative noise threshold.
     #[inline]
-    pub fn noise_threshold(&self) -> Option<f64> {
+    pub fn noise_threshold(&self) -> Option<MZ> {
         self.noise_threshold
     }
 
     /// Returns the configured Da centroid threshold.
     #[inline]
-    pub fn min_ms2_difference_in_da(&self) -> f64 {
+    pub fn min_ms2_difference_in_da(&self) -> MZ {
         self.min_ms2_difference_in_da
     }
 
     /// Returns the configured ppm centroid threshold.
     #[inline]
-    pub fn min_ms2_difference_in_ppm(&self) -> Option<f64> {
+    pub fn min_ms2_difference_in_ppm(&self) -> Option<MZ> {
         self.min_ms2_difference_in_ppm
     }
 
@@ -80,11 +86,27 @@ impl<MZ> MsEntropyCleanSpectrum<MZ> {
     pub fn normalize_intensity(&self) -> bool {
         self.normalize_intensity
     }
+}
 
+impl<MZ> MsEntropyCleanSpectrum<MZ>
+where
+    MZ: Number + ToPrimitive,
+{
     #[inline]
     fn centroid_tolerance(&self) -> (f64, Option<f64>) {
-        let ppm = self.min_ms2_difference_in_ppm.filter(|v| *v > 0.0);
-        (self.min_ms2_difference_in_da, ppm)
+        let da = to_f64_checked_for_computation(
+            self.min_ms2_difference_in_da,
+            "min_ms2_difference_in_da",
+        )
+        .expect("validated min_ms2_difference_in_da must be finite/representable");
+
+        let ppm = self.min_ms2_difference_in_ppm.and_then(|value| {
+            let ppm = to_f64_checked_for_computation(value, "min_ms2_difference_in_ppm")
+                .expect("validated min_ms2_difference_in_ppm must be finite/representable");
+            (ppm > 0.0).then_some(ppm)
+        });
+
+        (da, ppm)
     }
 
     fn clean_peaks(&self, mut peaks: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
@@ -92,14 +114,18 @@ impl<MZ> MsEntropyCleanSpectrum<MZ> {
         peaks.retain(|(mz, intensity)| *mz > 0.0 && *intensity > 0.0);
 
         // Step 2. Min/max mz filtering.
-        if let Some(min_mz) = self.min_mz
-            && min_mz > 0.0
-        {
+        if let Some(min_mz) = self.min_mz.and_then(|value| {
+            let min_mz = to_f64_checked_for_computation(value, "min_mz")
+                .expect("validated min_mz must be finite/representable");
+            (min_mz > 0.0).then_some(min_mz)
+        }) {
             peaks.retain(|(mz, _)| *mz >= min_mz);
         }
-        if let Some(max_mz) = self.max_mz
-            && max_mz > 0.0
-        {
+        if let Some(max_mz) = self.max_mz.and_then(|value| {
+            let max_mz = to_f64_checked_for_computation(value, "max_mz")
+                .expect("validated max_mz must be finite/representable");
+            (max_mz > 0.0).then_some(max_mz)
+        }) {
             peaks.retain(|(mz, _)| *mz <= max_mz);
         }
 
@@ -116,7 +142,10 @@ impl<MZ> MsEntropyCleanSpectrum<MZ> {
         }
 
         // Step 4. Noise filtering.
-        if let Some(noise_threshold) = self.noise_threshold {
+        if let Some(noise_threshold) = self.noise_threshold.map(|value| {
+            to_f64_checked_for_computation(value, "noise_threshold")
+                .expect("validated noise_threshold must be finite/representable")
+        }) {
             let max_intensity = peaks
                 .iter()
                 .map(|(_, intensity)| *intensity)
@@ -193,58 +222,63 @@ where
 
 /// Builder for [`MsEntropyCleanSpectrum`].
 pub struct MsEntropyCleanSpectrumBuilder<MZ> {
-    min_mz: Option<f64>,
-    max_mz: Option<f64>,
-    noise_threshold: Option<f64>,
-    min_ms2_difference_in_da: f64,
-    min_ms2_difference_in_ppm: Option<f64>,
+    min_mz: Option<MZ>,
+    max_mz: Option<MZ>,
+    noise_threshold: Option<MZ>,
+    min_ms2_difference_in_da: MZ,
+    min_ms2_difference_in_ppm: Option<MZ>,
     max_peak_num: Option<usize>,
     normalize_intensity: bool,
-    _marker: PhantomData<MZ>,
 }
 
-impl<MZ> Default for MsEntropyCleanSpectrumBuilder<MZ> {
+impl<MZ> Default for MsEntropyCleanSpectrumBuilder<MZ>
+where
+    MZ: NumCast,
+{
     fn default() -> Self {
         Self {
             min_mz: None,
             max_mz: None,
-            noise_threshold: Some(0.01),
-            min_ms2_difference_in_da: 0.05,
+            noise_threshold: Some(
+                NumCast::from(0.01)
+                    .expect("0.01 must be representable in the configured numeric type"),
+            ),
+            min_ms2_difference_in_da: NumCast::from(0.05)
+                .expect("0.05 must be representable in the configured numeric type"),
             min_ms2_difference_in_ppm: None,
             max_peak_num: None,
             normalize_intensity: true,
-            _marker: PhantomData,
         }
     }
 }
 
 impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     #[inline]
-    pub fn min_mz(mut self, min_mz: Option<f64>) -> Self {
+    pub fn min_mz(mut self, min_mz: Option<MZ>) -> Self {
         self.min_mz = min_mz;
         self
     }
 
     #[inline]
-    pub fn max_mz(mut self, max_mz: Option<f64>) -> Self {
+    pub fn max_mz(mut self, max_mz: Option<MZ>) -> Self {
         self.max_mz = max_mz;
         self
     }
 
     #[inline]
-    pub fn noise_threshold(mut self, noise_threshold: Option<f64>) -> Self {
+    pub fn noise_threshold(mut self, noise_threshold: Option<MZ>) -> Self {
         self.noise_threshold = noise_threshold;
         self
     }
 
     #[inline]
-    pub fn min_ms2_difference_in_da(mut self, min_ms2_difference_in_da: f64) -> Self {
+    pub fn min_ms2_difference_in_da(mut self, min_ms2_difference_in_da: MZ) -> Self {
         self.min_ms2_difference_in_da = min_ms2_difference_in_da;
         self
     }
 
     #[inline]
-    pub fn min_ms2_difference_in_ppm(mut self, min_ms2_difference_in_ppm: Option<f64>) -> Self {
+    pub fn min_ms2_difference_in_ppm(mut self, min_ms2_difference_in_ppm: Option<MZ>) -> Self {
         self.min_ms2_difference_in_ppm = min_ms2_difference_in_ppm;
         self
     }
@@ -261,7 +295,10 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
         self
     }
 
-    pub fn build(self) -> Result<MsEntropyCleanSpectrum<MZ>, SimilarityConfigError> {
+    pub fn build(self) -> Result<MsEntropyCleanSpectrum<MZ>, SimilarityConfigError>
+    where
+        MZ: Float + Number + ToPrimitive,
+    {
         if let Some(v) = self.min_mz {
             validate_numeric_parameter(v, "min_mz")?;
         }
@@ -276,8 +313,10 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
             validate_numeric_parameter(v, "min_ms2_difference_in_ppm")?;
         }
 
-        let ppm_positive = self.min_ms2_difference_in_ppm.is_some_and(|ppm| ppm > 0.0);
-        let da_positive = self.min_ms2_difference_in_da > 0.0;
+        let ppm_positive = self
+            .min_ms2_difference_in_ppm
+            .is_some_and(|ppm| ppm > MZ::zero());
+        let da_positive = self.min_ms2_difference_in_da > MZ::zero();
         if !ppm_positive && !da_positive {
             return Err(SimilarityConfigError::InvalidParameter(
                 "min_ms2_difference_in_da/min_ms2_difference_in_ppm",
@@ -292,7 +331,6 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
             min_ms2_difference_in_ppm: self.min_ms2_difference_in_ppm,
             max_peak_num: self.max_peak_num,
             normalize_intensity: self.normalize_intensity,
-            _marker: PhantomData,
         })
     }
 }
