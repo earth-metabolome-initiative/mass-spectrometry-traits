@@ -1,13 +1,12 @@
 //! A naively implemented generic spectrum struct.
 
 use alloc::vec::Vec;
-#[cfg(feature = "proptest")]
-use core::cmp::Ordering;
+use arbitrary::{Arbitrary as ByteArbitrary, Unstructured};
 
 use geometric_traits::prelude::{Finite, Number, SortedVec};
 #[cfg(feature = "proptest")]
 use proptest::{
-    arbitrary::Arbitrary,
+    arbitrary::Arbitrary as ProptestArbitrary,
     collection,
     strategy::{BoxedStrategy, Strategy},
 };
@@ -79,6 +78,60 @@ where
             intensity: Vec::with_capacity(capacity),
             precursor_mz,
         })
+    }
+
+    fn from_untrusted_parts(precursor_mz: Mz, peaks: Vec<(Mz, Intensity)>) -> Self {
+        let precursor_mz = if precursor_mz.is_finite() && precursor_mz >= Mz::zero() {
+            precursor_mz
+        } else {
+            Mz::zero()
+        };
+
+        let mut sanitized: Vec<(Mz, Intensity)> = peaks
+            .into_iter()
+            .filter_map(|(mz, intensity)| {
+                if !mz.is_finite() || mz < Mz::zero() {
+                    return None;
+                }
+                if !intensity.is_finite() || intensity < Intensity::zero() {
+                    return None;
+                }
+                Some((mz, intensity))
+            })
+            .collect();
+
+        sanitized.sort_by(|(left_mz, _), (right_mz, _)| {
+            left_mz
+                .partial_cmp(right_mz)
+                .unwrap_or(core::cmp::Ordering::Equal)
+        });
+
+        let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, sanitized.len())
+            .expect("sanitized precursor must be valid");
+
+        for (mz, intensity) in sanitized {
+            if spectrum.add_peak(mz, intensity).is_err() {
+                continue;
+            }
+        }
+
+        spectrum
+    }
+}
+
+impl<'a, Mz, Intensity> ByteArbitrary<'a> for GenericSpectrum<Mz, Intensity>
+where
+    Mz: ByteArbitrary<'a> + Number + PartialOrd + Finite,
+    Intensity: ByteArbitrary<'a> + Number + PartialOrd + Finite,
+{
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        let precursor_mz = Mz::arbitrary(u)?;
+        let peak_count = u.int_in_range(0..=64usize)?;
+        let mut peaks = Vec::with_capacity(peak_count);
+        for _ in 0..peak_count {
+            peaks.push((Mz::arbitrary(u)?, Intensity::arbitrary(u)?));
+        }
+        Ok(Self::from_untrusted_parts(precursor_mz, peaks))
     }
 }
 
@@ -191,12 +244,12 @@ where
 }
 
 #[cfg(feature = "proptest")]
-impl<Mz, Intensity> Arbitrary for GenericSpectrum<Mz, Intensity>
+impl<Mz, Intensity> ProptestArbitrary for GenericSpectrum<Mz, Intensity>
 where
-    Mz: Arbitrary + Number + PartialOrd + Finite + core::fmt::Debug + 'static,
-    Intensity: Arbitrary + Number + PartialOrd + Finite + core::fmt::Debug + 'static,
-    <Mz as Arbitrary>::Parameters: Default,
-    <Intensity as Arbitrary>::Parameters: Default,
+    Mz: ProptestArbitrary + Number + PartialOrd + Finite + core::fmt::Debug + 'static,
+    Intensity: ProptestArbitrary + Number + PartialOrd + Finite + core::fmt::Debug + 'static,
+    <Mz as ProptestArbitrary>::Parameters: Default,
+    <Intensity as ProptestArbitrary>::Parameters: Default,
 {
     type Parameters = ();
     type Strategy = BoxedStrategy<Self>;
@@ -213,41 +266,7 @@ where
 
         (precursor, peaks)
             .prop_map(|(precursor_mz, peaks)| {
-                let mut sanitized: Vec<(Mz, Intensity)> = peaks
-                    .into_iter()
-                    .filter_map(|(mz, intensity)| {
-                        if !mz.is_finite() || mz < Mz::zero() {
-                            return None;
-                        }
-                        if !intensity.is_finite() || intensity < Intensity::zero() {
-                            return None;
-                        }
-                        Some((mz, intensity))
-                    })
-                    .collect();
-
-                sanitized.sort_by(|(left_mz, _), (right_mz, _)| {
-                    left_mz.partial_cmp(right_mz).unwrap_or(Ordering::Equal)
-                });
-
-                let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, sanitized.len())
-                    .expect("sanitized precursor must be valid");
-                let mut last_mz: Option<Mz> = None;
-
-                for (mz, intensity) in sanitized {
-                    if let Some(previous_mz) = last_mz
-                        && mz <= previous_mz
-                    {
-                        continue;
-                    }
-
-                    spectrum
-                        .add_peak(mz, intensity)
-                        .expect("sanitized peaks must satisfy GenericSpectrum invariants");
-                    last_mz = Some(mz);
-                }
-
-                spectrum
+                GenericSpectrum::from_untrusted_parts(precursor_mz, peaks)
             })
             .boxed()
     }
