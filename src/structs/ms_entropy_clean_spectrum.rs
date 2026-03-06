@@ -253,66 +253,273 @@ where
 }
 
 impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
+    /// Sets the minimum m/z filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityConfigError`] if `min_mz` is not finite or not representable as `f64`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
+    ///
+    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    ///     .min_mz(Some(100.0))
+    ///     .expect("finite value")
+    ///     .build()
+    ///     .expect("valid configuration");
+    /// assert_eq!(cleaner.min_mz(), Some(100.0));
+    ///
+    /// let err = MsEntropyCleanSpectrum::<f32>::builder().min_mz(Some(f32::NAN));
+    /// assert!(matches!(
+    ///     err,
+    ///     Err(SimilarityConfigError::NonFiniteParameter("min_mz"))
+    /// ));
+    /// ```
     #[inline]
-    pub fn min_mz(mut self, min_mz: Option<MZ>) -> Self {
+    pub fn min_mz(mut self, min_mz: Option<MZ>) -> Result<Self, SimilarityConfigError>
+    where
+        MZ: ToPrimitive + Copy,
+    {
+        if let Some(v) = min_mz {
+            validate_numeric_parameter(v, "min_mz")?;
+        }
         self.min_mz = min_mz;
-        self
+        Ok(self)
     }
 
+    /// Sets the maximum m/z filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityConfigError`] if `max_mz` is not finite or not representable as `f64`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
+    ///
+    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    ///     .max_mz(Some(500.0))
+    ///     .expect("finite value")
+    ///     .build()
+    ///     .expect("valid configuration");
+    /// assert_eq!(cleaner.max_mz(), Some(500.0));
+    ///
+    /// let err = MsEntropyCleanSpectrum::<f32>::builder().max_mz(Some(f32::INFINITY));
+    /// assert!(matches!(
+    ///     err,
+    ///     Err(SimilarityConfigError::NonFiniteParameter("max_mz"))
+    /// ));
+    /// ```
     #[inline]
-    pub fn max_mz(mut self, max_mz: Option<MZ>) -> Self {
+    pub fn max_mz(mut self, max_mz: Option<MZ>) -> Result<Self, SimilarityConfigError>
+    where
+        MZ: ToPrimitive + Copy,
+    {
+        if let Some(v) = max_mz {
+            validate_numeric_parameter(v, "max_mz")?;
+        }
         self.max_mz = max_mz;
-        self
+        Ok(self)
     }
 
+    /// Sets the relative noise threshold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityConfigError`] if `noise_threshold` is not finite or not representable
+    /// as `f64`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
+    ///
+    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    ///     .noise_threshold(Some(0.02))
+    ///     .expect("finite value")
+    ///     .build()
+    ///     .expect("valid configuration");
+    /// assert_eq!(cleaner.noise_threshold(), Some(0.02));
+    ///
+    /// let err = MsEntropyCleanSpectrum::<f32>::builder().noise_threshold(Some(f32::NAN));
+    /// assert!(matches!(
+    ///     err,
+    ///     Err(SimilarityConfigError::NonFiniteParameter("noise_threshold"))
+    /// ));
+    /// ```
     #[inline]
-    pub fn noise_threshold(mut self, noise_threshold: Option<MZ>) -> Self {
+    pub fn noise_threshold(
+        mut self,
+        noise_threshold: Option<MZ>,
+    ) -> Result<Self, SimilarityConfigError>
+    where
+        MZ: ToPrimitive + Copy,
+    {
+        if let Some(v) = noise_threshold {
+            validate_numeric_parameter(v, "noise_threshold")?;
+        }
         self.noise_threshold = noise_threshold;
-        self
+        Ok(self)
     }
 
+    /// Sets the minimum Da centroid distance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityConfigError`] if `min_ms2_difference_in_da` is not finite or not
+    /// representable as `f64`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
+    ///
+    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    ///     .min_ms2_difference_in_da(0.1)
+    ///     .expect("finite value")
+    ///     .build()
+    ///     .expect("valid configuration");
+    /// assert_eq!(cleaner.min_ms2_difference_in_da(), 0.1);
+    ///
+    /// let err = MsEntropyCleanSpectrum::<f32>::builder().min_ms2_difference_in_da(f32::NAN);
+    /// assert!(matches!(
+    ///     err,
+    ///     Err(SimilarityConfigError::NonFiniteParameter(
+    ///         "min_ms2_difference_in_da"
+    ///     ))
+    /// ));
+    /// ```
     #[inline]
-    pub fn min_ms2_difference_in_da(mut self, min_ms2_difference_in_da: MZ) -> Self {
+    pub fn min_ms2_difference_in_da(
+        mut self,
+        min_ms2_difference_in_da: MZ,
+    ) -> Result<Self, SimilarityConfigError>
+    where
+        MZ: ToPrimitive + Copy,
+    {
+        validate_numeric_parameter(min_ms2_difference_in_da, "min_ms2_difference_in_da")?;
         self.min_ms2_difference_in_da = min_ms2_difference_in_da;
-        self
+        Ok(self)
     }
 
+    /// Sets the minimum ppm centroid distance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityConfigError`] if `min_ms2_difference_in_ppm` is not finite or not
+    /// representable as `f64`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
+    ///
+    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    ///     .min_ms2_difference_in_ppm(Some(20.0))
+    ///     .expect("finite value")
+    ///     .build()
+    ///     .expect("valid configuration");
+    /// assert_eq!(cleaner.min_ms2_difference_in_ppm(), Some(20.0));
+    ///
+    /// let err =
+    ///     MsEntropyCleanSpectrum::<f32>::builder().min_ms2_difference_in_ppm(Some(f32::NAN));
+    /// assert!(matches!(
+    ///     err,
+    ///     Err(SimilarityConfigError::NonFiniteParameter(
+    ///         "min_ms2_difference_in_ppm"
+    ///     ))
+    /// ));
+    /// ```
     #[inline]
-    pub fn min_ms2_difference_in_ppm(mut self, min_ms2_difference_in_ppm: Option<MZ>) -> Self {
+    pub fn min_ms2_difference_in_ppm(
+        mut self,
+        min_ms2_difference_in_ppm: Option<MZ>,
+    ) -> Result<Self, SimilarityConfigError>
+    where
+        MZ: ToPrimitive + Copy,
+    {
+        if let Some(v) = min_ms2_difference_in_ppm {
+            validate_numeric_parameter(v, "min_ms2_difference_in_ppm")?;
+        }
         self.min_ms2_difference_in_ppm = min_ms2_difference_in_ppm;
-        self
+        Ok(self)
     }
 
+    /// Sets the maximum number of retained peaks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityConfigError::InvalidParameter`] when `max_peak_num` is `Some(0)`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
+    ///
+    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    ///     .max_peak_num(Some(10))
+    ///     .expect("positive value")
+    ///     .build()
+    ///     .expect("valid configuration");
+    /// assert_eq!(cleaner.max_peak_num(), Some(10));
+    ///
+    /// let err = MsEntropyCleanSpectrum::<f32>::builder().max_peak_num(Some(0));
+    /// assert!(matches!(
+    ///     err,
+    ///     Err(SimilarityConfigError::InvalidParameter("max_peak_num"))
+    /// ));
+    /// ```
     #[inline]
-    pub fn max_peak_num(mut self, max_peak_num: Option<usize>) -> Self {
+    pub fn max_peak_num(
+        mut self,
+        max_peak_num: Option<usize>,
+    ) -> Result<Self, SimilarityConfigError> {
+        if matches!(max_peak_num, Some(0)) {
+            return Err(SimilarityConfigError::InvalidParameter("max_peak_num"));
+        }
         self.max_peak_num = max_peak_num;
-        self
+        Ok(self)
     }
 
+    /// Enables or disables output intensity normalization.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use mass_spectrometry::prelude::MsEntropyCleanSpectrum;
+    ///
+    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    ///     .normalize_intensity(false)
+    ///     .expect("always valid")
+    ///     .build()
+    ///     .expect("valid configuration");
+    /// assert!(!cleaner.normalize_intensity());
+    /// ```
     #[inline]
-    pub fn normalize_intensity(mut self, normalize_intensity: bool) -> Self {
+    pub fn normalize_intensity(
+        mut self,
+        normalize_intensity: bool,
+    ) -> Result<Self, SimilarityConfigError> {
         self.normalize_intensity = normalize_intensity;
-        self
+        Ok(self)
     }
 
+    /// Builds the cleaner from validated builder fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityConfigError::InvalidParameter`] when the centroiding configuration
+    /// is invalid, i.e. when both `min_ms2_difference_in_da` and
+    /// `min_ms2_difference_in_ppm` are non-positive/disabled.
+    ///
+    /// Per-field numeric validation is performed in setter methods.
     pub fn build(self) -> Result<MsEntropyCleanSpectrum<MZ>, SimilarityConfigError>
     where
         MZ: Float + Number + ToPrimitive,
     {
-        if let Some(v) = self.min_mz {
-            validate_numeric_parameter(v, "min_mz")?;
-        }
-        if let Some(v) = self.max_mz {
-            validate_numeric_parameter(v, "max_mz")?;
-        }
-        if let Some(v) = self.noise_threshold {
-            validate_numeric_parameter(v, "noise_threshold")?;
-        }
-        validate_numeric_parameter(self.min_ms2_difference_in_da, "min_ms2_difference_in_da")?;
-        if let Some(v) = self.min_ms2_difference_in_ppm {
-            validate_numeric_parameter(v, "min_ms2_difference_in_ppm")?;
-        }
-
         let ppm_positive = self
             .min_ms2_difference_in_ppm
             .is_some_and(|ppm| ppm > MZ::zero());

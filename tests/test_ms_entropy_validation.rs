@@ -45,6 +45,7 @@ fn validate_linear_entropy_against_ms_entropy() {
 
         let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
             .min_ms2_difference_in_da(2.0 * tolerance)
+            .expect("finite min_ms2_difference_in_da")
             .build()
             .expect("valid ms_entropy-compatible cleaner config");
         let left = cleaner.process(&left);

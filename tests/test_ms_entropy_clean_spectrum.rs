@@ -61,7 +61,9 @@ fn noise_filter_removes_weak_peaks() {
 fn top_n_keeps_most_intense_then_sorts_by_mz() {
     let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
         .noise_threshold(None)
+        .expect("valid noise threshold")
         .max_peak_num(Some(2))
+        .expect("valid max_peak_num")
         .build()
         .expect("valid builder config");
 
@@ -82,9 +84,13 @@ fn top_n_keeps_most_intense_then_sorts_by_mz() {
 fn ppm_centroiding_merges_close_peaks_when_da_disabled() {
     let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
         .noise_threshold(None)
+        .expect("valid noise threshold")
         .normalize_intensity(false)
+        .expect("normalize_intensity is always valid")
         .min_ms2_difference_in_da(-1.0)
+        .expect("finite min_ms2_difference_in_da")
         .min_ms2_difference_in_ppm(Some(20.0))
+        .expect("finite min_ms2_difference_in_ppm")
         .build()
         .expect("valid ppm builder config");
 
@@ -108,9 +114,13 @@ fn ppm_centroiding_merges_close_peaks_when_da_disabled() {
 fn min_and_max_mz_filters_are_applied() {
     let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
         .noise_threshold(None)
+        .expect("valid noise threshold")
         .normalize_intensity(false)
+        .expect("normalize_intensity is always valid")
         .min_mz(Some(110.0))
+        .expect("finite min_mz")
         .max_mz(Some(210.0))
+        .expect("finite max_mz")
         .build()
         .expect("valid builder config");
 
@@ -127,7 +137,9 @@ fn min_and_max_mz_filters_are_applied() {
 fn builder_rejects_invalid_centroid_configuration() {
     let result = MsEntropyCleanSpectrum::<f32>::builder()
         .min_ms2_difference_in_da(-1.0)
+        .expect("finite min_ms2_difference_in_da")
         .min_ms2_difference_in_ppm(Some(-1.0))
+        .expect("finite min_ms2_difference_in_ppm")
         .build();
 
     assert!(matches!(
