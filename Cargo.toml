@@ -3,6 +3,9 @@ name = "mass_spectrometry"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["fuzz"]
+
 [features]
 default = []
 proptest = ["dep:proptest"]

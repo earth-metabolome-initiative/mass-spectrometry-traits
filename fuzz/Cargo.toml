@@ -1,0 +1,19 @@
+[package]
+name = "mass_spectrometry-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mass_spectrometry = { path = ".." }
+
+[[bin]]
+name = "hungarian_cosine"
+path = "fuzz_targets/hungarian_cosine.rs"
+test = false
+doc = false
+bench = false
