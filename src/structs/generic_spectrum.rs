@@ -1,12 +1,21 @@
 //! A naively implemented generic spectrum struct.
 
 use alloc::vec::Vec;
+#[cfg(feature = "proptest")]
+use core::cmp::Ordering;
 
 use geometric_traits::prelude::{Finite, Number, SortedVec};
+#[cfg(feature = "proptest")]
+use proptest::{
+    arbitrary::Arbitrary,
+    collection,
+    strategy::{BoxedStrategy, Strategy},
+};
 
 use crate::traits::{Spectrum, SpectrumAlloc, SpectrumMut};
 
 /// A generic spectrum struct.
+#[derive(Debug)]
 pub struct GenericSpectrum<Mz, Intensity> {
     mz: SortedVec<Mz>,
     intensity: Vec<Intensity>,
@@ -178,5 +187,68 @@ where
 {
     fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Result<Self, Self::MutationError> {
         Self::try_with_capacity(precursor_mz, capacity)
+    }
+}
+
+#[cfg(feature = "proptest")]
+impl<Mz, Intensity> Arbitrary for GenericSpectrum<Mz, Intensity>
+where
+    Mz: Arbitrary + Number + PartialOrd + Finite + core::fmt::Debug + 'static,
+    Intensity: Arbitrary + Number + PartialOrd + Finite + core::fmt::Debug + 'static,
+    <Mz as Arbitrary>::Parameters: Default,
+    <Intensity as Arbitrary>::Parameters: Default,
+{
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Self>;
+
+    fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+        let precursor = Mz::arbitrary().prop_map(|value| {
+            if value.is_finite() && value >= Mz::zero() {
+                value
+            } else {
+                Mz::zero()
+            }
+        });
+        let peaks = collection::vec((Mz::arbitrary(), Intensity::arbitrary()), 0..64);
+
+        (precursor, peaks)
+            .prop_map(|(precursor_mz, peaks)| {
+                let mut sanitized: Vec<(Mz, Intensity)> = peaks
+                    .into_iter()
+                    .filter_map(|(mz, intensity)| {
+                        if !mz.is_finite() || mz < Mz::zero() {
+                            return None;
+                        }
+                        if !intensity.is_finite() || intensity < Intensity::zero() {
+                            return None;
+                        }
+                        Some((mz, intensity))
+                    })
+                    .collect();
+
+                sanitized.sort_by(|(left_mz, _), (right_mz, _)| {
+                    left_mz.partial_cmp(right_mz).unwrap_or(Ordering::Equal)
+                });
+
+                let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, sanitized.len())
+                    .expect("sanitized precursor must be valid");
+                let mut last_mz: Option<Mz> = None;
+
+                for (mz, intensity) in sanitized {
+                    if let Some(previous_mz) = last_mz
+                        && mz <= previous_mz
+                    {
+                        continue;
+                    }
+
+                    spectrum
+                        .add_peak(mz, intensity)
+                        .expect("sanitized peaks must satisfy GenericSpectrum invariants");
+                    last_mz = Some(mz);
+                }
+
+                spectrum
+            })
+            .boxed()
     }
 }
