@@ -66,8 +66,7 @@ where
         validate_well_separated(&left_peaks.mz, tolerance, "left spectrum")?;
         validate_well_separated(&right_peaks.mz, tolerance, "right spectrum")?;
 
-        let left_prec =
-            to_f64_checked_for_computation(left.precursor_mz(), "left_precursor_mz")?;
+        let left_prec = to_f64_checked_for_computation(left.precursor_mz(), "left_precursor_mz")?;
         let right_prec =
             to_f64_checked_for_computation(right.precursor_mz(), "right_precursor_mz")?;
 

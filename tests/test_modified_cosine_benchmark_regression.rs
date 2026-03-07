@@ -21,8 +21,8 @@ const INTENSITY_POWER: f32 = 1.0;
 /// File format: first line is precursor_mz, subsequent lines are `mz intensity`.
 fn load_spectrum(id: u32) -> GenericSpectrum<f32, f32> {
     let path = format!("tests/fixtures/benchmark_spectra/{id}.txt");
-    let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+    let content =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
     let mut lines = content.lines();
     let precursor_mz: f32 = lines
         .next()
@@ -44,8 +44,8 @@ fn load_spectrum(id: u32) -> GenericSpectrum<f32, f32> {
         })
         .collect();
 
-    let mut spectrum = GenericSpectrum::try_with_capacity(precursor_mz, peaks.len())
-        .expect("valid precursor_mz");
+    let mut spectrum =
+        GenericSpectrum::try_with_capacity(precursor_mz, peaks.len()).expect("valid precursor_mz");
     for (mz, intensity) in peaks {
         spectrum
             .add_peak(mz, intensity)
@@ -61,8 +61,8 @@ fn assert_linear_matches_hungarian(left_id: u32, right_id: u32) {
     let left = merger.process(&load_spectrum(left_id));
     let right = merger.process(&load_spectrum(right_id));
 
-    let hungarian = ModifiedHungarianCosine::new(MZ_POWER, INTENSITY_POWER, TOLERANCE)
-        .expect("valid config");
+    let hungarian =
+        ModifiedHungarianCosine::new(MZ_POWER, INTENSITY_POWER, TOLERANCE).expect("valid config");
     let linear =
         ModifiedLinearCosine::new(MZ_POWER, INTENSITY_POWER, TOLERANCE).expect("valid config");
 

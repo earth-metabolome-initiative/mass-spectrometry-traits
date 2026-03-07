@@ -427,8 +427,7 @@ fn dp_beats_greedy_on_contested_shifted_match() {
     //
     // Greedy: picks (1,0) = 1_100_000, 1 match.
     // Optimal: picks (0,0)+(1,1) = 1_968_000, 2 matches.
-    let mut left =
-        GenericSpectrum::with_capacity(150.0_f32, 2).expect("valid spectrum allocation");
+    let mut left = GenericSpectrum::with_capacity(150.0_f32, 2).expect("valid spectrum allocation");
     left.add_peak(100.0, 10.0).unwrap();
     left.add_peak(110.0, 10.0).unwrap();
 
@@ -450,7 +449,10 @@ fn dp_beats_greedy_on_contested_shifted_match() {
         .expect("similarity computation should succeed");
 
     // Both should find 2 matches with the optimal assignment.
-    assert_eq!(linear_matches, 2, "DP should find 2 matches, got {linear_matches}");
+    assert_eq!(
+        linear_matches, 2,
+        "DP should find 2 matches, got {linear_matches}"
+    );
     assert_eq!(
         hungarian_matches, linear_matches,
         "match count parity: Hungarian={hungarian_matches} vs Linear={linear_matches}"

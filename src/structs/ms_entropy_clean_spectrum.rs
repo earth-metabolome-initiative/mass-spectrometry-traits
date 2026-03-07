@@ -97,15 +97,15 @@ where
         peaks.retain(|(mz, intensity)| *mz > MZ::zero() && *intensity > MZ::zero());
 
         // Step 2. Min/max mz filtering.
-        if let Some(min_mz) = self.min_mz {
-            if min_mz > MZ::zero() {
-                peaks.retain(|(mz, _)| *mz >= min_mz);
-            }
+        if let Some(min_mz) = self.min_mz
+            && min_mz > MZ::zero()
+        {
+            peaks.retain(|(mz, _)| *mz >= min_mz);
         }
-        if let Some(max_mz) = self.max_mz {
-            if max_mz > MZ::zero() {
-                peaks.retain(|(mz, _)| *mz <= max_mz);
-            }
+        if let Some(max_mz) = self.max_mz
+            && max_mz > MZ::zero()
+        {
+            peaks.retain(|(mz, _)| *mz <= max_mz);
         }
 
         if peaks.is_empty() {
@@ -113,9 +113,7 @@ where
         }
 
         // Step 3. Centroiding.
-        let ppm = self
-            .min_ms2_difference_in_ppm
-            .filter(|&v| v > MZ::zero());
+        let ppm = self.min_ms2_difference_in_ppm.filter(|&v| v > MZ::zero());
         peaks = centroid_spectrum(peaks, self.min_ms2_difference_in_da, ppm);
 
         if peaks.is_empty() {
@@ -527,7 +525,11 @@ fn check_centroid<F: Float>(peaks: &[(F, F)], ms2_da: F, ms2_ppm: Option<F>) -> 
     }
 }
 
-fn centroid_spectrum<F: Float>(mut peaks: Vec<(F, F)>, ms2_da: F, ms2_ppm: Option<F>) -> Vec<(F, F)> {
+fn centroid_spectrum<F: Float>(
+    mut peaks: Vec<(F, F)>,
+    ms2_da: F,
+    ms2_ppm: Option<F>,
+) -> Vec<(F, F)> {
     peaks.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).expect("non-NaN mz"));
     while !check_centroid(&peaks, ms2_da, ms2_ppm) {
         peaks = centroid_once(peaks, ms2_da, ms2_ppm);
@@ -581,10 +583,10 @@ fn centroid_once<F: Float>(mut peaks: Vec<(F, F)>, ms2_da: F, ms2_ppm: Option<F>
 
         let mut intensity_sum = F::zero();
         let mut intensity_weighted_mz_sum = F::zero();
-        for i in left_idx..right_idx {
-            intensity_sum = intensity_sum + peaks[i].1;
-            intensity_weighted_mz_sum = intensity_weighted_mz_sum + peaks[i].1 * peaks[i].0;
-            peaks[i].1 = F::zero();
+        for peak in peaks.iter_mut().take(right_idx).skip(left_idx) {
+            intensity_sum = intensity_sum + peak.1;
+            intensity_weighted_mz_sum = intensity_weighted_mz_sum + peak.1 * peak.0;
+            peak.1 = F::zero();
         }
 
         if intensity_sum > F::zero() {

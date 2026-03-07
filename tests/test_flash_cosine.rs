@@ -182,10 +182,7 @@ fn zero_intensity_spectrum() {
     // The empty spectrum should yield score 0 or not appear.
     for r in &results {
         if r.spectrum_id == 0 {
-            assert!(
-                r.score.abs() < 1e-12,
-                "empty spectrum should score 0"
-            );
+            assert!(r.score.abs() < 1e-12, "empty spectrum should score 0");
         }
     }
     // The normal spectrum should have self-similarity ~1.0.

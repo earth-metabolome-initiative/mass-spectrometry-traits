@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use mass_spectrometry::fuzzing::{run_linear_entropy_case, LinearEntropyHarnessOutcome};
+use mass_spectrometry::fuzzing::{LinearEntropyHarnessOutcome, run_linear_entropy_case};
 
 const ARTIFACTS_DIR: &str = "fuzz/artifacts/linear_entropy";
 const FIXTURE_CRASH_DIR: &str = "tests/fixtures/fuzz/linear_entropy/crashes";

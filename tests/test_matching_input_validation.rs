@@ -339,8 +339,5 @@ fn try_with_capacity_rejects_precursor_above_max_mz() {
         Err(error) => error,
         Ok(_) => panic!("precursor above MAX_MZ should be rejected"),
     };
-    assert_eq!(
-        error,
-        GenericSpectrumMutationError::PrecursorMzAboveMaximum
-    );
+    assert_eq!(error, GenericSpectrumMutationError::PrecursorMzAboveMaximum);
 }
