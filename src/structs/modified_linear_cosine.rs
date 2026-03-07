@@ -4,8 +4,9 @@
 //! the precursor mass difference when that shift exceeds the configured
 //! tolerance. Direct and shifted match candidates are merged and resolved via
 //! optimal DP-based assignment on the conflict graph's path components,
-//! producing the same result as [`super::ModifiedHungarianCosine`] in linear
-//! time for well-separated spectra.
+//! producing the same score as [`super::ModifiedHungarianCosine`] in linear
+//! time for well-separated spectra (match counts may differ on near-zero
+//! edges due to f64 tie-breaking).
 
 use alloc::vec::Vec;
 
@@ -25,8 +26,9 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 /// Combines direct and precursor-shifted peak matches from two linear sweeps
 /// when `|precursor_delta| > mz_tolerance`, then resolves conflicts via
 /// optimal DP-based assignment on the conflict graph's path components.
-/// For well-separated spectra this produces the same result as
-/// [`super::ModifiedHungarianCosine`] in linear time.
+/// For well-separated spectra this produces the same score as
+/// [`super::ModifiedHungarianCosine`] in linear time (match counts may
+/// differ on near-zero edges due to f64 tie-breaking).
 /// Requires the same strict well-separated precondition as
 /// [`super::LinearCosine`] (consecutive peaks > `2 * mz_tolerance`).
 pub struct ModifiedLinearCosine<EXP, MZ> {
@@ -78,10 +80,9 @@ where
             to_f64_checked_for_computation(right.precursor_mz(), "right_precursor_mz")?;
 
         // Collect direct + shifted matches, merge, optimal DP-select.
-        // The benefit function mirrors the cost model in `score_from_matching`:
-        // benefit = normalized product, or ε when the product is too small to
-        // move the f64 cost below non_edge_cost.
-        let non_edge_cost = 1.0_f64 + f64::EPSILON;
+        // Benefit = normalised product (0 for zero-product edges so they
+        // never displace real matches, at least ε for nonzero-product edges
+        // so they are always selected when non-conflicting).
         let max_left = left_peaks.max_f64;
         let max_right = right_peaks.max_f64;
         let selected = optimal_modified_linear_matches(
@@ -91,22 +92,12 @@ where
             left_prec,
             right_prec,
             |i, j| {
+                if (left_peaks.products[i] * right_peaks.products[j]).is_zero() {
+                    return 0.0;
+                }
                 let normalized =
                     (left_peaks.as_f64[i] / max_left) * (right_peaks.as_f64[j] / max_right);
-                let raw_cost = non_edge_cost - normalized;
-                if raw_cost >= non_edge_cost {
-                    // The normalized product underflows in f64.  Only
-                    // assign benefit when the native product is non-zero;
-                    // zero-product edges contribute nothing to the score
-                    // and must not displace edges that do contribute.
-                    if (left_peaks.products[i] * right_peaks.products[j]).is_zero() {
-                        0.0
-                    } else {
-                        f64::EPSILON
-                    }
-                } else {
-                    normalized
-                }
+                normalized.max(f64::EPSILON)
             },
         );
 
