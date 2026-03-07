@@ -46,7 +46,8 @@ fn empty_spectrum() -> GenericSpectrum<f64, f64> {
 }
 
 fn zero_intensity_spectrum() -> GenericSpectrum<f64, f64> {
-    build_spectrum(100.0, &[(100.0, 0.0), (200.0, 0.0)])
+    // Zero-intensity peaks are rejected; return an empty spectrum.
+    GenericSpectrum::try_with_capacity(100.0, 0).expect("valid precursor")
 }
 
 // ========== Self-similarity tests ==========

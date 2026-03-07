@@ -12,7 +12,7 @@ fn linear_spectrum(size: usize, precursor_mz: f32) -> GenericSpectrum<f32, f32> 
         GenericSpectrum::with_capacity(precursor_mz, size).expect("valid spectrum allocation");
     for i in 0..size {
         spectrum
-            .add_peak(i as f32, 1.0)
+            .add_peak((i + 1) as f32, 1.0)
             .expect("test peaks must be sorted by m/z");
     }
     spectrum
@@ -27,7 +27,7 @@ fn shifted_linear_spectrum(
         GenericSpectrum::with_capacity(precursor_mz, size).expect("valid spectrum allocation");
     for i in 0..size {
         spectrum
-            .add_peak(mz_offset + i as f32, 1.0)
+            .add_peak(mz_offset + (i + 1) as f32, 1.0)
             .expect("test peaks must be sorted by m/z");
     }
     spectrum

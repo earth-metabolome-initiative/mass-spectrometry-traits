@@ -168,9 +168,10 @@ fn empty_query() {
 
 #[test]
 fn zero_intensity_spectrum() {
-    let zero = make_spectrum_f64(200.0, &[(100.0, 0.0), (200.0, 0.0)]);
+    // Zero-intensity peaks are now rejected; use an empty spectrum instead.
+    let empty = make_spectrum_f64(200.0, &[]);
     let normal = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
-    let library = [zero, normal];
+    let library = [empty, normal];
 
     let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
         .expect("index build should succeed");
@@ -178,12 +179,12 @@ fn zero_intensity_spectrum() {
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let results = index.search(&query).expect("search should succeed");
 
-    // The zero-intensity spectrum should yield score 0 or not appear.
+    // The empty spectrum should yield score 0 or not appear.
     for r in &results {
         if r.spectrum_id == 0 {
             assert!(
                 r.score.abs() < 1e-12,
-                "zero-intensity spectrum should score 0"
+                "empty spectrum should score 0"
             );
         }
     }

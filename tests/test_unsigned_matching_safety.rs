@@ -29,7 +29,7 @@ fn matching_peaks_u32_does_not_panic_on_tolerance_edge() {
 #[test]
 fn modified_matching_peaks_u32_does_not_panic_with_shift() {
     let left = one_peak_u32_spectrum(100, 10);
-    let right = one_peak_u32_spectrum(100, u32::MAX);
+    let right = one_peak_u32_spectrum(100, 2_000_000);
 
     let result = std::panic::catch_unwind(|| left.modified_matching_peaks(&right, 1, 100, 100));
     assert!(

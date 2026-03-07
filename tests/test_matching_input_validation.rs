@@ -1,8 +1,8 @@
 //! Regression tests for `Spectrum::matching_peaks` input validation.
 
 use mass_spectrometry::prelude::{
-    GenericSpectrum, GenericSpectrumMutationError, SimilarityComputationError, Spectrum,
-    SpectrumAlloc, SpectrumMut,
+    ELECTRON_MASS, GenericSpectrum, GenericSpectrumMutationError, SimilarityComputationError,
+    Spectrum, SpectrumAlloc, SpectrumMut,
 };
 
 #[derive(Clone)]
@@ -189,7 +189,7 @@ fn generic_spectrum_rejects_negative_intensity() {
     let error = spectrum
         .add_peak(100.0_f32, -1.0_f32)
         .expect_err("negative intensity should be rejected");
-    assert_eq!(error, GenericSpectrumMutationError::NegativeIntensity);
+    assert_eq!(error, GenericSpectrumMutationError::NonPositiveIntensity);
 }
 
 #[test]
@@ -245,7 +245,7 @@ fn generic_spectrum_rejects_negative_mz() {
     let error = spectrum
         .add_peak(-1.0_f32, 1.0_f32)
         .expect_err("negative mz should be rejected");
-    assert_eq!(error, GenericSpectrumMutationError::NegativeMz);
+    assert_eq!(error, GenericSpectrumMutationError::MzBelowMinimum);
 }
 
 #[test]
@@ -263,5 +263,84 @@ fn generic_spectrum_with_capacity_rejects_negative_precursor_mz() {
         Err(error) => error,
         Ok(_) => panic!("negative precursor_mz should be rejected"),
     };
-    assert_eq!(error, GenericSpectrumMutationError::NegativePrecursorMz);
+    assert_eq!(error, GenericSpectrumMutationError::PrecursorMzBelowMinimum);
+}
+
+#[test]
+fn add_peak_rejects_mz_below_electron_mass() {
+    let mut spectrum =
+        GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
+    let error = spectrum
+        .add_peak(0.0_f32, 1.0_f32)
+        .expect_err("mz below electron mass should be rejected");
+    assert_eq!(error, GenericSpectrumMutationError::MzBelowMinimum);
+}
+
+#[test]
+fn add_peak_rejects_mz_above_max() {
+    let mut spectrum =
+        GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
+    let error = spectrum
+        .add_peak(3_000_000.0_f32, 1.0_f32)
+        .expect_err("mz above MAX_MZ should be rejected");
+    assert_eq!(error, GenericSpectrumMutationError::MzAboveMaximum);
+}
+
+#[test]
+fn add_peak_rejects_zero_intensity() {
+    let mut spectrum =
+        GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
+    let error = spectrum
+        .add_peak(100.0_f32, 0.0_f32)
+        .expect_err("zero intensity should be rejected");
+    assert_eq!(error, GenericSpectrumMutationError::NonPositiveIntensity);
+}
+
+#[test]
+fn add_peak_accepts_mz_at_electron_mass_boundary() {
+    // Use f64 to avoid f32 rounding below the ELECTRON_MASS threshold.
+    let mut spectrum =
+        GenericSpectrum::with_capacity(100.0_f64, 1).expect("valid spectrum allocation");
+    spectrum
+        .add_peak(ELECTRON_MASS, 1.0_f64)
+        .expect("mz at ELECTRON_MASS boundary should be accepted");
+}
+
+#[test]
+fn add_peak_accepts_mz_at_max_mz_boundary() {
+    let mut spectrum =
+        GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
+    spectrum
+        .add_peak(2_000_000.0_f32, 1.0_f32)
+        .expect("mz at MAX_MZ boundary should be accepted");
+}
+
+#[test]
+fn add_peak_accepts_min_positive_intensity() {
+    let mut spectrum =
+        GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
+    spectrum
+        .add_peak(100.0_f32, f32::MIN_POSITIVE)
+        .expect("f32::MIN_POSITIVE intensity should be accepted");
+}
+
+#[test]
+fn try_with_capacity_rejects_precursor_below_electron_mass() {
+    let error = match GenericSpectrum::<f32, f32>::try_with_capacity(0.0_f32, 1) {
+        Err(error) => error,
+        Ok(_) => panic!("precursor below ELECTRON_MASS should be rejected"),
+    };
+    assert_eq!(error, GenericSpectrumMutationError::PrecursorMzBelowMinimum);
+}
+
+#[test]
+fn try_with_capacity_rejects_precursor_above_max_mz() {
+    let error = match GenericSpectrum::<f32, f32>::try_with_capacity(3_000_000.0_f32, 1) {
+        Err(error) => error,
+        Ok(_) => panic!("precursor above MAX_MZ should be rejected"),
+    };
+    assert_eq!(
+        error,
+        GenericSpectrumMutationError::PrecursorMzAboveMaximum
+    );
 }

@@ -229,9 +229,10 @@ fn empty_query() {
 
 #[test]
 fn zero_intensity_library_spectrum() {
-    let zero = make_spectrum_f64(200.0, &[(100.0, 0.0), (200.0, 0.0)]);
+    // Zero-intensity peaks are now rejected; use an empty spectrum instead.
+    let empty = make_spectrum_f64(200.0, &[]);
     let normal = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
-    let library = [zero, normal];
+    let library = [empty, normal];
 
     let index = FlashEntropyIndex::new(0.0_f64, 1.0_f64, 0.1_f64, true, library.iter())
         .expect("index build should succeed");
@@ -239,7 +240,7 @@ fn zero_intensity_library_spectrum() {
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let results = index.search(&query).expect("search should succeed");
 
-    // Zero-intensity spectrum should not appear or score 0.
+    // Empty spectrum should not appear or score 0.
     for r in &results {
         if r.spectrum_id == 0 {
             assert!(r.score.abs() < 1e-12);

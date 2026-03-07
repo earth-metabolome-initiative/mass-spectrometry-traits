@@ -13,5 +13,6 @@ pub mod traits;
 pub mod prelude {
     pub use geometric_traits::prelude::ScalarSimilarity;
 
+    pub use crate::numeric_validation::{ELECTRON_MASS, MAX_MZ};
     pub use crate::{structs::*, traits::*};
 }

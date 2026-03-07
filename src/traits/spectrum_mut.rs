@@ -102,8 +102,9 @@ pub trait SpectrumMut: Spectrum {
     /// Add a peak to the Spectrum.
     ///
     /// Implementations are expected to reject non-finite values, enforce
-    /// strictly increasing `mz` ordering (rejecting duplicates), and reject
-    /// negative intensity values.
+    /// strictly increasing `mz` ordering (rejecting duplicates), reject
+    /// non-positive intensity values, and validate mz within
+    /// `[ELECTRON_MASS, MAX_MZ]`.
     fn add_peak(
         &mut self,
         mz: Self::Mz,

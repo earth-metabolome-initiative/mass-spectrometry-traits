@@ -1,8 +1,7 @@
 use geometric_traits::prelude::ScalarSimilarity;
 use mass_spectrometry::prelude::{
-    GenericSpectrum, GreedyCosine, HungarianCosine, LinearEntropy, ModifiedHungarianCosine,
-    ModifiedLinearCosine, SimilarityComputationError, SimilarityConfigError, Spectrum,
-    SpectrumAlloc, SpectrumMut,
+    GreedyCosine, HungarianCosine, LinearEntropy, ModifiedHungarianCosine, ModifiedLinearCosine,
+    SimilarityComputationError, SimilarityConfigError, Spectrum,
 };
 
 #[derive(Clone)]
@@ -89,15 +88,11 @@ fn modified_hungarian_cosine_rejects_negative_tolerance_at_construction() {
     ));
 }
 
-fn large_peak_spectra() -> (GenericSpectrum<f32, f32>, GenericSpectrum<f32, f32>) {
-    let mut left = GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
-    let mut right =
-        GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
-    left.add_peak(1.0e20_f32, 1.0e20_f32)
-        .expect("finite values should be accepted");
-    right
-        .add_peak(1.0e20_f32, 1.0e20_f32)
-        .expect("finite values should be accepted");
+fn large_peak_spectra() -> (RawSpectrum, RawSpectrum) {
+    // Use RawSpectrum to bypass mz range validation — 1e20 exceeds MAX_MZ
+    // but is needed to trigger peak product overflow with high powers.
+    let left = raw_spectrum(100.0, &[(1.0e20, 1.0e20)]);
+    let right = raw_spectrum(100.0, &[(1.0e20, 1.0e20)]);
     (left, right)
 }
 
