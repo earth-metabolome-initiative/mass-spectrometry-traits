@@ -4,7 +4,7 @@
 //! the two-pointer sweep is provably optimal.
 
 use geometric_traits::prelude::{Number, ScalarSimilarity};
-use num_traits::{Float, ToPrimitive, Zero};
+use num_traits::{Float, NumCast, ToPrimitive, Zero};
 
 use super::cosine_common::{
     collect_linear_matches, to_f64_checked_for_computation, validate_well_separated,
@@ -50,9 +50,9 @@ where
                 |_| SimilarityComputationError::ValueNotRepresentable("intensity_power"),
             )?;
 
-        let left_peaks =
+        let left_peaks: super::entropy_common::PreparedEntropyPeaks<f64> =
             prepare_entropy_peaks(left, self.weighted, mz_power_f64, intensity_power_f64)?;
-        let right_peaks =
+        let right_peaks: super::entropy_common::PreparedEntropyPeaks<f64> =
             prepare_entropy_peaks(right, self.weighted, mz_power_f64, intensity_power_f64)?;
 
         if left_peaks.int.is_empty() || right_peaks.int.is_empty() {
@@ -68,6 +68,10 @@ where
         let (raw_score, n_matches) =
             entropy_score_pairs(&pairs, &left_peaks.int, &right_peaks.int)?;
 
-        finalize_entropy_score(raw_score, n_matches)
+        let (sim_f64, n) = finalize_entropy_score(raw_score, n_matches)?;
+        let sim: S1::Mz = NumCast::from(sim_f64).ok_or(
+            SimilarityComputationError::ValueNotRepresentable("similarity_score"),
+        )?;
+        Ok((sim, n))
     }
 }

@@ -266,8 +266,11 @@ where
     let mut n_matches = 0usize;
 
     for &(i, j) in assignments {
-        score_sum += row_products[i as usize] * col_products[j as usize];
-        n_matches += 1;
+        let product = row_products[i as usize] * col_products[j as usize];
+        if !product.is_zero() {
+            score_sum += product;
+            n_matches += 1;
+        }
     }
 
     (score_sum, n_matches)
@@ -318,12 +321,17 @@ where
                 - (inputs.row_f64[i as usize] / inputs.max_row)
                     * (inputs.col_f64[j as usize] / inputs.max_col);
             // When the normalized product is too small to move the f64
-            // cost below non_edge_cost (it rounds to 1+ε), cap the cost
-            // at 1.0 so the solver still prefers this real edge over
-            // a non-edge.  For edges with meaningful products the cost
-            // is already < 1+ε and is returned unchanged.
+            // cost below non_edge_cost (it rounds to 1+ε), only cap the
+            // cost at 1.0 when the native product is non-zero.  Zero-
+            // product edges contribute nothing to the score and must be
+            // treated as non-edges so the solver never prefers them over
+            // edges that do contribute.
             if cost >= non_edge_cost {
-                1.0f64
+                if (inputs.row_products[i as usize] * inputs.col_products[j as usize]).is_zero() {
+                    non_edge_cost
+                } else {
+                    1.0f64
+                }
             } else {
                 cost
             }
@@ -569,8 +577,11 @@ where
             j += 1;
         }
         if j < right_mz.len() && (right_mz[j] - target).abs() <= tolerance {
-            score_sum += left_products[i] * right_products[j];
-            n_matches += 1;
+            let product = left_products[i] * right_products[j];
+            if !product.is_zero() {
+                score_sum += product;
+                n_matches += 1;
+            }
             j += 1;
         }
     }
@@ -638,23 +649,22 @@ pub(crate) fn optimal_modified_linear_matches(
     benefit_fn: impl Fn(usize, usize) -> f64,
 ) -> Vec<(usize, usize)> {
     let direct = collect_linear_matches(left_mz, right_mz, tolerance, 0.0);
-    let candidates: Vec<(usize, usize)> =
-        if (left_precursor - right_precursor).abs() <= tolerance {
-            direct
-        } else {
-            // Compare neutral losses directly to avoid floating-point absorption
-            // when the shift magnitude dwarfs peak mz values.  This matches the
-            // approach in modified_matching_peaks (used by the Hungarian solver).
-            let left_nl: Vec<f64> = left_mz.iter().map(|&mz| mz - left_precursor).collect();
-            let right_nl: Vec<f64> = right_mz.iter().map(|&mz| mz - right_precursor).collect();
-            let shifted = collect_linear_matches(&left_nl, &right_nl, tolerance, 0.0);
-            let mut pairs = Vec::with_capacity(direct.len() + shifted.len());
-            pairs.extend(direct);
-            pairs.extend(shifted);
-            pairs.sort_unstable();
-            pairs.dedup();
-            pairs
-        };
+    let candidates: Vec<(usize, usize)> = if (left_precursor - right_precursor).abs() <= tolerance {
+        direct
+    } else {
+        // Compare neutral losses directly to avoid floating-point absorption
+        // when the shift magnitude dwarfs peak mz values.  This matches the
+        // approach in modified_matching_peaks (used by the Hungarian solver).
+        let left_nl: Vec<f64> = left_mz.iter().map(|&mz| mz - left_precursor).collect();
+        let right_nl: Vec<f64> = right_mz.iter().map(|&mz| mz - right_precursor).collect();
+        let shifted = collect_linear_matches(&left_nl, &right_nl, tolerance, 0.0);
+        let mut pairs = Vec::with_capacity(direct.len() + shifted.len());
+        pairs.extend(direct);
+        pairs.extend(shifted);
+        pairs.sort_unstable();
+        pairs.dedup();
+        pairs
+    };
 
     if candidates.is_empty() {
         return Vec::new();
@@ -798,7 +808,6 @@ fn insert_neighbor(slots: &mut [Option<usize>; 2], neighbor: usize) {
 fn iter_neighbors(slots: [Option<usize>; 2]) -> impl Iterator<Item = usize> {
     slots.into_iter().flatten()
 }
-
 
 /// Runtime validation that consecutive peaks in the given mz slice are
 /// greater than `2 * tolerance` apart.

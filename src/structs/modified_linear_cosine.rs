@@ -73,8 +73,7 @@ where
         validate_well_separated(&left_mz, tolerance, "left spectrum")?;
         validate_well_separated(&right_mz, tolerance, "right spectrum")?;
 
-        let left_prec =
-            to_f64_checked_for_computation(left.precursor_mz(), "left_precursor_mz")?;
+        let left_prec = to_f64_checked_for_computation(left.precursor_mz(), "left_precursor_mz")?;
         let right_prec =
             to_f64_checked_for_computation(right.precursor_mz(), "right_precursor_mz")?;
 
@@ -96,21 +95,29 @@ where
                     (left_peaks.as_f64[i] / max_left) * (right_peaks.as_f64[j] / max_right);
                 let raw_cost = non_edge_cost - normalized;
                 if raw_cost >= non_edge_cost {
-                    // The normalized product is too small to change the f64
-                    // cost from non_edge_cost.  Return zero benefit so the DP
-                    // never prefers accumulating these over a single real
-                    // edge — matching the Crouse LAPJV solver's effective
-                    // tie-breaking behaviour.
-                    0.0
+                    // The normalized product underflows in f64.  Only
+                    // assign benefit when the native product is non-zero;
+                    // zero-product edges contribute nothing to the score
+                    // and must not displace edges that do contribute.
+                    if (left_peaks.products[i] * right_peaks.products[j]).is_zero() {
+                        0.0
+                    } else {
+                        f64::EPSILON
+                    }
                 } else {
                     normalized
                 }
-            });
+            },
+        );
 
         let mut score_sum = S1::Mz::zero();
-        let n_matches = selected.len();
+        let mut n_matches = 0usize;
         for (i, j) in selected {
-            score_sum += left_peaks.products[i] * right_peaks.products[j];
+            let product = left_peaks.products[i] * right_peaks.products[j];
+            if !product.is_zero() {
+                score_sum += product;
+                n_matches += 1;
+            }
         }
 
         finalize_similarity_score(score_sum, n_matches, left_peaks.norm, right_peaks.norm)
