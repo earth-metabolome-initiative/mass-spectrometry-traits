@@ -352,48 +352,6 @@ where
     finalize_similarity_score(score_sum, n_matches, inputs.left_norm, inputs.right_norm)
 }
 
-pub(crate) fn score_from_matching_greedy<MZ, R>(
-    inputs: MatchingScoreInputs<'_, MZ, R>,
-) -> Result<(MZ, usize), SimilarityComputationError>
-where
-    MZ: Float + Number + Finite + TotalOrd + ToPrimitive,
-    R: MultiRanged<Step = u32>,
-{
-    if inputs.matching.is_empty() {
-        return Ok((MZ::zero(), 0));
-    }
-
-    // Collect all candidate edges with their weights (descending sort).
-    let mut candidates: Vec<(f64, u32, u32)> = Vec::new();
-    for (i, j) in SparseMatrix::sparse_coordinates(&inputs.matching) {
-        let weight = inputs.row_f64[i as usize] * inputs.col_f64[j as usize];
-        let _ = to_f64_checked_for_computation(weight, "candidate_weight")?;
-        candidates.push((weight, i, j));
-    }
-
-    candidates.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-
-    // Greedy selection: pick the highest-weight edge whose row and column
-    // have not yet been used.
-    let n_rows = inputs.row_f64.len();
-    let n_cols = inputs.col_f64.len();
-    let mut used_rows = alloc::vec![false; n_rows];
-    let mut used_cols = alloc::vec![false; n_cols];
-    let mut assignments: Vec<(u32, u32)> = Vec::new();
-
-    for &(_, i, j) in &candidates {
-        if !used_rows[i as usize] && !used_cols[j as usize] {
-            used_rows[i as usize] = true;
-            used_cols[j as usize] = true;
-            assignments.push((i, j));
-        }
-    }
-
-    let (score_sum, n_matches) =
-        accumulate_assignment_scores(&assignments, inputs.row_products, inputs.col_products);
-    finalize_similarity_score(score_sum, n_matches, inputs.left_norm, inputs.right_norm)
-}
-
 fn canonical_row_order(left: &[f64], right: &[f64]) -> bool {
     for (&l, &r) in left.iter().zip(right.iter()) {
         match l.total_cmp(&r) {
@@ -494,34 +452,6 @@ where
         forward_match,
         reverse_match,
         score_from_matching,
-    )
-}
-
-pub(crate) fn compute_cosine_similarity_greedy<EXP, S1, S2, R, ForwardMatch, ReverseMatch>(
-    left: &S1,
-    right: &S2,
-    mz_power: EXP,
-    intensity_power: EXP,
-    forward_match: ForwardMatch,
-    reverse_match: ReverseMatch,
-) -> Result<(S1::Mz, usize), SimilarityComputationError>
-where
-    EXP: Number,
-    S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
-    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
-    R: MultiRanged<Step = u32>,
-    ForwardMatch: FnOnce(&S1, &S2) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
-    ReverseMatch: FnOnce(&S2, &S1) -> Result<RangedCSR2D<u32, u32, R>, SimilarityComputationError>,
-{
-    compute_cosine_similarity_with_scoring(
-        left,
-        right,
-        mz_power,
-        intensity_power,
-        forward_match,
-        reverse_match,
-        score_from_matching_greedy,
     )
 }
 
@@ -634,12 +564,11 @@ pub(crate) fn collect_linear_matches(
 /// bipartite candidate graph has degree ≤ 2 per node and no cycles, so the
 /// conflict graph (edges = candidates, adjacency = shared endpoint)
 /// decomposes into disjoint paths.  Maximum-weight independent set on paths
-/// is O(n) via DP, giving the same result as a full Hungarian solver.
+/// is O(n) via DP, giving the same score as a full Hungarian solver
+/// (match counts may differ on near-zero edges due to f64 tie-breaking).
 ///
-/// `benefit_fn(i, j)` returns the assignment benefit for a candidate pair,
-/// matching the cost model used by the Hungarian solver.  The DP maximises
-/// total benefit, reproducing the Crouse LAPJV solution on well-separated
-/// spectra.
+/// `benefit_fn(i, j)` returns the assignment benefit for a candidate pair.
+/// The DP maximises total benefit.
 pub(crate) fn optimal_modified_linear_matches(
     left_mz: &[f64],
     right_mz: &[f64],
@@ -741,9 +670,7 @@ pub(crate) fn optimal_modified_linear_matches(
             continue;
         }
 
-        // Maximum-weight independent set DP.  The benefit function mirrors
-        // the cost model in `score_from_matching` so that the DP produces
-        // the same assignment as Crouse LAPJV.
+        // Maximum-weight independent set DP on this path component.
         let benefits: Vec<f64> = path
             .iter()
             .map(|&e| {

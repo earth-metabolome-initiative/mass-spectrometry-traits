@@ -1,6 +1,6 @@
 use geometric_traits::prelude::ScalarSimilarity;
 use mass_spectrometry::prelude::{
-    GreedyCosine, HungarianCosine, LinearEntropy, ModifiedHungarianCosine, ModifiedLinearCosine,
+    HungarianCosine, LinearEntropy, ModifiedHungarianCosine, ModifiedLinearCosine,
     SimilarityComputationError, SimilarityConfigError, Spectrum,
 };
 
@@ -94,20 +94,6 @@ fn large_peak_spectra() -> (RawSpectrum, RawSpectrum) {
     let left = raw_spectrum(100.0, &[(1.0e20, 1.0e20)]);
     let right = raw_spectrum(100.0, &[(1.0e20, 1.0e20)]);
     (left, right)
-}
-
-#[test]
-fn greedy_cosine_rejects_non_finite_peak_product_at_runtime() {
-    let (left, right) = large_peak_spectra();
-    let scorer = GreedyCosine::new(3.0_f32, 3.0_f32, 0.1_f32).expect("valid scorer config");
-
-    let error = scorer
-        .similarity(&left, &right)
-        .expect_err("overflowed peak product should be rejected");
-    assert_eq!(
-        error,
-        SimilarityComputationError::NonFiniteValue("peak_product")
-    );
 }
 
 #[test]
