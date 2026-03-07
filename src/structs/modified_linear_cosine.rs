@@ -3,10 +3,9 @@
 //! Extends [`super::LinearCosine`] by also matching fragment peaks shifted by
 //! the precursor mass difference when that shift exceeds the configured
 //! tolerance. Direct and shifted match candidates are merged and resolved via
-//! greedy assignment (sort by descending product weight, pick best available),
-//! identical to [`super::ModifiedGreedyCosine`] but on the smaller candidate
-//! set from two linear sweeps. Unlike [`super::ModifiedHungarianCosine`], this
-//! is not an optimal assignment solver.
+//! optimal DP-based assignment on the conflict graph's path components,
+//! producing the same result as [`super::ModifiedHungarianCosine`] in linear
+//! time for well-separated spectra.
 
 use alloc::vec::Vec;
 
@@ -14,8 +13,8 @@ use geometric_traits::prelude::{Finite, Number, ScalarSimilarity, TotalOrd};
 use num_traits::{Float, Pow, ToPrimitive, Zero};
 
 use super::cosine_common::{
-    CosineConfig, finalize_similarity_score, greedy_modified_linear_matches,
-    impl_cosine_wrapper_config_api, prepare_peak_products, to_f64_checked_for_computation,
+    CosineConfig, finalize_similarity_score, impl_cosine_wrapper_config_api,
+    optimal_modified_linear_matches, prepare_peak_products, to_f64_checked_for_computation,
     validate_well_separated,
 };
 use super::similarity_errors::SimilarityComputationError;
@@ -24,13 +23,12 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 /// Modified linear-time cosine similarity for mass spectra.
 ///
 /// Combines direct and precursor-shifted peak matches from two linear sweeps
-/// when `|precursor_delta| > mz_tolerance`, then resolves conflicts via greedy
-/// assignment. This matches the greedy conflict-resolution behavior of
-/// [`super::ModifiedGreedyCosine`] rather than the optimal assignment behavior
-/// of [`super::ModifiedHungarianCosine`].
-/// Requires the same
-/// strict well-separated precondition as [`super::LinearCosine`]
-/// (consecutive peaks > `2 * mz_tolerance`).
+/// when `|precursor_delta| > mz_tolerance`, then resolves conflicts via
+/// optimal DP-based assignment on the conflict graph's path components.
+/// For well-separated spectra this produces the same result as
+/// [`super::ModifiedHungarianCosine`] in linear time.
+/// Requires the same strict well-separated precondition as
+/// [`super::LinearCosine`] (consecutive peaks > `2 * mz_tolerance`).
 pub struct ModifiedLinearCosine<EXP, MZ> {
     config: CosineConfig<EXP, MZ>,
 }
@@ -75,17 +73,38 @@ where
         validate_well_separated(&left_mz, tolerance, "left spectrum")?;
         validate_well_separated(&right_mz, tolerance, "right spectrum")?;
 
-        // Compute the precursor mass shift.
-        let left_precursor =
+        let left_prec =
             to_f64_checked_for_computation(left.precursor_mz(), "left_precursor_mz")?;
-        let right_precursor =
+        let right_prec =
             to_f64_checked_for_computation(right.precursor_mz(), "right_precursor_mz")?;
-        let shift = left_precursor - right_precursor;
 
-        // Collect direct + shifted matches, merge, greedy-select.
-        let selected =
-            greedy_modified_linear_matches(&left_mz, &right_mz, tolerance, shift, |i, j| {
-                left_peaks.as_f64[i] * right_peaks.as_f64[j]
+        // Collect direct + shifted matches, merge, optimal DP-select.
+        // The benefit function mirrors the cost model in `score_from_matching`:
+        // benefit = normalized product, or ε when the product is too small to
+        // move the f64 cost below non_edge_cost.
+        let non_edge_cost = 1.0_f64 + f64::EPSILON;
+        let max_left = left_peaks.max_f64;
+        let max_right = right_peaks.max_f64;
+        let selected = optimal_modified_linear_matches(
+            &left_mz,
+            &right_mz,
+            tolerance,
+            left_prec,
+            right_prec,
+            |i, j| {
+                let normalized =
+                    (left_peaks.as_f64[i] / max_left) * (right_peaks.as_f64[j] / max_right);
+                let raw_cost = non_edge_cost - normalized;
+                if raw_cost >= non_edge_cost {
+                    // The normalized product is too small to change the f64
+                    // cost from non_edge_cost.  Return zero benefit so the DP
+                    // never prefers accumulating these over a single real
+                    // edge — matching the Crouse LAPJV solver's effective
+                    // tie-breaking behaviour.
+                    0.0
+                } else {
+                    normalized
+                }
             });
 
         let mut score_sum = S1::Mz::zero();

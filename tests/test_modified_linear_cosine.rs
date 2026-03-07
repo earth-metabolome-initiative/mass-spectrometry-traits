@@ -2,9 +2,8 @@
 
 use mass_spectrometry::prelude::{
     CocaineSpectrum, GenericSpectrum, GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearCosine,
-    ModifiedGreedyCosine, ModifiedHungarianCosine, ModifiedLinearCosine, PhenylalanineSpectrum,
-    SalicinSpectrum, ScalarSimilarity, SimilarityComputationError, Spectrum, SpectrumAlloc,
-    SpectrumMut,
+    ModifiedHungarianCosine, ModifiedLinearCosine, PhenylalanineSpectrum, SalicinSpectrum,
+    ScalarSimilarity, SimilarityComputationError, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 
 fn modified_linear_cosine() -> ModifiedLinearCosine<f32, f32> {
@@ -123,56 +122,9 @@ fn shift0_equivalence_cross() {
     assert_shift0_equivalence("cocaine_vs_glucose", &cocaine, &glucose);
 }
 
-// ---------- strict parity with ModifiedGreedyCosine on reference spectra ----------
+// ---------- strict parity with ModifiedHungarianCosine on reference spectra ----------
 
-fn assert_matches_modified_greedy(
-    name: &str,
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
-) {
-    let modified_greedy =
-        ModifiedGreedyCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-    let modified_linear =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-
-    let (greedy_score, greedy_matches) = modified_greedy
-        .similarity(left, right)
-        .expect("similarity computation should succeed");
-    let (linear_score, linear_matches) = modified_linear
-        .similarity(left, right)
-        .expect("similarity computation should succeed");
-
-    assert!(
-        (greedy_score - linear_score).abs() < 1e-6,
-        "{name}: ModifiedGreedyCosine={greedy_score} vs ModifiedLinearCosine={linear_score}"
-    );
-    assert_eq!(
-        greedy_matches, linear_matches,
-        "{name}: ModifiedGreedyCosine matches={greedy_matches} vs ModifiedLinearCosine matches={linear_matches}"
-    );
-}
-
-#[test]
-fn parity_with_modified_greedy_cocaine_glucose() {
-    assert_matches_modified_greedy(
-        "cocaine_glucose",
-        &GenericSpectrum::cocaine().expect("reference spectrum should build"),
-        &GenericSpectrum::glucose().expect("reference spectrum should build"),
-    );
-}
-
-#[test]
-fn parity_with_modified_greedy_hydroxy_cholesterol_phenylalanine() {
-    assert_matches_modified_greedy(
-        "hc_phe",
-        &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
-        &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
-    );
-}
-
-// ---------- non-strict regression check vs ModifiedHungarianCosine ----------
-
-fn assert_no_better_than_modified_hungarian(
+fn assert_matches_modified_hungarian(
     name: &str,
     left: &GenericSpectrum<f32, f32>,
     right: &GenericSpectrum<f32, f32>,
@@ -190,18 +142,18 @@ fn assert_no_better_than_modified_hungarian(
         .expect("similarity computation should succeed");
 
     assert!(
-        linear_score <= hungarian_score + 1e-6,
-        "{name}: ModifiedLinearCosine score={linear_score} exceeded ModifiedHungarianCosine score={hungarian_score}"
+        (hungarian_score - linear_score).abs() < 1e-6,
+        "{name}: ModifiedHungarianCosine={hungarian_score} vs ModifiedLinearCosine={linear_score}"
     );
-    assert!(
-        linear_matches <= hungarian_matches,
-        "{name}: ModifiedLinearCosine matches={linear_matches} exceeded ModifiedHungarianCosine matches={hungarian_matches}"
+    assert_eq!(
+        hungarian_matches, linear_matches,
+        "{name}: ModifiedHungarianCosine matches={hungarian_matches} vs ModifiedLinearCosine matches={linear_matches}"
     );
 }
 
 #[test]
-fn regression_vs_modified_hungarian_cocaine_glucose() {
-    assert_no_better_than_modified_hungarian(
+fn parity_with_modified_hungarian_cocaine_glucose() {
+    assert_matches_modified_hungarian(
         "cocaine_glucose",
         &GenericSpectrum::cocaine().expect("reference spectrum should build"),
         &GenericSpectrum::glucose().expect("reference spectrum should build"),
@@ -209,8 +161,8 @@ fn regression_vs_modified_hungarian_cocaine_glucose() {
 }
 
 #[test]
-fn regression_vs_modified_hungarian_hydroxy_cholesterol_phenylalanine() {
-    assert_no_better_than_modified_hungarian(
+fn parity_with_modified_hungarian_hydroxy_cholesterol_phenylalanine() {
+    assert_matches_modified_hungarian(
         "hc_phe",
         &GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build"),
         &GenericSpectrum::phenylalanine().expect("reference spectrum should build"),
@@ -311,12 +263,12 @@ fn overlapping_direct_and_shifted_windows_do_not_double_count() {
     right.add_peak(50.03, 1000.0).unwrap();
     right.add_peak(80.03, 500.0).unwrap();
 
-    let modified_greedy =
-        ModifiedGreedyCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified_hungarian =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
     let modified_linear =
         ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
 
-    let (greedy_score, greedy_matches) = modified_greedy
+    let (hungarian_score, hungarian_matches) = modified_hungarian
         .similarity(&left, &right)
         .expect("similarity computation should succeed");
     let (linear_score, linear_matches) = modified_linear
@@ -324,12 +276,12 @@ fn overlapping_direct_and_shifted_windows_do_not_double_count() {
         .expect("similarity computation should succeed");
 
     assert!(
-        (greedy_score - linear_score).abs() < 1e-6,
-        "ModifiedGreedyCosine={greedy_score} vs ModifiedLinearCosine={linear_score}"
+        (hungarian_score - linear_score).abs() < 1e-6,
+        "ModifiedHungarianCosine={hungarian_score} vs ModifiedLinearCosine={linear_score}"
     );
     assert_eq!(
-        greedy_matches, linear_matches,
-        "ModifiedGreedyCosine matches={greedy_matches} vs ModifiedLinearCosine matches={linear_matches}"
+        hungarian_matches, linear_matches,
+        "ModifiedHungarianCosine matches={hungarian_matches} vs ModifiedLinearCosine matches={linear_matches}"
     );
     assert_eq!(linear_matches, 2);
 }
@@ -454,4 +406,57 @@ fn equivalence_at_precursor_tolerance_boundary() {
         "Boundary precursor tolerance: LinearCosine={linear_score} vs ModifiedLinearCosine={modified_score}"
     );
     assert_eq!(linear_matches, modified_matches);
+}
+
+// ---------- DP optimality: greedy would be suboptimal here ----------
+
+#[test]
+fn dp_beats_greedy_on_contested_shifted_match() {
+    // Left = [100, 110] precursor=150; Right = [100, 110] precursor=140
+    // shift = 10.  Direct: (0,0) and (1,1).  Shifted: (1,0).
+    // Three candidates, right[0] contested by left[0] (direct) and left[1]
+    // (shifted).
+    //
+    // With mz_power=1, intensity_power=1, products = mz * intensity:
+    //   left_products  = [100*10, 110*10] = [1000, 1100]
+    //   right_products = [100*10, 110*8]  = [1000, 880]
+    //
+    //   weight(0,0) = 1000*1000 = 1_000_000
+    //   weight(1,0) = 1100*1000 = 1_100_000   ← greedy picks this alone
+    //   weight(1,1) = 1100*880  =   968_000
+    //
+    // Greedy: picks (1,0) = 1_100_000, 1 match.
+    // Optimal: picks (0,0)+(1,1) = 1_968_000, 2 matches.
+    let mut left =
+        GenericSpectrum::with_capacity(150.0_f32, 2).expect("valid spectrum allocation");
+    left.add_peak(100.0, 10.0).unwrap();
+    left.add_peak(110.0, 10.0).unwrap();
+
+    let mut right =
+        GenericSpectrum::with_capacity(140.0_f32, 2).expect("valid spectrum allocation");
+    right.add_peak(100.0, 10.0).unwrap();
+    right.add_peak(110.0, 8.0).unwrap();
+
+    let modified_linear =
+        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified_hungarian =
+        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+
+    let (linear_score, linear_matches) = modified_linear
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+    let (hungarian_score, hungarian_matches) = modified_hungarian
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+
+    // Both should find 2 matches with the optimal assignment.
+    assert_eq!(linear_matches, 2, "DP should find 2 matches, got {linear_matches}");
+    assert_eq!(
+        hungarian_matches, linear_matches,
+        "match count parity: Hungarian={hungarian_matches} vs Linear={linear_matches}"
+    );
+    assert!(
+        (hungarian_score - linear_score).abs() < 1e-6,
+        "score parity: Hungarian={hungarian_score} vs Linear={linear_score}"
+    );
 }
