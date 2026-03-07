@@ -1,26 +1,31 @@
 # Fuzzing
 
-`hungarian_cosine` is intentionally a thin wrapper. The harness and oracles
-live in the main crate (`mass_spectrometry::fuzzing::run_hungarian_cosine_case`)
-so regression tests can replay the same inputs.
+All fuzz targets are intentionally thin wrappers. Harness logic and oracles
+live in the main crate (`mass_spectrometry::fuzzing::*`) so regression tests
+replay the exact same code paths.
 
 ## Run
 
 ```bash
 cargo fuzz run hungarian_cosine
+cargo fuzz run modified_hungarian_cosine
+cargo fuzz run linear_entropy
 ```
 
 ## Replay
 
-`test_hungarian_cosine_fuzz_harness` contains one replay test for this harness.
-On each run it:
+Each replay test mirrors crashes from `fuzz/artifacts/*` into
+`tests/fixtures/fuzz/*/crashes/`, then replays every file in that fixture
+directory:
 
-1. copies all files from `fuzz/artifacts/hungarian_cosine/` into
-   `tests/fixtures/fuzz/hungarian_cosine/crashes/`
-2. replays every file in `tests/fixtures/fuzz/hungarian_cosine/crashes/`
+1. `test_hungarian_cosine_fuzz_harness`
+2. `test_modified_hungarian_cosine_fuzz_harness`
+3. `test_linear_entropy_fuzz_harness`
 
 Run:
 
 ```bash
 cargo test --test test_hungarian_cosine_fuzz_harness
+cargo test --test test_modified_hungarian_cosine_fuzz_harness
+cargo test --test test_linear_entropy_fuzz_harness
 ```
