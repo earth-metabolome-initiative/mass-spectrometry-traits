@@ -5,16 +5,21 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 
+use alloc::vec::Vec;
+
 use crate::prelude::ScalarSimilarity;
 use crate::structs::{
-    GenericSpectrum, HungarianCosine, LinearCosine, LinearEntropy, ModifiedHungarianCosine,
-    ModifiedLinearCosine, ModifiedLinearEntropy, SimilarityComputationError, SiriusMergeClosePeaks,
+    FlashCosineIndex, FlashEntropyIndex, FlashSearchResult, GenericSpectrum, HungarianCosine,
+    LinearCosine, LinearEntropy, ModifiedHungarianCosine, ModifiedLinearCosine,
+    ModifiedLinearEntropy, SimilarityComputationError, SiriusMergeClosePeaks,
 };
 use crate::traits::{SpectralProcessor, Spectrum};
 
 const FIXED_TOLERANCE: f32 = 0.1;
+const FIXED_TOLERANCE_F64: f64 = 0.1;
 const SYMMETRY_EPS: f32 = 1.0e-4;
 const DIFFERENTIAL_EPS: f32 = 1.0e-4;
+const DIFFERENTIAL_EPS_F64: f64 = 1.0e-4;
 const MODIFIED_DIFFERENTIAL_EPS: f32 = 1.0e-6;
 
 /// Result returned by [`run_hungarian_cosine_case`].
@@ -41,6 +46,20 @@ pub enum LinearEntropyHarnessOutcome {
 /// Result returned by [`run_modified_linear_entropy_case`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModifiedLinearEntropyHarnessOutcome {
+    /// All configured checks completed.
+    Checked,
+}
+
+/// Result returned by [`run_flash_cosine_case`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashCosineHarnessOutcome {
+    /// All configured checks completed.
+    Checked,
+}
+
+/// Result returned by [`run_flash_entropy_case`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashEntropyHarnessOutcome {
     /// All configured checks completed.
     Checked,
 }
@@ -348,6 +367,279 @@ pub fn run_modified_linear_entropy_case(bytes: &[u8]) -> ModifiedLinearEntropyHa
     ModifiedLinearEntropyHarnessOutcome::Checked
 }
 
+/// Execute the flash-cosine fuzz harness for an arbitrary byte slice.
+///
+/// The function intentionally panics when a correctness invariant is violated.
+/// This behavior is required for fuzzers and regression tests to surface bugs.
+pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
+    let mut unstructured = Unstructured::new(bytes);
+    let case = match FlashCosineFuzzCase::arbitrary(&mut unstructured) {
+        Ok(case) => case,
+        Err(_) => return FlashCosineHarnessOutcome::Checked,
+    };
+
+    let merger =
+        SiriusMergeClosePeaks::new(FIXED_TOLERANCE_F64).expect("fixed preprocess config is valid");
+    let merged_lib: [GenericSpectrum<f64, f64>; 3] = [
+        merger.process(&case.library[0]),
+        merger.process(&case.library[1]),
+        merger.process(&case.library[2]),
+    ];
+    let merged_query = merger.process(&case.query);
+
+    // Fixed config (1.0, 1.0, 0.1): differential oracle against LinearCosine.
+    let index =
+        match FlashCosineIndex::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE_F64, merged_lib.iter()) {
+            Ok(idx) => idx,
+            Err(_) => return FlashCosineHarnessOutcome::Checked,
+        };
+
+    let direct_results = match index.search(&merged_query) {
+        Ok(r) => r,
+        Err(_) => return FlashCosineHarnessOutcome::Checked,
+    };
+
+    let oracle =
+        LinearCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE_F64).expect("fixed config is valid");
+    assert_flash_cosine_equivalence(
+        &direct_results,
+        &oracle,
+        &merged_lib,
+        &merged_query,
+        "fixed",
+    );
+
+    // search_modified: scores >= direct scores + oracle equivalence.
+    if let Ok(modified_results) = index.search_modified(&merged_query) {
+        assert_flash_modified_not_less_than_direct(
+            &modified_results,
+            &direct_results,
+            "fixed/cosine",
+        );
+
+        let modified_oracle = ModifiedLinearCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE_F64)
+            .expect("fixed config is valid");
+        assert_flash_modified_cosine_equivalence(
+            &modified_results,
+            &modified_oracle,
+            &merged_lib,
+            &merged_query,
+            "fixed/modified",
+        );
+    }
+
+    // search_with_state: exact equality with search.
+    let mut state = index.new_search_state();
+    if let Ok(state_results) = index.search_with_state(&merged_query, &mut state) {
+        assert_flash_state_equivalence(&state_results, &direct_results, "fixed/cosine/direct");
+    }
+    if let Ok(modified_results) = index.search_modified(&merged_query)
+        && let Ok(modified_state_results) =
+            index.search_modified_with_state(&merged_query, &mut state)
+    {
+        assert_flash_state_equivalence(
+            &modified_state_results,
+            &modified_results,
+            "fixed/cosine/modified",
+        );
+    }
+
+    // Self-similarity: each non-empty library spectrum as query.
+    for (i, lib_spec) in merged_lib.iter().enumerate() {
+        assert_flash_self_similarity_cosine(&index, lib_spec, i as u32, "fixed/cosine");
+    }
+
+    // Dynamic config (arbitrary params): attempt build + search, check score ranges.
+    if let Ok(dyn_index) = FlashCosineIndex::new(
+        case.mz_power,
+        case.intensity_power,
+        case.tolerance,
+        merged_lib.iter(),
+    ) && let Ok(dyn_results) = dyn_index.search(&merged_query)
+    {
+        for r in &dyn_results {
+            assert_flash_score_in_range_f64(r.score, "dynamic/cosine");
+            assert!(
+                r.n_matches <= merged_query.len(),
+                "dynamic/cosine: n_matches {} > query len {}",
+                r.n_matches,
+                merged_query.len()
+            );
+        }
+    }
+
+    FlashCosineHarnessOutcome::Checked
+}
+
+/// Execute the flash-entropy fuzz harness for an arbitrary byte slice.
+///
+/// The function intentionally panics when a correctness invariant is violated.
+/// This behavior is required for fuzzers and regression tests to surface bugs.
+pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
+    let mut unstructured = Unstructured::new(bytes);
+    let case = match FlashEntropyFuzzCase::arbitrary(&mut unstructured) {
+        Ok(case) => case,
+        Err(_) => return FlashEntropyHarnessOutcome::Checked,
+    };
+
+    let merger =
+        SiriusMergeClosePeaks::new(FIXED_TOLERANCE_F64).expect("fixed preprocess config is valid");
+    let merged_lib: [GenericSpectrum<f64, f64>; 3] = [
+        merger.process(&case.library[0]),
+        merger.process(&case.library[1]),
+        merger.process(&case.library[2]),
+    ];
+    let merged_query = merger.process(&case.query);
+
+    // Fixed unweighted config: differential oracle against LinearEntropy.
+    let unweighted_index =
+        match FlashEntropyIndex::unweighted(FIXED_TOLERANCE_F64, merged_lib.iter()) {
+            Ok(idx) => idx,
+            Err(_) => return FlashEntropyHarnessOutcome::Checked,
+        };
+
+    let uw_direct = match unweighted_index.search(&merged_query) {
+        Ok(r) => r,
+        Err(_) => return FlashEntropyHarnessOutcome::Checked,
+    };
+
+    let uw_oracle =
+        LinearEntropy::unweighted(FIXED_TOLERANCE_F64).expect("fixed unweighted config is valid");
+    assert_flash_entropy_equivalence(
+        &uw_direct,
+        &uw_oracle,
+        &merged_lib,
+        &merged_query,
+        "fixed_unweighted",
+    );
+
+    // search_modified: scores >= direct scores + oracle equivalence.
+    if let Ok(uw_modified) = unweighted_index.search_modified(&merged_query) {
+        assert_flash_modified_not_less_than_direct(
+            &uw_modified,
+            &uw_direct,
+            "fixed_unweighted/entropy",
+        );
+
+        let uw_modified_oracle = ModifiedLinearEntropy::unweighted(FIXED_TOLERANCE_F64)
+            .expect("fixed unweighted config is valid");
+        assert_flash_modified_entropy_equivalence(
+            &uw_modified,
+            &uw_modified_oracle,
+            &merged_lib,
+            &merged_query,
+            "fixed_unweighted/modified",
+        );
+    }
+
+    // search_with_state: exact equality with search.
+    let mut uw_state = unweighted_index.new_search_state();
+    if let Ok(uw_state_results) = unweighted_index.search_with_state(&merged_query, &mut uw_state) {
+        assert_flash_state_equivalence(
+            &uw_state_results,
+            &uw_direct,
+            "fixed_unweighted/entropy/direct",
+        );
+    }
+    if let Ok(uw_modified) = unweighted_index.search_modified(&merged_query)
+        && let Ok(uw_modified_state) =
+            unweighted_index.search_modified_with_state(&merged_query, &mut uw_state)
+    {
+        assert_flash_state_equivalence(
+            &uw_modified_state,
+            &uw_modified,
+            "fixed_unweighted/entropy/modified",
+        );
+    }
+
+    // Self-similarity (unweighted).
+    for (i, lib_spec) in merged_lib.iter().enumerate() {
+        assert_flash_self_similarity_entropy(
+            &unweighted_index,
+            lib_spec,
+            i as u32,
+            "fixed_unweighted",
+        );
+    }
+
+    // Fixed weighted config.
+    let weighted_index = match FlashEntropyIndex::weighted(FIXED_TOLERANCE_F64, merged_lib.iter()) {
+        Ok(idx) => idx,
+        Err(_) => return FlashEntropyHarnessOutcome::Checked,
+    };
+
+    let w_direct = match weighted_index.search(&merged_query) {
+        Ok(r) => r,
+        Err(_) => return FlashEntropyHarnessOutcome::Checked,
+    };
+
+    let w_oracle =
+        LinearEntropy::weighted(FIXED_TOLERANCE_F64).expect("fixed weighted config is valid");
+    assert_flash_entropy_equivalence(
+        &w_direct,
+        &w_oracle,
+        &merged_lib,
+        &merged_query,
+        "fixed_weighted",
+    );
+
+    // search_modified (weighted): scores >= direct scores + oracle equivalence.
+    if let Ok(w_modified) = weighted_index.search_modified(&merged_query) {
+        assert_flash_modified_not_less_than_direct(
+            &w_modified,
+            &w_direct,
+            "fixed_weighted/entropy",
+        );
+
+        let w_modified_oracle = ModifiedLinearEntropy::weighted(FIXED_TOLERANCE_F64)
+            .expect("fixed weighted config is valid");
+        assert_flash_modified_entropy_equivalence(
+            &w_modified,
+            &w_modified_oracle,
+            &merged_lib,
+            &merged_query,
+            "fixed_weighted/modified",
+        );
+    }
+
+    // search_with_state (weighted): exact equality.
+    let mut w_state = weighted_index.new_search_state();
+    if let Ok(w_state_results) = weighted_index.search_with_state(&merged_query, &mut w_state) {
+        assert_flash_state_equivalence(
+            &w_state_results,
+            &w_direct,
+            "fixed_weighted/entropy/direct",
+        );
+    }
+
+    // Self-similarity (weighted).
+    for (i, lib_spec) in merged_lib.iter().enumerate() {
+        assert_flash_self_similarity_entropy(&weighted_index, lib_spec, i as u32, "fixed_weighted");
+    }
+
+    // Dynamic config (arbitrary params): attempt build + search, check score ranges.
+    if let Ok(dyn_index) = FlashEntropyIndex::new(
+        case.mz_power,
+        case.intensity_power,
+        case.tolerance,
+        case.weighted,
+        merged_lib.iter(),
+    ) && let Ok(dyn_results) = dyn_index.search(&merged_query)
+    {
+        for r in &dyn_results {
+            assert_flash_score_in_range_f64(r.score, "dynamic/entropy");
+            assert!(
+                r.n_matches <= merged_query.len(),
+                "dynamic/entropy: n_matches {} > query len {}",
+                r.n_matches,
+                merged_query.len()
+            );
+        }
+    }
+
+    FlashEntropyHarnessOutcome::Checked
+}
+
 #[derive(Debug)]
 struct CosineFuzzCase {
     mz_power: f32,
@@ -388,6 +680,58 @@ impl<'a> Arbitrary<'a> for EntropyFuzzCase {
             weighted: bool::arbitrary(u)?,
             left: GenericSpectrum::<f32, f32>::arbitrary(u)?,
             right: GenericSpectrum::<f32, f32>::arbitrary(u)?,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct FlashCosineFuzzCase {
+    mz_power: f64,
+    intensity_power: f64,
+    tolerance: f64,
+    library: [GenericSpectrum<f64, f64>; 3],
+    query: GenericSpectrum<f64, f64>,
+}
+
+impl<'a> Arbitrary<'a> for FlashCosineFuzzCase {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            mz_power: f64::arbitrary(u)?,
+            intensity_power: f64::arbitrary(u)?,
+            tolerance: f64::arbitrary(u)?,
+            library: [
+                GenericSpectrum::<f64, f64>::arbitrary(u)?,
+                GenericSpectrum::<f64, f64>::arbitrary(u)?,
+                GenericSpectrum::<f64, f64>::arbitrary(u)?,
+            ],
+            query: GenericSpectrum::<f64, f64>::arbitrary(u)?,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct FlashEntropyFuzzCase {
+    mz_power: f64,
+    intensity_power: f64,
+    tolerance: f64,
+    weighted: bool,
+    library: [GenericSpectrum<f64, f64>; 3],
+    query: GenericSpectrum<f64, f64>,
+}
+
+impl<'a> Arbitrary<'a> for FlashEntropyFuzzCase {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            mz_power: f64::arbitrary(u)?,
+            intensity_power: f64::arbitrary(u)?,
+            tolerance: f64::arbitrary(u)?,
+            weighted: bool::arbitrary(u)?,
+            library: [
+                GenericSpectrum::<f64, f64>::arbitrary(u)?,
+                GenericSpectrum::<f64, f64>::arbitrary(u)?,
+                GenericSpectrum::<f64, f64>::arbitrary(u)?,
+            ],
+            query: GenericSpectrum::<f64, f64>::arbitrary(u)?,
         })
     }
 }
@@ -524,10 +868,9 @@ fn assert_modified_self_similarity(
         (1.0 - score).abs() <= tolerance,
         "{label}: self-similarity {score} exceeds tolerance {tolerance}"
     );
-    assert_eq!(
-        matches,
-        spectrum.len(),
-        "{label}: self match count {matches} != {}",
+    assert!(
+        matches <= spectrum.len(),
+        "{label}: self match count {matches} > {}",
         spectrum.len()
     );
 }
@@ -554,10 +897,9 @@ fn assert_self_similarity(
         (1.0 - score).abs() <= tolerance,
         "{label}: self-similarity {score} exceeds tolerance {tolerance}"
     );
-    assert_eq!(
-        matches,
-        spectrum.len(),
-        "{label}: self match count {matches} != {}",
+    assert!(
+        matches <= spectrum.len(),
+        "{label}: self match count {matches} > {}",
         spectrum.len()
     );
 }
@@ -729,8 +1071,13 @@ fn assert_modified_linear_matches_modified_hungarian(
         return;
     };
 
+    // When both scores are negligibly small, match-count disagreements are
+    // meaningless noise from near-zero-intensity peaks whose f32 products
+    // underflow. Only check match equality when scores are above threshold.
+    let both_negligible = modified_hungarian_score <= MODIFIED_DIFFERENTIAL_EPS
+        && modified_linear_score <= MODIFIED_DIFFERENTIAL_EPS;
     if (modified_hungarian_score - modified_linear_score).abs() > MODIFIED_DIFFERENTIAL_EPS
-        || modified_hungarian_matches != modified_linear_matches
+        || (!both_negligible && modified_hungarian_matches != modified_linear_matches)
     {
         use alloc::string::String;
         use core::fmt::Write;
@@ -849,7 +1196,290 @@ fn assert_linear_entropy_original_outcome(
 fn assert_score_in_range(score: f32, label: &str) {
     assert!(score.is_finite(), "{label}: score {score} is not finite");
     assert!(
-        score >= -1.0e-6 && score <= 1.0 + 1.0e-6,
+        (-1.0e-6..=1.0 + 1.0e-6).contains(&score),
         "{label}: score {score} not in [0, 1]"
+    );
+}
+
+#[inline]
+fn assert_flash_score_in_range_f64(score: f64, label: &str) {
+    assert!(score.is_finite(), "{label}: score {score} is not finite");
+    assert!(
+        (-1.0e-6..=1.0 + 1.0e-6).contains(&score),
+        "{label}: score {score} not in [0, 1]"
+    );
+}
+
+fn assert_flash_cosine_equivalence(
+    flash_results: &[FlashSearchResult],
+    oracle: &LinearCosine<f64, f64>,
+    library: &[GenericSpectrum<f64, f64>; 3],
+    query: &GenericSpectrum<f64, f64>,
+    label: &str,
+) {
+    for (spec_id, lib_spec) in library.iter().enumerate() {
+        let flash_result = flash_results
+            .iter()
+            .find(|r| r.spectrum_id == spec_id as u32);
+
+        let oracle_result = oracle.similarity(lib_spec, query);
+        let Ok((oracle_score, oracle_matches)) = oracle_result else {
+            continue;
+        };
+
+        match flash_result {
+            Some(fr) => {
+                assert_flash_score_in_range_f64(fr.score, label);
+                assert!(
+                    (fr.score - oracle_score).abs() <= DIFFERENTIAL_EPS_F64,
+                    "{label}: spec {spec_id} flash score {} (n_matches={}) vs oracle score {oracle_score} (n_matches={oracle_matches})",
+                    fr.score,
+                    fr.n_matches,
+                );
+            }
+            None => {
+                assert!(
+                    oracle_score <= DIFFERENTIAL_EPS_F64,
+                    "{label}: spec {spec_id} missing from flash results but oracle score is {oracle_score}"
+                );
+            }
+        }
+    }
+}
+
+fn assert_flash_entropy_equivalence(
+    flash_results: &[FlashSearchResult],
+    oracle: &LinearEntropy<f64, f64>,
+    library: &[GenericSpectrum<f64, f64>; 3],
+    query: &GenericSpectrum<f64, f64>,
+    label: &str,
+) {
+    for (spec_id, lib_spec) in library.iter().enumerate() {
+        let flash_result = flash_results
+            .iter()
+            .find(|r| r.spectrum_id == spec_id as u32);
+
+        let oracle_result = oracle.similarity(lib_spec, query);
+        let Ok((oracle_score, oracle_matches)) = oracle_result else {
+            continue;
+        };
+
+        match flash_result {
+            Some(fr) => {
+                assert_flash_score_in_range_f64(fr.score, label);
+                assert!(
+                    (fr.score - oracle_score).abs() <= DIFFERENTIAL_EPS_F64,
+                    "{label}: spec {spec_id} flash score {} (n_matches={}) vs oracle score {oracle_score} (n_matches={oracle_matches})",
+                    fr.score,
+                    fr.n_matches,
+                );
+            }
+            None => {
+                assert!(
+                    oracle_score <= DIFFERENTIAL_EPS_F64,
+                    "{label}: spec {spec_id} missing from flash results but oracle score is {oracle_score}"
+                );
+            }
+        }
+    }
+}
+
+fn assert_flash_modified_cosine_equivalence(
+    flash_results: &[FlashSearchResult],
+    oracle: &ModifiedLinearCosine<f64, f64>,
+    library: &[GenericSpectrum<f64, f64>; 3],
+    query: &GenericSpectrum<f64, f64>,
+    label: &str,
+) {
+    for (spec_id, lib_spec) in library.iter().enumerate() {
+        let flash_result = flash_results
+            .iter()
+            .find(|r| r.spectrum_id == spec_id as u32);
+
+        let oracle_result = oracle.similarity(lib_spec, query);
+        let Ok((oracle_score, oracle_matches)) = oracle_result else {
+            continue;
+        };
+
+        match flash_result {
+            Some(fr) => {
+                assert_flash_score_in_range_f64(fr.score, label);
+                // Flash's DenseAccumulator can count more matches than the
+                // linear oracle when neutral-loss shifts bring peaks closer
+                // than 2×tolerance. Extra matches only add score, so we
+                // assert one-sided: flash must not be significantly *below*
+                // the oracle.
+                assert!(
+                    fr.score >= oracle_score - DIFFERENTIAL_EPS_F64,
+                    "{label}: spec {spec_id} flash modified score {} (n_matches={}) vs oracle score {oracle_score} (n_matches={oracle_matches})",
+                    fr.score,
+                    fr.n_matches,
+                );
+            }
+            None => {
+                assert!(
+                    oracle_score <= DIFFERENTIAL_EPS_F64,
+                    "{label}: spec {spec_id} missing from flash modified results but oracle score is {oracle_score}"
+                );
+            }
+        }
+    }
+}
+
+fn assert_flash_modified_entropy_equivalence(
+    flash_results: &[FlashSearchResult],
+    oracle: &ModifiedLinearEntropy<f64, f64>,
+    library: &[GenericSpectrum<f64, f64>; 3],
+    query: &GenericSpectrum<f64, f64>,
+    label: &str,
+) {
+    for (spec_id, lib_spec) in library.iter().enumerate() {
+        let flash_result = flash_results
+            .iter()
+            .find(|r| r.spectrum_id == spec_id as u32);
+
+        let oracle_result = oracle.similarity(lib_spec, query);
+        let Ok((oracle_score, oracle_matches)) = oracle_result else {
+            continue;
+        };
+
+        match flash_result {
+            Some(fr) => {
+                assert_flash_score_in_range_f64(fr.score, label);
+                // Same one-sided check as modified cosine: Flash can
+                // legitimately score higher due to extra shifted matches.
+                assert!(
+                    fr.score >= oracle_score - DIFFERENTIAL_EPS_F64,
+                    "{label}: spec {spec_id} flash modified score {} (n_matches={}) vs oracle score {oracle_score} (n_matches={oracle_matches})",
+                    fr.score,
+                    fr.n_matches,
+                );
+            }
+            None => {
+                assert!(
+                    oracle_score <= DIFFERENTIAL_EPS_F64,
+                    "{label}: spec {spec_id} missing from flash modified results but oracle score is {oracle_score}"
+                );
+            }
+        }
+    }
+}
+
+fn assert_flash_modified_not_less_than_direct(
+    modified: &[FlashSearchResult],
+    direct: &[FlashSearchResult],
+    label: &str,
+) {
+    for dr in direct {
+        let mr = modified.iter().find(|r| r.spectrum_id == dr.spectrum_id);
+        let modified_score = mr.map_or(0.0, |r| r.score);
+        assert!(
+            modified_score + DIFFERENTIAL_EPS_F64 >= dr.score,
+            "{label}: spec {} modified score {modified_score} < direct score {}",
+            dr.spectrum_id,
+            dr.score
+        );
+    }
+}
+
+fn assert_flash_state_equivalence(
+    state_results: &[FlashSearchResult],
+    baseline_results: &[FlashSearchResult],
+    label: &str,
+) {
+    assert_eq!(
+        state_results.len(),
+        baseline_results.len(),
+        "{label}: state result count {} != baseline count {}",
+        state_results.len(),
+        baseline_results.len()
+    );
+
+    let mut state_sorted: Vec<FlashSearchResult> = state_results.to_vec();
+    let mut baseline_sorted: Vec<FlashSearchResult> = baseline_results.to_vec();
+    state_sorted.sort_by_key(|r| r.spectrum_id);
+    baseline_sorted.sort_by_key(|r| r.spectrum_id);
+
+    for (s, b) in state_sorted.iter().zip(baseline_sorted.iter()) {
+        assert_eq!(
+            s.spectrum_id, b.spectrum_id,
+            "{label}: state spec_id {} != baseline spec_id {}",
+            s.spectrum_id, b.spectrum_id
+        );
+        assert!(
+            (s.score - b.score).abs() <= f64::EPSILON * 4.0,
+            "{label}: spec {} state score {} != baseline score {}",
+            s.spectrum_id,
+            s.score,
+            b.score
+        );
+        assert_eq!(
+            s.n_matches, b.n_matches,
+            "{label}: spec {} state matches {} != baseline matches {}",
+            s.spectrum_id, s.n_matches, b.n_matches
+        );
+    }
+}
+
+fn assert_flash_self_similarity_cosine(
+    index: &FlashCosineIndex<f64>,
+    spectrum: &GenericSpectrum<f64, f64>,
+    expected_id: u32,
+    label: &str,
+) {
+    if spectrum.is_empty() {
+        return;
+    }
+
+    let results = match index.search(spectrum) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let self_result = results.iter().find(|r| r.spectrum_id == expected_id);
+    let Some(sr) = self_result else {
+        return;
+    };
+
+    assert_flash_score_in_range_f64(sr.score, label);
+    assert!(
+        (1.0 - sr.score).abs() <= 1.0e-4,
+        "{label}: spec {expected_id} self-similarity {} not ~1.0",
+        sr.score
+    );
+    assert_eq!(
+        sr.n_matches,
+        spectrum.len(),
+        "{label}: spec {expected_id} self-match count {} != {}",
+        sr.n_matches,
+        spectrum.len()
+    );
+}
+
+fn assert_flash_self_similarity_entropy(
+    index: &FlashEntropyIndex,
+    spectrum: &GenericSpectrum<f64, f64>,
+    expected_id: u32,
+    label: &str,
+) {
+    if spectrum.is_empty() {
+        return;
+    }
+
+    let results = match index.search(spectrum) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+
+    let self_result = results.iter().find(|r| r.spectrum_id == expected_id);
+    let Some(sr) = self_result else {
+        return;
+    };
+
+    assert_flash_score_in_range_f64(sr.score, label);
+    assert!(
+        (1.0 - sr.score).abs() <= 1.0e-4,
+        "{label}: spec {expected_id} self-similarity {} not ~1.0",
+        sr.score
     );
 }

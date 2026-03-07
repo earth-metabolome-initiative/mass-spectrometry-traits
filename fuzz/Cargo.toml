@@ -38,3 +38,17 @@ path = "fuzz_targets/modified_linear_entropy.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "flash_cosine"
+path = "fuzz_targets/flash_cosine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flash_entropy"
+path = "fuzz_targets/flash_entropy.rs"
+test = false
+doc = false
+bench = false
