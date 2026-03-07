@@ -8,7 +8,7 @@ use arbitrary::{Arbitrary, Unstructured};
 use crate::prelude::ScalarSimilarity;
 use crate::structs::{
     GenericSpectrum, HungarianCosine, LinearCosine, LinearEntropy, ModifiedHungarianCosine,
-    ModifiedLinearCosine, SimilarityComputationError, SiriusMergeClosePeaks,
+    ModifiedLinearCosine, ModifiedLinearEntropy, SimilarityComputationError, SiriusMergeClosePeaks,
 };
 use crate::traits::{SpectralProcessor, Spectrum};
 
@@ -34,6 +34,13 @@ pub enum ModifiedHungarianCosineHarnessOutcome {
 /// Result returned by [`run_linear_entropy_case`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinearEntropyHarnessOutcome {
+    /// All configured checks completed.
+    Checked,
+}
+
+/// Result returned by [`run_modified_linear_entropy_case`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModifiedLinearEntropyHarnessOutcome {
     /// All configured checks completed.
     Checked,
 }
@@ -212,6 +219,133 @@ pub fn run_linear_entropy_case(bytes: &[u8]) -> LinearEntropyHarnessOutcome {
     );
 
     LinearEntropyHarnessOutcome::Checked
+}
+
+/// Execute the modified-linear-entropy fuzz harness for an arbitrary byte
+/// slice.
+///
+/// The function intentionally panics when a correctness invariant is violated.
+/// This behavior is required for fuzzers and regression tests to surface bugs.
+pub fn run_modified_linear_entropy_case(bytes: &[u8]) -> ModifiedLinearEntropyHarnessOutcome {
+    let mut unstructured = Unstructured::new(bytes);
+    let case = match EntropyFuzzCase::arbitrary(&mut unstructured) {
+        Ok(case) => case,
+        Err(_) => return ModifiedLinearEntropyHarnessOutcome::Checked,
+    };
+
+    let merger =
+        SiriusMergeClosePeaks::new(FIXED_TOLERANCE).expect("fixed preprocess config is valid");
+    let merged_left = merger.process(&case.left);
+    let merged_right = merger.process(&case.right);
+
+    if let Ok(dynamic) = ModifiedLinearEntropy::new(
+        case.mz_power,
+        case.intensity_power,
+        case.tolerance,
+        case.weighted,
+    ) {
+        assert_modified_linear_entropy_bidirectional_properties(
+            &dynamic,
+            &case.left,
+            &case.right,
+            "dynamic/original",
+        );
+        assert_modified_linear_entropy_bidirectional_properties(
+            &dynamic,
+            &merged_left,
+            &merged_right,
+            "dynamic/merged",
+        );
+        if let Ok(dynamic_linear) = LinearEntropy::new(
+            case.mz_power,
+            case.intensity_power,
+            case.tolerance,
+            case.weighted,
+        ) {
+            assert_modified_entropy_not_less_than_linear(
+                &dynamic,
+                &dynamic_linear,
+                &merged_left,
+                &merged_right,
+                "dynamic/merged",
+            );
+        }
+    }
+
+    let fixed_unweighted = ModifiedLinearEntropy::unweighted(FIXED_TOLERANCE)
+        .expect("fixed unweighted modified entropy config is valid");
+    assert_modified_linear_entropy_bidirectional_properties(
+        &fixed_unweighted,
+        &merged_left,
+        &merged_right,
+        "fixed_unweighted/merged",
+    );
+    assert_modified_linear_entropy_self_similarity(
+        &fixed_unweighted,
+        &merged_left,
+        1.0e-4,
+        "fixed_unweighted/merged/left",
+    );
+    assert_modified_linear_entropy_self_similarity(
+        &fixed_unweighted,
+        &merged_right,
+        1.0e-4,
+        "fixed_unweighted/merged/right",
+    );
+    let fixed_unweighted_linear = LinearEntropy::unweighted(FIXED_TOLERANCE)
+        .expect("fixed unweighted linear entropy config is valid");
+    assert_modified_entropy_not_less_than_linear(
+        &fixed_unweighted,
+        &fixed_unweighted_linear,
+        &merged_left,
+        &merged_right,
+        "fixed_unweighted/merged",
+    );
+
+    let fixed_weighted = ModifiedLinearEntropy::weighted(FIXED_TOLERANCE)
+        .expect("fixed weighted modified entropy config is valid");
+    assert_modified_linear_entropy_bidirectional_properties(
+        &fixed_weighted,
+        &merged_left,
+        &merged_right,
+        "fixed_weighted/merged",
+    );
+    assert_modified_linear_entropy_self_similarity(
+        &fixed_weighted,
+        &merged_left,
+        1.0e-4,
+        "fixed_weighted/merged/left",
+    );
+    assert_modified_linear_entropy_self_similarity(
+        &fixed_weighted,
+        &merged_right,
+        1.0e-4,
+        "fixed_weighted/merged/right",
+    );
+    let fixed_weighted_linear = LinearEntropy::weighted(FIXED_TOLERANCE)
+        .expect("fixed weighted linear entropy config is valid");
+    assert_modified_entropy_not_less_than_linear(
+        &fixed_weighted,
+        &fixed_weighted_linear,
+        &merged_left,
+        &merged_right,
+        "fixed_weighted/merged",
+    );
+
+    assert_modified_linear_entropy_original_outcome(
+        &fixed_unweighted,
+        &case.left,
+        &case.right,
+        "fixed_unweighted/original",
+    );
+    assert_modified_linear_entropy_original_outcome(
+        &fixed_unweighted,
+        &case.right,
+        &case.left,
+        "fixed_unweighted/original/reverse",
+    );
+
+    ModifiedLinearEntropyHarnessOutcome::Checked
 }
 
 #[derive(Debug)]
@@ -456,6 +590,118 @@ fn assert_linear_entropy_self_similarity(
         "{label}: self match count {matches} != {}",
         spectrum.len()
     );
+}
+
+fn assert_modified_linear_entropy_bidirectional_properties<S1, S2>(
+    scorer: &ModifiedLinearEntropy<f32, f32>,
+    left: &S1,
+    right: &S2,
+    label: &str,
+) where
+    S1: Spectrum<Mz = f32, Intensity = f32>,
+    S2: Spectrum<Mz = f32, Intensity = f32>,
+{
+    let forward = scorer.similarity(left, right);
+    let reverse = scorer.similarity(right, left);
+
+    if let (Ok((forward_score, forward_matches)), Ok((reverse_score, reverse_matches))) =
+        (forward, reverse)
+    {
+        let max_matches = left.len().min(right.len());
+        assert_score_in_range(forward_score, label);
+        assert_score_in_range(reverse_score, label);
+        assert!(
+            forward_matches <= max_matches,
+            "{label}: forward matches {forward_matches} exceed limit {max_matches}"
+        );
+        assert!(
+            reverse_matches <= max_matches,
+            "{label}: reverse matches {reverse_matches} exceed limit {max_matches}"
+        );
+        assert!(
+            (forward_score - reverse_score).abs() <= SYMMETRY_EPS,
+            "{label}: asymmetry score mismatch {forward_score} vs {reverse_score}"
+        );
+    }
+}
+
+fn assert_modified_linear_entropy_self_similarity(
+    scorer: &ModifiedLinearEntropy<f32, f32>,
+    spectrum: &GenericSpectrum<f32, f32>,
+    tolerance: f32,
+    label: &str,
+) {
+    if spectrum.is_empty() {
+        return;
+    }
+
+    let Ok((score, matches)) = scorer.similarity(spectrum, spectrum) else {
+        return;
+    };
+    if matches == 0 {
+        return;
+    }
+
+    assert_score_in_range(score, label);
+    assert!(
+        (1.0 - score).abs() <= tolerance,
+        "{label}: self-similarity {score} exceeds tolerance {tolerance}"
+    );
+    assert_eq!(
+        matches,
+        spectrum.len(),
+        "{label}: self match count {matches} != {}",
+        spectrum.len()
+    );
+}
+
+fn assert_modified_entropy_not_less_than_linear<S1, S2>(
+    modified: &ModifiedLinearEntropy<f32, f32>,
+    linear: &LinearEntropy<f32, f32>,
+    left: &S1,
+    right: &S2,
+    label: &str,
+) where
+    S1: Spectrum<Mz = f32, Intensity = f32>,
+    S2: Spectrum<Mz = f32, Intensity = f32>,
+{
+    let modified_forward = modified.similarity(left, right);
+    let linear_forward = linear.similarity(left, right);
+    if let (Ok((modified_score, _)), Ok((linear_score, _))) = (modified_forward, linear_forward) {
+        assert!(
+            modified_score + MODIFIED_DIFFERENTIAL_EPS >= linear_score,
+            "{label}: modified entropy score {modified_score} < linear entropy score {linear_score}"
+        );
+    }
+
+    let modified_reverse = modified.similarity(right, left);
+    let linear_reverse = linear.similarity(right, left);
+    if let (Ok((modified_score, _)), Ok((linear_score, _))) = (modified_reverse, linear_reverse) {
+        assert!(
+            modified_score + MODIFIED_DIFFERENTIAL_EPS >= linear_score,
+            "{label}: reverse modified entropy score {modified_score} < reverse linear entropy score {linear_score}"
+        );
+    }
+}
+
+fn assert_modified_linear_entropy_original_outcome(
+    scorer: &ModifiedLinearEntropy<f32, f32>,
+    left: &GenericSpectrum<f32, f32>,
+    right: &GenericSpectrum<f32, f32>,
+    label: &str,
+) {
+    match scorer.similarity(left, right) {
+        Ok((score, matches)) => {
+            assert_score_in_range(score, label);
+            let max_matches = left.len().min(right.len());
+            assert!(
+                matches <= max_matches,
+                "{label}: matches {matches} exceed limit {max_matches}"
+            );
+        }
+        Err(SimilarityComputationError::InvalidPeakSpacing(_)) => {}
+        Err(error) => panic!("{label}: unexpected error on original spectra: {error:?}"),
+    }
 }
 
 fn assert_modified_linear_matches_modified_hungarian(

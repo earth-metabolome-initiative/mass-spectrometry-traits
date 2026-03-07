@@ -10,6 +10,7 @@ replay the exact same code paths.
 cargo fuzz run hungarian_cosine
 cargo fuzz run modified_hungarian_cosine
 cargo fuzz run linear_entropy
+cargo fuzz run modified_linear_entropy
 ```
 
 ## Replay
@@ -21,6 +22,7 @@ directory:
 1. `test_hungarian_cosine_fuzz_harness`
 2. `test_modified_hungarian_cosine_fuzz_harness`
 3. `test_linear_entropy_fuzz_harness`
+4. `test_modified_linear_entropy_fuzz_harness`
 
 Run:
 
@@ -28,4 +30,5 @@ Run:
 cargo test --test test_hungarian_cosine_fuzz_harness
 cargo test --test test_modified_hungarian_cosine_fuzz_harness
 cargo test --test test_linear_entropy_fuzz_harness
+cargo test --test test_modified_linear_entropy_fuzz_harness
 ```

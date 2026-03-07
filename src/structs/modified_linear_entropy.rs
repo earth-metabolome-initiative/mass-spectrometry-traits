@@ -12,7 +12,7 @@ use super::cosine_common::{
     optimal_modified_linear_matches, to_f64_checked_for_computation, validate_well_separated,
 };
 use super::entropy_common::{
-    entropy_score_pairs, finalize_entropy_score, impl_entropy_config_api,
+    entropy_pair, entropy_score_pairs, finalize_entropy_score, impl_entropy_config_api,
     impl_entropy_spectral_similarity, prepare_entropy_peaks,
 };
 use super::similarity_errors::SimilarityComputationError;
@@ -78,7 +78,7 @@ where
             tolerance,
             left_prec,
             right_prec,
-            |i, j| left_peaks.int[i] * right_peaks.int[j],
+            |i, j| entropy_pair(left_peaks.int[i], right_peaks.int[j]),
         );
 
         let (raw_score, n_matches) =
