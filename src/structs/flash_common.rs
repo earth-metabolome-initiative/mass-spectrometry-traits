@@ -83,6 +83,13 @@ impl DenseAccumulator {
         self.counts[idx] = self.counts[idx].saturating_add(1);
     }
 
+    /// Replace a previously accumulated score with a better one, without
+    /// changing the match count.
+    #[inline]
+    fn upgrade(&mut self, spec_id: u32, old_score: f64, new_score: f64) {
+        self.scores[spec_id as usize] += new_score - old_score;
+    }
+
     /// Drain the accumulator, calling `emit` for each spectrum that received
     /// at least one match. Resets all touched slots for reuse.
     fn drain(&mut self, mut emit: impl FnMut(u32, f64, u32)) {
@@ -109,6 +116,7 @@ impl DenseAccumulator {
 pub struct SearchState {
     acc: DenseAccumulator,
     matched_products: BitVec,
+    direct_scores: Vec<f64>,
 }
 
 impl SearchState {
@@ -117,6 +125,7 @@ impl SearchState {
         Self {
             acc: DenseAccumulator::new(n_spectra),
             matched_products: bitvec![0; n_products],
+            direct_scores: alloc::vec![0.0; n_products],
         }
     }
 }
@@ -358,6 +367,7 @@ impl<K: FlashKernel> FlashIndex<K> {
         let SearchState {
             acc,
             matched_products,
+            direct_scores,
         } = state;
 
         // Track which product indices we set so we can reset them efficiently.
@@ -369,14 +379,17 @@ impl<K: FlashKernel> FlashIndex<K> {
             let hi = qmz + self.tolerance;
             let start = self.product_mz.partition_point(|&v| v < lo);
 
-            for idx in start..self.product_mz.len() {
+            let mut idx = start;
+            while idx < self.product_mz.len() {
                 if self.product_mz[idx] > hi {
                     break;
                 }
                 let score = K::pair_score(query_data[q_idx], self.product_data[idx]);
                 acc.accumulate(self.product_spec_id[idx], score);
                 matched_products.set(idx, true);
+                direct_scores[idx] = score;
                 set_indices.push(idx);
+                idx += 1;
             }
         }
 
@@ -391,20 +404,24 @@ impl<K: FlashKernel> FlashIndex<K> {
                 if self.nl_value[idx] > hi {
                     break;
                 }
-                // Anti-double-counting: skip if the corresponding product was
-                // already matched in phase 1.
                 let product_idx = self.nl_to_product[idx] as usize;
+                let nl_score = K::pair_score(query_data[q_idx], self.nl_data[idx]);
                 if matched_products[product_idx] {
+                    // Library peak already matched directly. Upgrade if NL
+                    // gives a better pair score.
+                    if nl_score > direct_scores[product_idx] {
+                        acc.upgrade(self.nl_spec_id[idx], direct_scores[product_idx], nl_score);
+                    }
                     continue;
                 }
-                let score = K::pair_score(query_data[q_idx], self.nl_data[idx]);
-                acc.accumulate(self.nl_spec_id[idx], score);
+                acc.accumulate(self.nl_spec_id[idx], nl_score);
             }
         }
 
-        // Reset the bitvec for reuse.
+        // Reset the bitvec and direct scores for reuse.
         for &idx in &set_indices {
             matched_products.set(idx, false);
+            direct_scores[idx] = 0.0;
         }
 
         let mut results = Vec::with_capacity(acc.touched.len());
