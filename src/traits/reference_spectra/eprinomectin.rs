@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of eprinomectin.
-pub trait EprinomectinSpectrum: SpectrumAlloc + Sized {
+pub trait EprinomectinSpectrum: SpectrumAlloc {
     /// Create a new spectrum of eprinomectin.
     fn eprinomectin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

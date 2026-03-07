@@ -6,12 +6,8 @@
 
 use alloc::vec::Vec;
 
-use num_traits::{Float, ToPrimitive};
-
-use geometric_traits::prelude::Number;
-
 use super::cosine_common::{
-    to_f64_checked_for_computation, validate_non_negative_tolerance, validate_numeric_parameter,
+    ensure_finite, validate_non_negative_tolerance, validate_numeric_parameter,
     validate_well_separated,
 };
 use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
@@ -58,13 +54,13 @@ impl FlashKernel for EntropyKernel {
 /// use mass_spectrometry::prelude::*;
 ///
 /// let library = [
-///     GenericSpectrum::<f64, f64>::cocaine().unwrap(),
-///     GenericSpectrum::<f64, f64>::glucose().unwrap(),
+///     GenericSpectrum::cocaine().unwrap(),
+///     GenericSpectrum::glucose().unwrap(),
 /// ];
-/// let index = FlashEntropyIndex::new(0.0_f64, 1.0_f64, 0.1_f64, true, library.iter())
+/// let index = FlashEntropyIndex::new(0.0, 1.0, 0.1, true, library.iter())
 ///     .expect("index build should succeed");
 ///
-/// let query = GenericSpectrum::<f64, f64>::cocaine().unwrap();
+/// let query = GenericSpectrum::cocaine().unwrap();
 /// let results = index.search(&query).expect("search should succeed");
 /// assert!(results.iter().any(|r| r.spectrum_id == 0 && r.score > 0.99));
 /// ```
@@ -108,32 +104,26 @@ impl FlashEntropyIndex {
 
     /// Build a weighted entropy flash index with default powers (mz_power=0,
     /// intensity_power=1).
-    pub fn weighted<'a, MZ, S>(
-        mz_tolerance: MZ,
+    pub fn weighted<'a, S>(
+        mz_tolerance: f64,
         spectra: impl IntoIterator<Item = &'a S>,
     ) -> Result<Self, FlashEntropyIndexError>
     where
-        MZ: Number + ToPrimitive + PartialOrd,
         S: Spectrum + 'a,
-        S::Mz: Float + Number + ToPrimitive,
-        S::Intensity: Float + Number + ToPrimitive,
     {
-        Self::new(0.0_f64, 1.0_f64, mz_tolerance, true, spectra)
+        Self::new(0.0, 1.0, mz_tolerance, true, spectra)
     }
 
     /// Build an unweighted entropy flash index with default powers (mz_power=0,
     /// intensity_power=1).
-    pub fn unweighted<'a, MZ, S>(
-        mz_tolerance: MZ,
+    pub fn unweighted<'a, S>(
+        mz_tolerance: f64,
         spectra: impl IntoIterator<Item = &'a S>,
     ) -> Result<Self, FlashEntropyIndexError>
     where
-        MZ: Number + ToPrimitive + PartialOrd,
         S: Spectrum + 'a,
-        S::Mz: Float + Number + ToPrimitive,
-        S::Intensity: Float + Number + ToPrimitive,
     {
-        Self::new(0.0_f64, 1.0_f64, mz_tolerance, false, spectra)
+        Self::new(0.0, 1.0, mz_tolerance, false, spectra)
     }
 
     /// Build a new entropy flash index from an iterator of spectra.
@@ -147,32 +137,24 @@ impl FlashEntropyIndex {
     ///   parameters are non-finite.
     /// - [`SimilarityComputationError`] if any spectrum violates the
     ///   well-separated precondition or contains non-representable values.
-    pub fn new<'a, EXP, MZ, S>(
-        mz_power: EXP,
-        intensity_power: EXP,
-        mz_tolerance: MZ,
+    pub fn new<'a, S>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
         weighted: bool,
         spectra: impl IntoIterator<Item = &'a S>,
     ) -> Result<Self, FlashEntropyIndexError>
     where
-        EXP: Number + ToPrimitive,
-        MZ: Number + ToPrimitive + PartialOrd,
         S: Spectrum + 'a,
-        S::Mz: Float + Number + ToPrimitive,
-        S::Intensity: Float + Number + ToPrimitive,
     {
         validate_numeric_parameter(mz_power, "mz_power").map_err(FlashEntropyIndexError::Config)?;
         validate_numeric_parameter(intensity_power, "intensity_power")
             .map_err(FlashEntropyIndexError::Config)?;
         validate_non_negative_tolerance(mz_tolerance).map_err(FlashEntropyIndexError::Config)?;
 
-        let tolerance = to_f64_checked_for_computation(mz_tolerance, "mz_tolerance")
-            .map_err(FlashEntropyIndexError::Computation)?;
-        let mz_power_f64 = to_f64_checked_for_computation(mz_power, "mz_power")
-            .map_err(FlashEntropyIndexError::Computation)?;
-        let intensity_power_f64 =
-            to_f64_checked_for_computation(intensity_power, "intensity_power")
-                .map_err(FlashEntropyIndexError::Computation)?;
+        let tolerance = mz_tolerance;
+        let mz_power_f64 = mz_power;
+        let intensity_power_f64 = intensity_power;
 
         let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
 
@@ -182,11 +164,8 @@ impl FlashEntropyIndex {
                     .map_err(FlashEntropyIndexError::Computation)?;
 
             if peaks.int.is_empty() {
-                // Zero-intensity spectrum: include with empty peaks so that
-                // spectrum_id indexing stays correct.
-                let precursor_f64 =
-                    to_f64_checked_for_computation(spectrum.precursor_mz(), "precursor_mz")
-                        .map_err(FlashEntropyIndexError::Computation)?;
+                let precursor_f64 = ensure_finite(spectrum.precursor_mz(), "precursor_mz")
+                    .map_err(FlashEntropyIndexError::Computation)?;
                 prepared.push((precursor_f64, Vec::new(), Vec::new()));
                 continue;
             }
@@ -194,9 +173,8 @@ impl FlashEntropyIndex {
             validate_well_separated(&peaks.mz, tolerance, "library spectrum")
                 .map_err(FlashEntropyIndexError::Computation)?;
 
-            let precursor_f64 =
-                to_f64_checked_for_computation(spectrum.precursor_mz(), "precursor_mz")
-                    .map_err(FlashEntropyIndexError::Computation)?;
+            let precursor_f64 = ensure_finite(spectrum.precursor_mz(), "precursor_mz")
+                .map_err(FlashEntropyIndexError::Computation)?;
 
             prepared.push((precursor_f64, peaks.mz, peaks.int));
         }
@@ -219,26 +197,15 @@ impl FlashEntropyIndex {
     }
 
     /// Direct (unshifted) search against the library.
-    ///
-    /// Returns results for all library spectra that share at least one
-    /// matching peak with the query.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityComputationError`] if the query violates the
-    /// well-separated precondition or contains non-representable values.
     pub fn search<S>(&self, query: &S) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Float + Number + ToPrimitive,
-        S::Intensity: Float + Number + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         Ok(self.inner.search_direct(&query_mz, &query_data, &()))
     }
 
-    /// Direct search using a caller-provided [`SearchState`] to avoid
-    /// per-query allocation. Create one via [`Self::new_search_state`].
+    /// Direct search using a caller-provided [`SearchState`].
     pub fn search_with_state<S>(
         &self,
         query: &S,
@@ -246,8 +213,6 @@ impl FlashEntropyIndex {
     ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Float + Number + ToPrimitive,
-        S::Intensity: Float + Number + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         Ok(self
@@ -256,34 +221,21 @@ impl FlashEntropyIndex {
     }
 
     /// Modified (direct + shifted) search against the library.
-    ///
-    /// Phase 1: direct m/z matches. Phase 2: neutral-loss (shifted) matches
-    /// with anti-double-counting. This defines a new heuristic, not an
-    /// emulation of existing modified-entropy variants.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityComputationError`] if the query violates the
-    /// well-separated precondition or contains non-representable values.
     pub fn search_modified<S>(
         &self,
         query: &S,
     ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Float + Number + ToPrimitive,
-        S::Intensity: Float + Number + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
-        let precursor_f64 =
-            to_f64_checked_for_computation(query.precursor_mz(), "query_precursor_mz")?;
+        let precursor_f64 = ensure_finite(query.precursor_mz(), "query_precursor_mz")?;
         Ok(self
             .inner
             .search_modified(&query_mz, &query_data, &(), precursor_f64))
     }
 
-    /// Modified search using a caller-provided [`SearchState`] to avoid
-    /// per-query allocation. Create one via [`Self::new_search_state`].
+    /// Modified search using a caller-provided [`SearchState`].
     pub fn search_modified_with_state<S>(
         &self,
         query: &S,
@@ -291,12 +243,9 @@ impl FlashEntropyIndex {
     ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Float + Number + ToPrimitive,
-        S::Intensity: Float + Number + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
-        let precursor_f64 =
-            to_f64_checked_for_computation(query.precursor_mz(), "query_precursor_mz")?;
+        let precursor_f64 = ensure_finite(query.precursor_mz(), "query_precursor_mz")?;
         Ok(self
             .inner
             .search_modified_with_state(&query_mz, &query_data, &(), precursor_f64, state))
@@ -309,8 +258,6 @@ impl FlashEntropyIndex {
     ) -> Result<(Vec<f64>, Vec<f64>), SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Float + Number + ToPrimitive,
-        S::Intensity: Float + Number + ToPrimitive,
     {
         let peaks = prepare_entropy_peaks(
             query,

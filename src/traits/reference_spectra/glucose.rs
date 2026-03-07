@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of glucose.
-pub trait GlucoseSpectrum: SpectrumAlloc + Sized {
+pub trait GlucoseSpectrum: SpectrumAlloc {
     /// Create a new spectrum of glucose.
     fn glucose() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of chlorfluazuron.
-pub trait ChlorfluazuronSpectrum: SpectrumAlloc + Sized {
+pub trait ChlorfluazuronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of chlorfluazuron.
     fn chlorfluazuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

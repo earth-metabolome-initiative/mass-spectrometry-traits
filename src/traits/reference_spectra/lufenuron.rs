@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of lufenuron.
-pub trait LufenuronSpectrum: SpectrumAlloc + Sized {
+pub trait LufenuronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of lufenuron.
     fn lufenuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

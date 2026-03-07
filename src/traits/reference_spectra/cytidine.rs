@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cytidine.
-pub trait CytidineSpectrum: SpectrumAlloc + Sized {
+pub trait CytidineSpectrum: SpectrumAlloc {
     /// Create a new spectrum of cytidine.
     fn cytidine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of diflubenzuron.
-pub trait DiflubenzuronSpectrum: SpectrumAlloc + Sized {
+pub trait DiflubenzuronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of diflubenzuron.
     fn diflubenzuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

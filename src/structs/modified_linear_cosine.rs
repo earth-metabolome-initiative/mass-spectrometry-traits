@@ -10,13 +10,11 @@
 
 use alloc::vec::Vec;
 
-use geometric_traits::prelude::{Finite, Number, ScalarSimilarity, TotalOrd};
-use num_traits::{Float, Pow, ToPrimitive, Zero};
+use geometric_traits::prelude::ScalarSimilarity;
 
 use super::cosine_common::{
-    CosineConfig, finalize_similarity_score, impl_cosine_wrapper_config_api,
-    optimal_modified_linear_matches, prepare_peak_products, to_f64_checked_for_computation,
-    validate_well_separated,
+    CosineConfig, ensure_finite, finalize_similarity_score, impl_cosine_wrapper_config_api,
+    optimal_modified_linear_matches, prepare_peak_products, validate_well_separated,
 };
 use super::similarity_errors::SimilarityComputationError;
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
@@ -31,8 +29,8 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 /// differ on near-zero edges due to f64 tie-breaking).
 /// Requires the same strict well-separated precondition as
 /// [`super::LinearCosine`] (consecutive peaks > `2 * mz_tolerance`).
-pub struct ModifiedLinearCosine<EXP, MZ> {
-    config: CosineConfig<EXP, MZ>,
+pub struct ModifiedLinearCosine {
+    config: CosineConfig,
 }
 
 impl_cosine_wrapper_config_api!(
@@ -41,14 +39,12 @@ impl_cosine_wrapper_config_api!(
     "Returns the tolerance for the mass/charge ratio."
 );
 
-impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for ModifiedLinearCosine<EXP, S1::Mz>
+impl<S1, S2> ScalarSimilarity<S1, S2> for ModifiedLinearCosine
 where
-    EXP: Number,
-    S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
-    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
-    type Similarity = Result<(S1::Mz, usize), SimilarityComputationError>;
+    type Similarity = Result<(f64, usize), SimilarityComputationError>;
 
     fn similarity(&self, left: &S1, right: &S2) -> Self::Similarity {
         let left_peaks =
@@ -56,35 +52,24 @@ where
         let right_peaks =
             prepare_peak_products(right, self.config.mz_power(), self.config.intensity_power())?;
 
-        if left_peaks.max_f64 == 0.0 || right_peaks.max_f64 == 0.0 {
-            return Ok((S1::Mz::zero(), 0));
+        if left_peaks.max == 0.0 || right_peaks.max == 0.0 {
+            return Ok((0.0, 0));
         }
 
-        let tolerance = to_f64_checked_for_computation(self.config.mz_tolerance(), "mz_tolerance")?;
+        let tolerance = ensure_finite(self.config.mz_tolerance(), "mz_tolerance")?;
 
-        // Collect mz as f64 with numeric validation.
-        let left_mz: Vec<f64> = left
-            .peaks()
-            .map(|(mz, _)| to_f64_checked_for_computation(mz, "left_mz"))
-            .collect::<Result<Vec<f64>, SimilarityComputationError>>()?;
-        let right_mz: Vec<f64> = right
-            .peaks()
-            .map(|(mz, _)| to_f64_checked_for_computation(mz, "right_mz"))
-            .collect::<Result<Vec<f64>, SimilarityComputationError>>()?;
+        // Collect mz as f64.
+        let left_mz: Vec<f64> = left.mz().collect();
+        let right_mz: Vec<f64> = right.mz().collect();
 
         validate_well_separated(&left_mz, tolerance, "left spectrum")?;
         validate_well_separated(&right_mz, tolerance, "right spectrum")?;
 
-        let left_prec = to_f64_checked_for_computation(left.precursor_mz(), "left_precursor_mz")?;
-        let right_prec =
-            to_f64_checked_for_computation(right.precursor_mz(), "right_precursor_mz")?;
+        let left_prec = ensure_finite(left.precursor_mz(), "left_precursor_mz")?;
+        let right_prec = ensure_finite(right.precursor_mz(), "right_precursor_mz")?;
 
-        // Collect direct + shifted matches, merge, optimal DP-select.
-        // Benefit = normalised product (0 for zero-product edges so they
-        // never displace real matches, at least ε for nonzero-product edges
-        // so they are always selected when non-conflicting).
-        let max_left = left_peaks.max_f64;
-        let max_right = right_peaks.max_f64;
+        let max_left = left_peaks.max;
+        let max_right = right_peaks.max;
         let selected = optimal_modified_linear_matches(
             &left_mz,
             &right_mz,
@@ -92,20 +77,20 @@ where
             left_prec,
             right_prec,
             |i, j| {
-                if (left_peaks.products[i] * right_peaks.products[j]).is_zero() {
+                if (left_peaks.products[i] * right_peaks.products[j]) == 0.0 {
                     return 0.0;
                 }
                 let normalized =
-                    (left_peaks.as_f64[i] / max_left) * (right_peaks.as_f64[j] / max_right);
+                    (left_peaks.products[i] / max_left) * (right_peaks.products[j] / max_right);
                 normalized.max(f64::EPSILON)
             },
         );
 
-        let mut score_sum = S1::Mz::zero();
+        let mut score_sum = 0.0_f64;
         let mut n_matches = 0usize;
         for (i, j) in selected {
             let product = left_peaks.products[i] * right_peaks.products[j];
-            if !product.is_zero() {
+            if product != 0.0 {
                 score_sum += product;
                 n_matches += 1;
             }
@@ -115,11 +100,9 @@ where
     }
 }
 
-impl<S1, S2, EXP> ScalarSpectralSimilarity<S1, S2> for ModifiedLinearCosine<EXP, S1::Mz>
+impl<S1, S2> ScalarSpectralSimilarity<S1, S2> for ModifiedLinearCosine
 where
-    EXP: Number,
-    S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Finite + TotalOrd,
-    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
-    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
 }

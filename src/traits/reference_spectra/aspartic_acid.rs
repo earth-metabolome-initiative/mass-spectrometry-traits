@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of aspartic acid.
-pub trait AsparticAcidSpectrum: SpectrumAlloc + Sized {
+pub trait AsparticAcidSpectrum: SpectrumAlloc {
     /// Create a new spectrum of aspartic acid.
     fn aspartic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

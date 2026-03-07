@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of hydramethylnon.
-pub trait HydramethylnonSpectrum: SpectrumAlloc + Sized {
+pub trait HydramethylnonSpectrum: SpectrumAlloc {
     /// Create a new spectrum of hydramethylnon.
     fn hydramethylnon() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

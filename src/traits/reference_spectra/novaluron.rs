@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of novaluron.
-pub trait NovaluronSpectrum: SpectrumAlloc + Sized {
+pub trait NovaluronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of novaluron.
     fn novaluron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

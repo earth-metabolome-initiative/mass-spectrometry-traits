@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of citric acid.
-pub trait CitricAcidSpectrum: SpectrumAlloc + Sized {
+pub trait CitricAcidSpectrum: SpectrumAlloc {
     /// Create a new spectrum of citric acid.
     fn citric_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

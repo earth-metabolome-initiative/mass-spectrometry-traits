@@ -6,16 +6,16 @@ use mass_spectrometry::prelude::{
 };
 use proptest::prelude::*;
 
-const LINEAR_MZ_TOLERANCE: f32 = 0.1;
-const STRICT_LINEAR_MIN_GAP: f32 = (2.0 * LINEAR_MZ_TOLERANCE) + 1e-4;
+const LINEAR_MZ_TOLERANCE: f64 = 0.1;
+const STRICT_LINEAR_MIN_GAP: f64 = (2.0 * LINEAR_MZ_TOLERANCE) + 1e-4;
 
-fn build_spectrum(precursor_mz: f32, peaks: Vec<(f32, f32)>) -> GenericSpectrum<f32, f32> {
+fn build_spectrum(precursor_mz: f64, peaks: Vec<(f64, f64)>) -> GenericSpectrum {
     let mut peaks = peaks;
     peaks.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     let mut spectrum = GenericSpectrum::with_capacity(precursor_mz.max(0.001), peaks.len())
         .expect("valid spectrum allocation");
-    let mut last_mz: Option<f32> = None;
+    let mut last_mz: Option<f64> = None;
 
     for (mz_raw, intensity_raw) in peaks {
         let mut mz = mz_raw.max(0.001);
@@ -39,16 +39,16 @@ fn build_spectrum(precursor_mz: f32, peaks: Vec<(f32, f32)>) -> GenericSpectrum<
 /// For [`LinearCosine`] tests we pass a strict gap (`2*tolerance + epsilon`)
 /// to satisfy the strict well-separated precondition.
 fn build_well_separated_spectrum(
-    precursor_mz: f32,
-    peaks: Vec<(f32, f32)>,
-    min_gap: f32,
-) -> GenericSpectrum<f32, f32> {
+    precursor_mz: f64,
+    peaks: Vec<(f64, f64)>,
+    min_gap: f64,
+) -> GenericSpectrum {
     let mut peaks = peaks;
     peaks.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     let mut spectrum = GenericSpectrum::with_capacity(precursor_mz.max(0.001), peaks.len())
         .expect("valid spectrum allocation");
-    let mut last_mz: Option<f32> = None;
+    let mut last_mz: Option<f64> = None;
 
     for (mz_raw, intensity_raw) in peaks {
         let mut mz = mz_raw.max(0.001);
@@ -68,29 +68,29 @@ fn build_well_separated_spectrum(
     spectrum
 }
 
-fn scorer_exact() -> HungarianCosine<f32, f32> {
+fn scorer_exact() -> HungarianCosine {
     HungarianCosine::new(1.0, 1.0, LINEAR_MZ_TOLERANCE).expect("valid scorer config")
 }
 
-fn scorer_linear() -> LinearCosine<f32, f32> {
+fn scorer_linear() -> LinearCosine {
     LinearCosine::new(1.0, 1.0, LINEAR_MZ_TOLERANCE).expect("valid scorer config")
 }
 
-fn scorer_modified() -> ModifiedHungarianCosine<f32, f32> {
+fn scorer_modified() -> ModifiedHungarianCosine {
     ModifiedHungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
-fn scorer_entropy() -> LinearEntropy<f32, f32> {
+fn scorer_entropy() -> LinearEntropy {
     LinearEntropy::unweighted(LINEAR_MZ_TOLERANCE).expect("valid scorer config")
 }
 
 proptest! {
     #[test]
     fn exact_similarity_is_bounded_and_symmetric(
-        p1 in 10.0_f32..1500.0_f32,
-        p2 in 10.0_f32..1500.0_f32,
-        peaks1 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
-        peaks2 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        p1 in 10.0..1500.0,
+        p2 in 10.0..1500.0,
+        peaks1 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
+        peaks2 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
     ) {
         let left = build_spectrum(p1, peaks1);
         let right = build_spectrum(p2, peaks2);
@@ -111,10 +111,10 @@ proptest! {
 
     #[test]
     fn modified_similarity_is_bounded_and_symmetric(
-        p1 in 10.0_f32..1500.0_f32,
-        p2 in 10.0_f32..1500.0_f32,
-        peaks1 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
-        peaks2 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        p1 in 10.0..1500.0,
+        p2 in 10.0..1500.0,
+        peaks1 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
+        peaks2 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
     ) {
         let left = build_spectrum(p1, peaks1);
         let right = build_spectrum(p2, peaks2);
@@ -135,10 +135,10 @@ proptest! {
 
     #[test]
     fn entropy_similarity_is_bounded_and_symmetric(
-        p1 in 10.0_f32..1500.0_f32,
-        p2 in 10.0_f32..1500.0_f32,
-        peaks1 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
-        peaks2 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        p1 in 10.0..1500.0,
+        p2 in 10.0..1500.0,
+        peaks1 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
+        peaks2 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
     ) {
         let left = build_well_separated_spectrum(p1, peaks1, STRICT_LINEAR_MIN_GAP);
         let right = build_well_separated_spectrum(p2, peaks2, STRICT_LINEAR_MIN_GAP);
@@ -159,8 +159,8 @@ proptest! {
 
     #[test]
     fn self_similarity_remains_maximal(
-        precursor in 10.0_f32..1500.0_f32,
-        peaks in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        precursor in 10.0..1500.0,
+        peaks in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
     ) {
         let spectrum = build_spectrum(precursor, peaks);
         let exact = scorer_exact();
@@ -181,8 +181,8 @@ proptest! {
 
     #[test]
     fn entropy_self_similarity_remains_maximal(
-        precursor in 10.0_f32..1500.0_f32,
-        peaks in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        precursor in 10.0..1500.0,
+        peaks in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
     ) {
         let spectrum = build_well_separated_spectrum(precursor, peaks, STRICT_LINEAR_MIN_GAP);
         let scorer = scorer_entropy();
@@ -216,8 +216,8 @@ proptest! {
     /// Volgenant 2010, Jonker & Volgenant 1987).
     #[test]
     fn self_similarity_wide_tolerance_mz_power_zero(
-        precursor in 10.0_f32..1500.0_f32,
-        peaks in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..256),
+        precursor in 10.0..1500.0,
+        peaks in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..256),
     ) {
         let spectrum = build_spectrum(precursor, peaks);
         let scorer = HungarianCosine::new(0.0, 1.0, 2.0).expect("valid scorer config");
@@ -237,10 +237,10 @@ proptest! {
 
     #[test]
     fn linear_cosine_is_bounded_and_symmetric(
-        p1 in 10.0_f32..1500.0_f32,
-        p2 in 10.0_f32..1500.0_f32,
-        peaks1 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
-        peaks2 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        p1 in 10.0..1500.0,
+        p2 in 10.0..1500.0,
+        peaks1 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
+        peaks2 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
     ) {
         let left = build_well_separated_spectrum(p1, peaks1, STRICT_LINEAR_MIN_GAP);
         let right = build_well_separated_spectrum(p2, peaks2, STRICT_LINEAR_MIN_GAP);
@@ -261,10 +261,10 @@ proptest! {
 
     #[test]
     fn linear_cosine_matches_hungarian_on_well_separated(
-        p1 in 10.0_f32..1500.0_f32,
-        p2 in 10.0_f32..1500.0_f32,
-        peaks1 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
-        peaks2 in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        p1 in 10.0..1500.0,
+        p2 in 10.0..1500.0,
+        peaks1 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
+        peaks2 in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
     ) {
         let left = build_well_separated_spectrum(p1, peaks1, STRICT_LINEAR_MIN_GAP);
         let right = build_well_separated_spectrum(p2, peaks2, STRICT_LINEAR_MIN_GAP);
@@ -288,8 +288,8 @@ proptest! {
 
     #[test]
     fn linear_cosine_self_similarity(
-        precursor in 10.0_f32..1500.0_f32,
-        peaks in prop::collection::vec((1.0_f32..1200.0_f32, 1e-4_f32..5000.0_f32), 1..96),
+        precursor in 10.0..1500.0,
+        peaks in prop::collection::vec((1.0..1200.0, 1e-4..5000.0), 1..96),
     ) {
         let spectrum = build_well_separated_spectrum(precursor, peaks, STRICT_LINEAR_MIN_GAP);
         let scorer = scorer_linear();

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of arachidonic acid.
-pub trait ArachidonicAcidSpectrum: SpectrumAlloc + Sized {
+pub trait ArachidonicAcidSpectrum: SpectrumAlloc {
     /// Create a new spectrum of arachidonic acid.
     fn arachidonic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

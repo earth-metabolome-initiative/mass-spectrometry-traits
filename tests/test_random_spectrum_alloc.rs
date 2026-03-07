@@ -14,10 +14,8 @@ fn random_spectrum_reproducible_for_same_seed() {
         intensity_max: 10.0,
     };
 
-    let left =
-        GenericSpectrum::<f64, f64>::random(config, 42).expect("random spectrum should build");
-    let right =
-        GenericSpectrum::<f64, f64>::random(config, 42).expect("random spectrum should build");
+    let left = GenericSpectrum::random(config, 42).expect("random spectrum should build");
+    let right = GenericSpectrum::random(config, 42).expect("random spectrum should build");
 
     assert_eq!(left.len(), right.len());
     assert_eq!(left.precursor_mz(), right.precursor_mz());
@@ -39,8 +37,7 @@ fn random_spectrum_respects_gap_and_ranges() {
         intensity_max: 25.0,
     };
 
-    let spectrum =
-        GenericSpectrum::<f64, f64>::random(config, 7).expect("random spectrum should build");
+    let spectrum = GenericSpectrum::random(config, 7).expect("random spectrum should build");
     assert_eq!(spectrum.len(), config.n_peaks);
 
     for i in 0..spectrum.len() {
@@ -73,7 +70,7 @@ fn random_spectrum_rejects_invalid_config() {
         intensity_max: 2.0,
     };
 
-    let error = match GenericSpectrum::<f64, f64>::random(config, 13) {
+    let error = match GenericSpectrum::random(config, 13) {
         Ok(_) => panic!("invalid config must return an error"),
         Err(error) => error,
     };

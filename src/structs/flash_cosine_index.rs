@@ -6,12 +6,8 @@
 
 use alloc::vec::Vec;
 
-use num_traits::{Float, Pow, ToPrimitive};
-
-use geometric_traits::prelude::{Finite, Number, TotalOrd};
-
 use super::cosine_common::{
-    to_f64_checked_for_computation, validate_non_negative_tolerance, validate_well_separated,
+    ensure_finite, validate_non_negative_tolerance, validate_well_separated,
 };
 use super::flash_common::{FlashIndex, FlashKernel, FlashSearchResult, SearchState};
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
@@ -72,33 +68,33 @@ impl FlashKernel for CosineKernel {
 /// ```
 /// use mass_spectrometry::prelude::*;
 ///
-/// let library: [GenericSpectrum<f64, f64>; 2] = [
+/// let library: [GenericSpectrum; 2] = [
 ///     GenericSpectrum::cocaine().unwrap(),
 ///     GenericSpectrum::glucose().unwrap(),
 /// ];
-/// let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
+/// let index = FlashCosineIndex::new(1.0, 1.0, 0.1, library.iter())
 ///     .expect("index build should succeed");
 ///
-/// let query: GenericSpectrum<f64, f64> = GenericSpectrum::cocaine().unwrap();
+/// let query: GenericSpectrum = GenericSpectrum::cocaine().unwrap();
 /// let results = index.search(&query).expect("search should succeed");
 /// assert!(results.iter().any(|r| r.spectrum_id == 0 && r.score > 0.99));
 /// ```
-pub struct FlashCosineIndex<EXP> {
+pub struct FlashCosineIndex {
     inner: FlashIndex<CosineKernel>,
-    mz_power: EXP,
-    intensity_power: EXP,
+    mz_power: f64,
+    intensity_power: f64,
 }
 
-impl<EXP: Number> FlashCosineIndex<EXP> {
+impl FlashCosineIndex {
     /// Returns the m/z power used for scoring.
     #[inline]
-    pub fn mz_power(&self) -> EXP {
+    pub fn mz_power(&self) -> f64 {
         self.mz_power
     }
 
     /// Returns the intensity power used for scoring.
     #[inline]
-    pub fn intensity_power(&self) -> EXP {
+    pub fn intensity_power(&self) -> f64 {
         self.intensity_power
     }
 
@@ -113,12 +109,7 @@ impl<EXP: Number> FlashCosineIndex<EXP> {
     pub fn n_spectra(&self) -> u32 {
         self.inner.n_spectra
     }
-}
 
-impl<EXP> FlashCosineIndex<EXP>
-where
-    EXP: Number + ToPrimitive,
-{
     /// Build a new cosine flash index from an iterator of spectra.
     ///
     /// Each library spectrum must satisfy the well-separated precondition:
@@ -129,28 +120,22 @@ where
     /// - [`SimilarityConfigError`] if numeric parameters are invalid.
     /// - [`SimilarityComputationError`] if any spectrum violates the
     ///   well-separated precondition or contains non-representable values.
-    pub fn new<'a, MZ, S>(
-        mz_power: EXP,
-        intensity_power: EXP,
-        mz_tolerance: MZ,
+    pub fn new<'a, S>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
         spectra: impl IntoIterator<Item = &'a S>,
     ) -> Result<Self, FlashCosineIndexError>
     where
-        MZ: Number + ToPrimitive + PartialOrd,
         S: Spectrum + 'a,
-        S::Mz: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-        S::Intensity: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
     {
         // Validate config.
         validate_non_negative_tolerance(mz_tolerance).map_err(FlashCosineIndexError::Config)?;
-        let tolerance = to_f64_checked_for_computation(mz_tolerance, "mz_tolerance")
+        ensure_finite(mz_power, "mz_power").map_err(FlashCosineIndexError::Computation)?;
+        ensure_finite(intensity_power, "intensity_power")
             .map_err(FlashCosineIndexError::Computation)?;
 
-        // Validate that power parameters are representable as f64.
-        to_f64_checked_for_computation(mz_power, "mz_power")
-            .map_err(FlashCosineIndexError::Computation)?;
-        to_f64_checked_for_computation(intensity_power, "intensity_power")
-            .map_err(FlashCosineIndexError::Computation)?;
+        let tolerance = mz_tolerance;
 
         // Prepare spectrum data.
         let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
@@ -160,21 +145,18 @@ where
             let mut data_vals = Vec::with_capacity(spectrum.len());
 
             for (mz, intensity) in spectrum.peaks() {
-                let product = mz.pow(mz_power) * intensity.pow(intensity_power);
-                let product_f64 = to_f64_checked_for_computation(product, "peak_product")
+                let product = mz.powf(mz_power) * intensity.powf(intensity_power);
+                ensure_finite(product, "peak_product")
                     .map_err(FlashCosineIndexError::Computation)?;
-                let mz_f64 = to_f64_checked_for_computation(mz, "mz")
-                    .map_err(FlashCosineIndexError::Computation)?;
-                mz_vals.push(mz_f64);
-                data_vals.push(product_f64);
+                mz_vals.push(mz);
+                data_vals.push(product);
             }
 
             validate_well_separated(&mz_vals, tolerance, "library spectrum")
                 .map_err(FlashCosineIndexError::Computation)?;
 
-            let precursor_f64 =
-                to_f64_checked_for_computation(spectrum.precursor_mz(), "precursor_mz")
-                    .map_err(FlashCosineIndexError::Computation)?;
+            let precursor_f64 = ensure_finite(spectrum.precursor_mz(), "precursor_mz")
+                .map_err(FlashCosineIndexError::Computation)?;
 
             prepared.push((precursor_f64, mz_vals, data_vals));
         }
@@ -207,8 +189,6 @@ where
     pub fn search<S>(&self, query: &S) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-        S::Intensity: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
@@ -226,8 +206,6 @@ where
     ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-        S::Intensity: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
@@ -252,13 +230,10 @@ where
     ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-        S::Intensity: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
-        let precursor_f64 =
-            to_f64_checked_for_computation(query.precursor_mz(), "query_precursor_mz")?;
+        let precursor_f64 = ensure_finite(query.precursor_mz(), "query_precursor_mz")?;
         Ok(self
             .inner
             .search_modified(&query_mz, &query_data, &query_meta, precursor_f64))
@@ -273,13 +248,10 @@ where
     ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-        S::Intensity: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
-        let precursor_f64 =
-            to_f64_checked_for_computation(query.precursor_mz(), "query_precursor_mz")?;
+        let precursor_f64 = ensure_finite(query.precursor_mz(), "query_precursor_mz")?;
         Ok(self.inner.search_modified_with_state(
             &query_mz,
             &query_data,
@@ -296,18 +268,15 @@ where
     ) -> Result<(Vec<f64>, Vec<f64>), SimilarityComputationError>
     where
         S: Spectrum,
-        S::Mz: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-        S::Intensity: Pow<EXP, Output = S::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
     {
         let mut mz_vals = Vec::with_capacity(query.len());
         let mut data_vals = Vec::with_capacity(query.len());
 
         for (mz, intensity) in query.peaks() {
-            let product = mz.pow(self.mz_power) * intensity.pow(self.intensity_power);
-            let product_f64 = to_f64_checked_for_computation(product, "peak_product")?;
-            let mz_f64 = to_f64_checked_for_computation(mz, "mz")?;
-            mz_vals.push(mz_f64);
-            data_vals.push(product_f64);
+            let product = mz.powf(self.mz_power) * intensity.powf(self.intensity_power);
+            ensure_finite(product, "peak_product")?;
+            mz_vals.push(mz);
+            data_vals.push(product);
         }
 
         validate_well_separated(&mz_vals, self.inner.tolerance, "query spectrum")?;

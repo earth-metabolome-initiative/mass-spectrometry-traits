@@ -15,12 +15,10 @@ use crate::structs::{
 };
 use crate::traits::{SpectralProcessor, Spectrum};
 
-const FIXED_TOLERANCE: f32 = 0.1;
-const FIXED_TOLERANCE_F64: f64 = 0.1;
-const SYMMETRY_EPS: f32 = 1.0e-4;
-const DIFFERENTIAL_EPS: f32 = 1.0e-4;
-const DIFFERENTIAL_EPS_F64: f64 = 1.0e-4;
-const MODIFIED_DIFFERENTIAL_EPS: f32 = 1.0e-6;
+const FIXED_TOLERANCE: f64 = 0.1;
+const SYMMETRY_EPS: f64 = 1.0e-4;
+const DIFFERENTIAL_EPS: f64 = 1.0e-4;
+const MODIFIED_DIFFERENTIAL_EPS: f64 = 1.0e-6;
 
 /// Result returned by [`run_hungarian_cosine_case`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,8 +377,8 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
     };
 
     let merger =
-        SiriusMergeClosePeaks::new(FIXED_TOLERANCE_F64).expect("fixed preprocess config is valid");
-    let merged_lib: [GenericSpectrum<f64, f64>; 3] = [
+        SiriusMergeClosePeaks::new(FIXED_TOLERANCE).expect("fixed preprocess config is valid");
+    let merged_lib: [GenericSpectrum; 3] = [
         merger.process(&case.library[0]),
         merger.process(&case.library[1]),
         merger.process(&case.library[2]),
@@ -388,11 +386,10 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
     let merged_query = merger.process(&case.query);
 
     // Fixed config (1.0, 1.0, 0.1): differential oracle against LinearCosine.
-    let index =
-        match FlashCosineIndex::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE_F64, merged_lib.iter()) {
-            Ok(idx) => idx,
-            Err(_) => return FlashCosineHarnessOutcome::Checked,
-        };
+    let index = match FlashCosineIndex::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE, merged_lib.iter()) {
+        Ok(idx) => idx,
+        Err(_) => return FlashCosineHarnessOutcome::Checked,
+    };
 
     let direct_results = match index.search(&merged_query) {
         Ok(r) => r,
@@ -400,7 +397,7 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
     };
 
     let oracle =
-        LinearCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE_F64).expect("fixed config is valid");
+        LinearCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE).expect("fixed config is valid");
     assert_flash_cosine_equivalence(
         &direct_results,
         &oracle,
@@ -417,7 +414,7 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
             "fixed/cosine",
         );
 
-        let modified_oracle = ModifiedLinearCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE_F64)
+        let modified_oracle = ModifiedLinearCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE)
             .expect("fixed config is valid");
         assert_flash_modified_cosine_equivalence(
             &modified_results,
@@ -458,7 +455,7 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
     ) && let Ok(dyn_results) = dyn_index.search(&merged_query)
     {
         for r in &dyn_results {
-            assert_flash_score_in_range_f64(r.score, "dynamic/cosine");
+            assert_score_in_range(r.score, "dynamic/cosine");
             assert!(
                 r.n_matches <= merged_query.len(),
                 "dynamic/cosine: n_matches {} > query len {}",
@@ -483,8 +480,8 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     };
 
     let merger =
-        SiriusMergeClosePeaks::new(FIXED_TOLERANCE_F64).expect("fixed preprocess config is valid");
-    let merged_lib: [GenericSpectrum<f64, f64>; 3] = [
+        SiriusMergeClosePeaks::new(FIXED_TOLERANCE).expect("fixed preprocess config is valid");
+    let merged_lib: [GenericSpectrum; 3] = [
         merger.process(&case.library[0]),
         merger.process(&case.library[1]),
         merger.process(&case.library[2]),
@@ -492,11 +489,10 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     let merged_query = merger.process(&case.query);
 
     // Fixed unweighted config: differential oracle against LinearEntropy.
-    let unweighted_index =
-        match FlashEntropyIndex::unweighted(FIXED_TOLERANCE_F64, merged_lib.iter()) {
-            Ok(idx) => idx,
-            Err(_) => return FlashEntropyHarnessOutcome::Checked,
-        };
+    let unweighted_index = match FlashEntropyIndex::unweighted(FIXED_TOLERANCE, merged_lib.iter()) {
+        Ok(idx) => idx,
+        Err(_) => return FlashEntropyHarnessOutcome::Checked,
+    };
 
     let uw_direct = match unweighted_index.search(&merged_query) {
         Ok(r) => r,
@@ -504,7 +500,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     };
 
     let uw_oracle =
-        LinearEntropy::unweighted(FIXED_TOLERANCE_F64).expect("fixed unweighted config is valid");
+        LinearEntropy::unweighted(FIXED_TOLERANCE).expect("fixed unweighted config is valid");
     assert_flash_entropy_equivalence(
         &uw_direct,
         &uw_oracle,
@@ -521,7 +517,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
             "fixed_unweighted/entropy",
         );
 
-        let uw_modified_oracle = ModifiedLinearEntropy::unweighted(FIXED_TOLERANCE_F64)
+        let uw_modified_oracle = ModifiedLinearEntropy::unweighted(FIXED_TOLERANCE)
             .expect("fixed unweighted config is valid");
         assert_flash_modified_entropy_equivalence(
             &uw_modified,
@@ -563,7 +559,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     }
 
     // Fixed weighted config.
-    let weighted_index = match FlashEntropyIndex::weighted(FIXED_TOLERANCE_F64, merged_lib.iter()) {
+    let weighted_index = match FlashEntropyIndex::weighted(FIXED_TOLERANCE, merged_lib.iter()) {
         Ok(idx) => idx,
         Err(_) => return FlashEntropyHarnessOutcome::Checked,
     };
@@ -574,7 +570,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     };
 
     let w_oracle =
-        LinearEntropy::weighted(FIXED_TOLERANCE_F64).expect("fixed weighted config is valid");
+        LinearEntropy::weighted(FIXED_TOLERANCE).expect("fixed weighted config is valid");
     assert_flash_entropy_equivalence(
         &w_direct,
         &w_oracle,
@@ -591,7 +587,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
             "fixed_weighted/entropy",
         );
 
-        let w_modified_oracle = ModifiedLinearEntropy::weighted(FIXED_TOLERANCE_F64)
+        let w_modified_oracle = ModifiedLinearEntropy::weighted(FIXED_TOLERANCE)
             .expect("fixed weighted config is valid");
         assert_flash_modified_entropy_equivalence(
             &w_modified,
@@ -627,7 +623,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     ) && let Ok(dyn_results) = dyn_index.search(&merged_query)
     {
         for r in &dyn_results {
-            assert_flash_score_in_range_f64(r.score, "dynamic/entropy");
+            assert_score_in_range(r.score, "dynamic/entropy");
             assert!(
                 r.n_matches <= merged_query.len(),
                 "dynamic/entropy: n_matches {} > query len {}",
@@ -642,44 +638,44 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
 
 #[derive(Debug)]
 struct CosineFuzzCase {
-    mz_power: f32,
-    intensity_power: f32,
-    tolerance: f32,
-    left: GenericSpectrum<f32, f32>,
-    right: GenericSpectrum<f32, f32>,
+    mz_power: f64,
+    intensity_power: f64,
+    tolerance: f64,
+    left: GenericSpectrum,
+    right: GenericSpectrum,
 }
 
 impl<'a> Arbitrary<'a> for CosineFuzzCase {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         Ok(Self {
-            mz_power: f32::arbitrary(u)?,
-            intensity_power: f32::arbitrary(u)?,
-            tolerance: f32::arbitrary(u)?,
-            left: GenericSpectrum::<f32, f32>::arbitrary(u)?,
-            right: GenericSpectrum::<f32, f32>::arbitrary(u)?,
+            mz_power: f64::arbitrary(u)?,
+            intensity_power: f64::arbitrary(u)?,
+            tolerance: f64::arbitrary(u)?,
+            left: GenericSpectrum::arbitrary(u)?,
+            right: GenericSpectrum::arbitrary(u)?,
         })
     }
 }
 
 #[derive(Debug)]
 struct EntropyFuzzCase {
-    mz_power: f32,
-    intensity_power: f32,
-    tolerance: f32,
+    mz_power: f64,
+    intensity_power: f64,
+    tolerance: f64,
     weighted: bool,
-    left: GenericSpectrum<f32, f32>,
-    right: GenericSpectrum<f32, f32>,
+    left: GenericSpectrum,
+    right: GenericSpectrum,
 }
 
 impl<'a> Arbitrary<'a> for EntropyFuzzCase {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         Ok(Self {
-            mz_power: f32::arbitrary(u)?,
-            intensity_power: f32::arbitrary(u)?,
-            tolerance: f32::arbitrary(u)?,
+            mz_power: f64::arbitrary(u)?,
+            intensity_power: f64::arbitrary(u)?,
+            tolerance: f64::arbitrary(u)?,
             weighted: bool::arbitrary(u)?,
-            left: GenericSpectrum::<f32, f32>::arbitrary(u)?,
-            right: GenericSpectrum::<f32, f32>::arbitrary(u)?,
+            left: GenericSpectrum::arbitrary(u)?,
+            right: GenericSpectrum::arbitrary(u)?,
         })
     }
 }
@@ -689,8 +685,8 @@ struct FlashCosineFuzzCase {
     mz_power: f64,
     intensity_power: f64,
     tolerance: f64,
-    library: [GenericSpectrum<f64, f64>; 3],
-    query: GenericSpectrum<f64, f64>,
+    library: [GenericSpectrum; 3],
+    query: GenericSpectrum,
 }
 
 impl<'a> Arbitrary<'a> for FlashCosineFuzzCase {
@@ -700,11 +696,11 @@ impl<'a> Arbitrary<'a> for FlashCosineFuzzCase {
             intensity_power: f64::arbitrary(u)?,
             tolerance: f64::arbitrary(u)?,
             library: [
-                GenericSpectrum::<f64, f64>::arbitrary(u)?,
-                GenericSpectrum::<f64, f64>::arbitrary(u)?,
-                GenericSpectrum::<f64, f64>::arbitrary(u)?,
+                GenericSpectrum::arbitrary(u)?,
+                GenericSpectrum::arbitrary(u)?,
+                GenericSpectrum::arbitrary(u)?,
             ],
-            query: GenericSpectrum::<f64, f64>::arbitrary(u)?,
+            query: GenericSpectrum::arbitrary(u)?,
         })
     }
 }
@@ -715,8 +711,8 @@ struct FlashEntropyFuzzCase {
     intensity_power: f64,
     tolerance: f64,
     weighted: bool,
-    library: [GenericSpectrum<f64, f64>; 3],
-    query: GenericSpectrum<f64, f64>,
+    library: [GenericSpectrum; 3],
+    query: GenericSpectrum,
 }
 
 impl<'a> Arbitrary<'a> for FlashEntropyFuzzCase {
@@ -727,23 +723,23 @@ impl<'a> Arbitrary<'a> for FlashEntropyFuzzCase {
             tolerance: f64::arbitrary(u)?,
             weighted: bool::arbitrary(u)?,
             library: [
-                GenericSpectrum::<f64, f64>::arbitrary(u)?,
-                GenericSpectrum::<f64, f64>::arbitrary(u)?,
-                GenericSpectrum::<f64, f64>::arbitrary(u)?,
+                GenericSpectrum::arbitrary(u)?,
+                GenericSpectrum::arbitrary(u)?,
+                GenericSpectrum::arbitrary(u)?,
             ],
-            query: GenericSpectrum::<f64, f64>::arbitrary(u)?,
+            query: GenericSpectrum::arbitrary(u)?,
         })
     }
 }
 
 fn assert_modified_bidirectional_properties<S1, S2>(
-    scorer: &ModifiedHungarianCosine<f32, f32>,
+    scorer: &ModifiedHungarianCosine,
     left: &S1,
     right: &S2,
     label: &str,
 ) where
-    S1: Spectrum<Mz = f32, Intensity = f32>,
-    S2: Spectrum<Mz = f32, Intensity = f32>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
     let forward = scorer.similarity(left, right);
     let reverse = scorer.similarity(right, left);
@@ -770,13 +766,13 @@ fn assert_modified_bidirectional_properties<S1, S2>(
 }
 
 fn assert_linear_entropy_bidirectional_properties<S1, S2>(
-    scorer: &LinearEntropy<f32, f32>,
+    scorer: &LinearEntropy,
     left: &S1,
     right: &S2,
     label: &str,
 ) where
-    S1: Spectrum<Mz = f32, Intensity = f32>,
-    S2: Spectrum<Mz = f32, Intensity = f32>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
     let forward = scorer.similarity(left, right);
     let reverse = scorer.similarity(right, left);
@@ -807,14 +803,14 @@ fn assert_linear_entropy_bidirectional_properties<S1, S2>(
 }
 
 fn assert_bidirectional_properties<S1, S2>(
-    scorer: &HungarianCosine<f32, f32>,
+    scorer: &HungarianCosine,
     left: &S1,
     right: &S2,
     label: &str,
     assert_match_symmetry: bool,
 ) where
-    S1: Spectrum<Mz = f32, Intensity = f32>,
-    S2: Spectrum<Mz = f32, Intensity = f32>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
     let forward = scorer.similarity(left, right);
     let reverse = scorer.similarity(right, left);
@@ -847,9 +843,9 @@ fn assert_bidirectional_properties<S1, S2>(
 }
 
 fn assert_modified_self_similarity(
-    scorer: &ModifiedHungarianCosine<f32, f32>,
-    spectrum: &GenericSpectrum<f32, f32>,
-    tolerance: f32,
+    scorer: &ModifiedHungarianCosine,
+    spectrum: &GenericSpectrum,
+    tolerance: f64,
     label: &str,
 ) {
     if spectrum.is_empty() {
@@ -876,9 +872,9 @@ fn assert_modified_self_similarity(
 }
 
 fn assert_self_similarity(
-    scorer: &HungarianCosine<f32, f32>,
-    spectrum: &GenericSpectrum<f32, f32>,
-    tolerance: f32,
+    scorer: &HungarianCosine,
+    spectrum: &GenericSpectrum,
+    tolerance: f64,
     label: &str,
 ) {
     if spectrum.is_empty() {
@@ -905,9 +901,9 @@ fn assert_self_similarity(
 }
 
 fn assert_linear_entropy_self_similarity(
-    scorer: &LinearEntropy<f32, f32>,
-    spectrum: &GenericSpectrum<f32, f32>,
-    tolerance: f32,
+    scorer: &LinearEntropy,
+    spectrum: &GenericSpectrum,
+    tolerance: f64,
     label: &str,
 ) {
     if spectrum.is_empty() {
@@ -935,13 +931,13 @@ fn assert_linear_entropy_self_similarity(
 }
 
 fn assert_modified_linear_entropy_bidirectional_properties<S1, S2>(
-    scorer: &ModifiedLinearEntropy<f32, f32>,
+    scorer: &ModifiedLinearEntropy,
     left: &S1,
     right: &S2,
     label: &str,
 ) where
-    S1: Spectrum<Mz = f32, Intensity = f32>,
-    S2: Spectrum<Mz = f32, Intensity = f32>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
     let forward = scorer.similarity(left, right);
     let reverse = scorer.similarity(right, left);
@@ -968,9 +964,9 @@ fn assert_modified_linear_entropy_bidirectional_properties<S1, S2>(
 }
 
 fn assert_modified_linear_entropy_self_similarity(
-    scorer: &ModifiedLinearEntropy<f32, f32>,
-    spectrum: &GenericSpectrum<f32, f32>,
-    tolerance: f32,
+    scorer: &ModifiedLinearEntropy,
+    spectrum: &GenericSpectrum,
+    tolerance: f64,
     label: &str,
 ) {
     if spectrum.is_empty() {
@@ -998,14 +994,14 @@ fn assert_modified_linear_entropy_self_similarity(
 }
 
 fn assert_modified_entropy_not_less_than_linear<S1, S2>(
-    modified: &ModifiedLinearEntropy<f32, f32>,
-    linear: &LinearEntropy<f32, f32>,
+    modified: &ModifiedLinearEntropy,
+    linear: &LinearEntropy,
     left: &S1,
     right: &S2,
     label: &str,
 ) where
-    S1: Spectrum<Mz = f32, Intensity = f32>,
-    S2: Spectrum<Mz = f32, Intensity = f32>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
     let modified_forward = modified.similarity(left, right);
     let linear_forward = linear.similarity(left, right);
@@ -1027,9 +1023,9 @@ fn assert_modified_entropy_not_less_than_linear<S1, S2>(
 }
 
 fn assert_modified_linear_entropy_original_outcome(
-    scorer: &ModifiedLinearEntropy<f32, f32>,
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
+    scorer: &ModifiedLinearEntropy,
+    left: &GenericSpectrum,
+    right: &GenericSpectrum,
     label: &str,
 ) {
     match scorer.similarity(left, right) {
@@ -1047,17 +1043,17 @@ fn assert_modified_linear_entropy_original_outcome(
 }
 
 fn assert_modified_linear_matches_modified_hungarian(
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
+    left: &GenericSpectrum,
+    right: &GenericSpectrum,
 ) {
     let merger =
         SiriusMergeClosePeaks::new(FIXED_TOLERANCE).expect("fixed preprocess config is valid");
     let left = merger.process(left);
     let right = merger.process(right);
 
-    let modified_hungarian = ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, FIXED_TOLERANCE)
+    let modified_hungarian = ModifiedHungarianCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE)
         .expect("fixed modified-hungarian config is valid");
-    let modified_linear = ModifiedLinearCosine::new(1.0_f32, 1.0_f32, FIXED_TOLERANCE)
+    let modified_linear = ModifiedLinearCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE)
         .expect("fixed modified-linear config is valid");
 
     let (
@@ -1110,14 +1106,14 @@ fn assert_modified_linear_matches_modified_hungarian(
 }
 
 fn assert_modified_not_less_than_hungarian<S1, S2>(
-    modified: &ModifiedHungarianCosine<f32, f32>,
-    hungarian: &HungarianCosine<f32, f32>,
+    modified: &ModifiedHungarianCosine,
+    hungarian: &HungarianCosine,
     left: &S1,
     right: &S2,
     label: &str,
 ) where
-    S1: Spectrum<Mz = f32, Intensity = f32>,
-    S2: Spectrum<Mz = f32, Intensity = f32>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
     let modified_forward = modified.similarity(left, right);
     let hungarian_forward = hungarian.similarity(left, right);
@@ -1142,18 +1138,15 @@ fn assert_modified_not_less_than_hungarian<S1, S2>(
     }
 }
 
-fn assert_linear_matches_hungarian(
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
-) {
+fn assert_linear_matches_hungarian(left: &GenericSpectrum, right: &GenericSpectrum) {
     let merger =
         SiriusMergeClosePeaks::new(FIXED_TOLERANCE).expect("fixed preprocess config is valid");
     let left = merger.process(left);
     let right = merger.process(right);
 
     let hungarian =
-        HungarianCosine::new(1.0_f32, 1.0_f32, FIXED_TOLERANCE).expect("fixed config is valid");
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, FIXED_TOLERANCE).expect("fixed config");
+        HungarianCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE).expect("fixed config is valid");
+    let linear = LinearCosine::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE).expect("fixed config");
 
     let (Ok((hungarian_score, hungarian_matches)), Ok((linear_score, linear_matches))) = (
         hungarian.similarity(&left, &right),
@@ -1173,9 +1166,9 @@ fn assert_linear_matches_hungarian(
 }
 
 fn assert_linear_entropy_original_outcome(
-    scorer: &LinearEntropy<f32, f32>,
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
+    scorer: &LinearEntropy,
+    left: &GenericSpectrum,
+    right: &GenericSpectrum,
     label: &str,
 ) {
     match scorer.similarity(left, right) {
@@ -1193,16 +1186,7 @@ fn assert_linear_entropy_original_outcome(
 }
 
 #[inline]
-fn assert_score_in_range(score: f32, label: &str) {
-    assert!(score.is_finite(), "{label}: score {score} is not finite");
-    assert!(
-        (-1.0e-6..=1.0 + 1.0e-6).contains(&score),
-        "{label}: score {score} not in [0, 1]"
-    );
-}
-
-#[inline]
-fn assert_flash_score_in_range_f64(score: f64, label: &str) {
+fn assert_score_in_range(score: f64, label: &str) {
     assert!(score.is_finite(), "{label}: score {score} is not finite");
     assert!(
         (-1.0e-6..=1.0 + 1.0e-6).contains(&score),
@@ -1212,9 +1196,9 @@ fn assert_flash_score_in_range_f64(score: f64, label: &str) {
 
 fn assert_flash_cosine_equivalence(
     flash_results: &[FlashSearchResult],
-    oracle: &LinearCosine<f64, f64>,
-    library: &[GenericSpectrum<f64, f64>; 3],
-    query: &GenericSpectrum<f64, f64>,
+    oracle: &LinearCosine,
+    library: &[GenericSpectrum; 3],
+    query: &GenericSpectrum,
     label: &str,
 ) {
     for (spec_id, lib_spec) in library.iter().enumerate() {
@@ -1229,9 +1213,9 @@ fn assert_flash_cosine_equivalence(
 
         match flash_result {
             Some(fr) => {
-                assert_flash_score_in_range_f64(fr.score, label);
+                assert_score_in_range(fr.score, label);
                 assert!(
-                    (fr.score - oracle_score).abs() <= DIFFERENTIAL_EPS_F64,
+                    (fr.score - oracle_score).abs() <= DIFFERENTIAL_EPS,
                     "{label}: spec {spec_id} flash score {} (n_matches={}) vs oracle score {oracle_score} (n_matches={oracle_matches})",
                     fr.score,
                     fr.n_matches,
@@ -1239,7 +1223,7 @@ fn assert_flash_cosine_equivalence(
             }
             None => {
                 assert!(
-                    oracle_score <= DIFFERENTIAL_EPS_F64,
+                    oracle_score <= DIFFERENTIAL_EPS,
                     "{label}: spec {spec_id} missing from flash results but oracle score is {oracle_score}"
                 );
             }
@@ -1249,9 +1233,9 @@ fn assert_flash_cosine_equivalence(
 
 fn assert_flash_entropy_equivalence(
     flash_results: &[FlashSearchResult],
-    oracle: &LinearEntropy<f64, f64>,
-    library: &[GenericSpectrum<f64, f64>; 3],
-    query: &GenericSpectrum<f64, f64>,
+    oracle: &LinearEntropy,
+    library: &[GenericSpectrum; 3],
+    query: &GenericSpectrum,
     label: &str,
 ) {
     for (spec_id, lib_spec) in library.iter().enumerate() {
@@ -1266,9 +1250,9 @@ fn assert_flash_entropy_equivalence(
 
         match flash_result {
             Some(fr) => {
-                assert_flash_score_in_range_f64(fr.score, label);
+                assert_score_in_range(fr.score, label);
                 assert!(
-                    (fr.score - oracle_score).abs() <= DIFFERENTIAL_EPS_F64,
+                    (fr.score - oracle_score).abs() <= DIFFERENTIAL_EPS,
                     "{label}: spec {spec_id} flash score {} (n_matches={}) vs oracle score {oracle_score} (n_matches={oracle_matches})",
                     fr.score,
                     fr.n_matches,
@@ -1276,7 +1260,7 @@ fn assert_flash_entropy_equivalence(
             }
             None => {
                 assert!(
-                    oracle_score <= DIFFERENTIAL_EPS_F64,
+                    oracle_score <= DIFFERENTIAL_EPS,
                     "{label}: spec {spec_id} missing from flash results but oracle score is {oracle_score}"
                 );
             }
@@ -1286,9 +1270,9 @@ fn assert_flash_entropy_equivalence(
 
 fn assert_flash_modified_cosine_equivalence(
     flash_results: &[FlashSearchResult],
-    oracle: &ModifiedLinearCosine<f64, f64>,
-    library: &[GenericSpectrum<f64, f64>; 3],
-    query: &GenericSpectrum<f64, f64>,
+    oracle: &ModifiedLinearCosine,
+    library: &[GenericSpectrum; 3],
+    query: &GenericSpectrum,
     label: &str,
 ) {
     for (spec_id, lib_spec) in library.iter().enumerate() {
@@ -1303,14 +1287,14 @@ fn assert_flash_modified_cosine_equivalence(
 
         match flash_result {
             Some(fr) => {
-                assert_flash_score_in_range_f64(fr.score, label);
+                assert_score_in_range(fr.score, label);
                 // Flash's DenseAccumulator can count more matches than the
                 // linear oracle when neutral-loss shifts bring peaks closer
                 // than 2×tolerance. Extra matches only add score, so we
                 // assert one-sided: flash must not be significantly *below*
                 // the oracle.
                 assert!(
-                    fr.score >= oracle_score - DIFFERENTIAL_EPS_F64,
+                    fr.score >= oracle_score - DIFFERENTIAL_EPS,
                     "{label}: spec {spec_id} flash modified score {} (n_matches={}) vs oracle score {oracle_score} (n_matches={oracle_matches})",
                     fr.score,
                     fr.n_matches,
@@ -1318,7 +1302,7 @@ fn assert_flash_modified_cosine_equivalence(
             }
             None => {
                 assert!(
-                    oracle_score <= DIFFERENTIAL_EPS_F64,
+                    oracle_score <= DIFFERENTIAL_EPS,
                     "{label}: spec {spec_id} missing from flash modified results but oracle score is {oracle_score}"
                 );
             }
@@ -1328,9 +1312,9 @@ fn assert_flash_modified_cosine_equivalence(
 
 fn assert_flash_modified_entropy_equivalence(
     flash_results: &[FlashSearchResult],
-    oracle: &ModifiedLinearEntropy<f64, f64>,
-    library: &[GenericSpectrum<f64, f64>; 3],
-    query: &GenericSpectrum<f64, f64>,
+    oracle: &ModifiedLinearEntropy,
+    library: &[GenericSpectrum; 3],
+    query: &GenericSpectrum,
     label: &str,
 ) {
     for (spec_id, lib_spec) in library.iter().enumerate() {
@@ -1345,11 +1329,11 @@ fn assert_flash_modified_entropy_equivalence(
 
         match flash_result {
             Some(fr) => {
-                assert_flash_score_in_range_f64(fr.score, label);
+                assert_score_in_range(fr.score, label);
                 // Same one-sided check as modified cosine: Flash can
                 // legitimately score higher due to extra shifted matches.
                 assert!(
-                    fr.score >= oracle_score - DIFFERENTIAL_EPS_F64,
+                    fr.score >= oracle_score - DIFFERENTIAL_EPS,
                     "{label}: spec {spec_id} flash modified score {} (n_matches={}) vs oracle score {oracle_score} (n_matches={oracle_matches})",
                     fr.score,
                     fr.n_matches,
@@ -1357,7 +1341,7 @@ fn assert_flash_modified_entropy_equivalence(
             }
             None => {
                 assert!(
-                    oracle_score <= DIFFERENTIAL_EPS_F64,
+                    oracle_score <= DIFFERENTIAL_EPS,
                     "{label}: spec {spec_id} missing from flash modified results but oracle score is {oracle_score}"
                 );
             }
@@ -1374,7 +1358,7 @@ fn assert_flash_modified_not_less_than_direct(
         let mr = modified.iter().find(|r| r.spectrum_id == dr.spectrum_id);
         let modified_score = mr.map_or(0.0, |r| r.score);
         assert!(
-            modified_score + DIFFERENTIAL_EPS_F64 >= dr.score,
+            modified_score + DIFFERENTIAL_EPS >= dr.score,
             "{label}: spec {} modified score {modified_score} < direct score {}",
             dr.spectrum_id,
             dr.score
@@ -1422,8 +1406,8 @@ fn assert_flash_state_equivalence(
 }
 
 fn assert_flash_self_similarity_cosine(
-    index: &FlashCosineIndex<f64>,
-    spectrum: &GenericSpectrum<f64, f64>,
+    index: &FlashCosineIndex,
+    spectrum: &GenericSpectrum,
     expected_id: u32,
     label: &str,
 ) {
@@ -1441,7 +1425,7 @@ fn assert_flash_self_similarity_cosine(
         return;
     };
 
-    assert_flash_score_in_range_f64(sr.score, label);
+    assert_score_in_range(sr.score, label);
     assert!(
         (1.0 - sr.score).abs() <= 1.0e-4,
         "{label}: spec {expected_id} self-similarity {} not ~1.0",
@@ -1458,7 +1442,7 @@ fn assert_flash_self_similarity_cosine(
 
 fn assert_flash_self_similarity_entropy(
     index: &FlashEntropyIndex,
-    spectrum: &GenericSpectrum<f64, f64>,
+    spectrum: &GenericSpectrum,
     expected_id: u32,
     label: &str,
 ) {
@@ -1476,7 +1460,7 @@ fn assert_flash_self_similarity_entropy(
         return;
     };
 
-    assert_flash_score_in_range_f64(sr.score, label);
+    assert_score_in_range(sr.score, label);
     assert!(
         (1.0 - sr.score).abs() <= 1.0e-4,
         "{label}: spec {expected_id} self-similarity {} not ~1.0",

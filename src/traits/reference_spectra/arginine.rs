@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of arginine.
-pub trait ArginineSpectrum: SpectrumAlloc + Sized {
+pub trait ArginineSpectrum: SpectrumAlloc {
     /// Create a new spectrum of arginine.
     fn arginine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

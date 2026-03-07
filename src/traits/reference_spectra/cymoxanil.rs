@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cymoxanil.
-pub trait CymoxanilSpectrum: SpectrumAlloc + Sized {
+pub trait CymoxanilSpectrum: SpectrumAlloc {
     /// Create a new spectrum of cymoxanil.
     fn cymoxanil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

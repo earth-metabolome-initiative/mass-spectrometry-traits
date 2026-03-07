@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of alanine.
-pub trait AlanineSpectrum: SpectrumAlloc + Sized {
+pub trait AlanineSpectrum: SpectrumAlloc {
     /// Create a new spectrum of alanine.
     fn alanine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -8,18 +8,18 @@ use mass_spectrometry::prelude::{
     HydroxyCholesterolSpectrum, PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, Spectrum,
 };
 
-fn cosine() -> HungarianCosine<f32, f32> {
+fn cosine() -> HungarianCosine {
     HungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
-fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
+fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum) {
     let (sim, peaks) = cosine()
         .similarity(spectrum, spectrum)
         .expect("similarity computation should succeed");
     // f32 self-similarity may not be exactly 1.0 because sqrt(x)*sqrt(x) != x
-    // in floating point; 1 - sim should be within f32 machine epsilon (~1.2e-7).
+    // in floating point; 1 - sim should be within f64 machine epsilon (~1.2e-7).
     assert!(
-        (1.0_f32 - sim).abs() < 1e-6,
+        (1.0 - sim).abs() < 1e-6,
         "{name} self-similarity: expected ~1.0, got {sim}"
     );
     assert_eq!(peaks, spectrum.len());

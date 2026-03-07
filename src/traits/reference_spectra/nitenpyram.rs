@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of nitenpyram.
-pub trait NitenpyramSpectrum: SpectrumAlloc + Sized {
+pub trait NitenpyramSpectrum: SpectrumAlloc {
     /// Create a new spectrum of nitenpyram.
     fn nitenpyram() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

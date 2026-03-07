@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cyazofamid.
-pub trait CyazofamidSpectrum: SpectrumAlloc + Sized {
+pub trait CyazofamidSpectrum: SpectrumAlloc {
     /// Create a new spectrum of cyazofamid.
     fn cyazofamid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

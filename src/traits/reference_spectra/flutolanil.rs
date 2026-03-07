@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of flutolanil.
-pub trait FlutolanilSpectrum: SpectrumAlloc + Sized {
+pub trait FlutolanilSpectrum: SpectrumAlloc {
     /// Create a new spectrum of flutolanil.
     fn flutolanil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of halofenozide.
-pub trait HalofenozideSpectrum: SpectrumAlloc + Sized {
+pub trait HalofenozideSpectrum: SpectrumAlloc {
     /// Create a new spectrum of halofenozide.
     fn halofenozide() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

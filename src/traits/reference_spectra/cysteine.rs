@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cysteine.
-pub trait CysteineSpectrum: SpectrumAlloc + Sized {
+pub trait CysteineSpectrum: SpectrumAlloc {
     /// Create a new spectrum of cysteine.
     fn cysteine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

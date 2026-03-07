@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of pymetrozine.
-pub trait PymetrozineSpectrum: SpectrumAlloc + Sized {
+pub trait PymetrozineSpectrum: SpectrumAlloc {
     /// Create a new spectrum of pymetrozine.
     fn pymetrozine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

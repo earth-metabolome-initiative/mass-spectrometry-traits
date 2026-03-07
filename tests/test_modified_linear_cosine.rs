@@ -6,16 +6,16 @@ use mass_spectrometry::prelude::{
     ScalarSimilarity, SimilarityComputationError, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 
-fn modified_linear_cosine() -> ModifiedLinearCosine<f32, f32> {
+fn modified_linear_cosine() -> ModifiedLinearCosine {
     ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
-fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
+fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum) {
     let (sim, peaks) = modified_linear_cosine()
         .similarity(spectrum, spectrum)
         .expect("similarity computation should succeed");
     assert!(
-        (1.0_f32 - sim).abs() < 1e-6,
+        (1.0 - sim).abs() < 1e-6,
         "{name} self-similarity: expected ~1.0, got {sim}"
     );
     assert_eq!(
@@ -70,14 +70,9 @@ fn self_similarity_phenylalanine() {
 
 // ---------- shift=0 equivalence with LinearCosine ----------
 
-fn assert_shift0_equivalence(
-    name: &str,
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
-) {
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-    let modified =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+fn assert_shift0_equivalence(name: &str, left: &GenericSpectrum, right: &GenericSpectrum) {
+    let linear = LinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
+    let modified = ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
 
     let (linear_score, linear_matches) = linear
         .similarity(left, right)
@@ -124,15 +119,10 @@ fn shift0_equivalence_cross() {
 
 // ---------- strict parity with ModifiedHungarianCosine on reference spectra ----------
 
-fn assert_matches_modified_hungarian(
-    name: &str,
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
-) {
+fn assert_matches_modified_hungarian(name: &str, left: &GenericSpectrum, right: &GenericSpectrum) {
     let modified_hungarian =
-        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-    let modified_linear =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+        ModifiedHungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
+    let modified_linear = ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
 
     let (hungarian_score, hungarian_matches) = modified_hungarian
         .similarity(left, right)
@@ -171,11 +161,7 @@ fn parity_with_modified_hungarian_hydroxy_cholesterol_phenylalanine() {
 
 // ---------- symmetry: sim(A, B) == sim(B, A) ----------
 
-fn assert_symmetry(
-    name: &str,
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
-) {
+fn assert_symmetry(name: &str, left: &GenericSpectrum, right: &GenericSpectrum) {
     let mc = modified_linear_cosine();
     let (score_ab, matches_ab) = mc
         .similarity(left, right)
@@ -215,17 +201,16 @@ fn symmetry_hydroxy_cholesterol_phenylalanine() {
 
 #[test]
 fn synthetic_shifted_match() {
-    let mut a = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    let mut a = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     a.add_peak(50.0, 1000.0).unwrap();
     a.add_peak(80.0, 500.0).unwrap();
 
-    let mut b = GenericSpectrum::with_capacity(110.0_f32, 2).expect("valid spectrum allocation");
+    let mut b = GenericSpectrum::with_capacity(110.0, 2).expect("valid spectrum allocation");
     b.add_peak(50.0, 1000.0).unwrap();
     b.add_peak(90.0, 500.0).unwrap();
 
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-    let modified =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let linear = LinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
+    let modified = ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
 
     let (linear_score, linear_matches) = linear
         .similarity(&a, &b)
@@ -254,19 +239,17 @@ fn synthetic_shifted_match() {
 
 #[test]
 fn overlapping_direct_and_shifted_windows_do_not_double_count() {
-    let mut left = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    let mut left = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     left.add_peak(50.0, 1000.0).unwrap();
     left.add_peak(80.0, 500.0).unwrap();
 
-    let mut right =
-        GenericSpectrum::with_capacity(100.05_f32, 2).expect("valid spectrum allocation");
+    let mut right = GenericSpectrum::with_capacity(100.05, 2).expect("valid spectrum allocation");
     right.add_peak(50.03, 1000.0).unwrap();
     right.add_peak(80.03, 500.0).unwrap();
 
     let modified_hungarian =
-        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
-    let modified_linear =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+        ModifiedHungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
+    let modified_linear = ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
 
     let (hungarian_score, hungarian_matches) = modified_hungarian
         .similarity(&left, &right)
@@ -288,14 +271,13 @@ fn overlapping_direct_and_shifted_windows_do_not_double_count() {
 
 #[test]
 fn synthetic_no_matches() {
-    let mut a = GenericSpectrum::with_capacity(100.0_f32, 1).expect("valid spectrum allocation");
+    let mut a = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     a.add_peak(50.0, 1000.0).unwrap();
 
-    let mut b = GenericSpectrum::with_capacity(200.0_f32, 1).expect("valid spectrum allocation");
+    let mut b = GenericSpectrum::with_capacity(200.0, 1).expect("valid spectrum allocation");
     b.add_peak(300.0, 1000.0).unwrap();
 
-    let modified =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified = ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
     let (score, matches) = modified
         .similarity(&a, &b)
         .expect("similarity computation should succeed");
@@ -309,17 +291,15 @@ fn synthetic_no_matches() {
 
 #[test]
 fn boundary_gap_equal_2x_tolerance_returns_error() {
-    let mut left = GenericSpectrum::with_capacity(200.0_f32, 2).expect("valid spectrum allocation");
+    let mut left = GenericSpectrum::with_capacity(200.0, 2).expect("valid spectrum allocation");
     left.add_peak(100.0, 10.0).unwrap();
     left.add_peak(100.25, 8.0).unwrap();
 
-    let mut right =
-        GenericSpectrum::with_capacity(200.0_f32, 2).expect("valid spectrum allocation");
+    let mut right = GenericSpectrum::with_capacity(200.0, 2).expect("valid spectrum allocation");
     right.add_peak(100.0, 10.0).unwrap();
     right.add_peak(100.25, 8.0).unwrap();
 
-    let modified =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.125_f32).expect("valid scorer config");
+    let modified = ModifiedLinearCosine::new(1.0, 1.0, 0.125).expect("valid scorer config");
     let error = modified
         .similarity(&left, &right)
         .expect_err("boundary-equal spacing should be rejected");
@@ -332,23 +312,21 @@ fn boundary_gap_equal_2x_tolerance_returns_error() {
 
 #[test]
 fn equivalence_within_precursor_tolerance() {
-    let tolerance = 0.1_f32;
+    let tolerance = 0.1;
 
-    let mut left = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    let mut left = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     left.add_peak(50.0, 1000.0).unwrap();
     left.add_peak(80.0, 500.0).unwrap();
 
     // precursor shift = 100.0 - 99.91 = 0.09, within tolerance.
     // The peak at 79.85 would only match via shifted matching; this verifies
     // modified behaves like non-modified inside the precursor-tolerance window.
-    let mut right =
-        GenericSpectrum::with_capacity(99.91_f32, 2).expect("valid spectrum allocation");
+    let mut right = GenericSpectrum::with_capacity(99.91, 2).expect("valid spectrum allocation");
     right.add_peak(50.0, 900.0).unwrap();
     right.add_peak(79.85, 600.0).unwrap();
 
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
-    let modified =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+    let linear = LinearCosine::new(1.0, 1.0, tolerance).expect("valid scorer config");
+    let modified = ModifiedLinearCosine::new(1.0, 1.0, tolerance).expect("valid scorer config");
 
     let precursor_delta = (left.precursor_mz() - right.precursor_mz()).abs();
     assert!(
@@ -372,21 +350,19 @@ fn equivalence_within_precursor_tolerance() {
 
 #[test]
 fn equivalence_at_precursor_tolerance_boundary() {
-    let tolerance = 0.125_f32;
+    let tolerance = 0.125;
 
-    let mut left = GenericSpectrum::with_capacity(100.0_f32, 2).expect("valid spectrum allocation");
+    let mut left = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     left.add_peak(50.0, 1000.0).unwrap();
     left.add_peak(80.0, 500.0).unwrap();
 
     // precursor shift = 100.0 - 99.875 = 0.125, exactly tolerance.
-    let mut right =
-        GenericSpectrum::with_capacity(99.875_f32, 2).expect("valid spectrum allocation");
+    let mut right = GenericSpectrum::with_capacity(99.875, 2).expect("valid spectrum allocation");
     right.add_peak(50.0, 900.0).unwrap();
     right.add_peak(79.8, 600.0).unwrap();
 
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
-    let modified =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, tolerance).expect("valid scorer config");
+    let linear = LinearCosine::new(1.0, 1.0, tolerance).expect("valid scorer config");
+    let modified = ModifiedLinearCosine::new(1.0, 1.0, tolerance).expect("valid scorer config");
 
     let precursor_delta = (left.precursor_mz() - right.precursor_mz()).abs();
     assert!(
@@ -427,19 +403,17 @@ fn dp_beats_greedy_on_contested_shifted_match() {
     //
     // Greedy: picks (1,0) = 1_100_000, 1 match.
     // Optimal: picks (0,0)+(1,1) = 1_968_000, 2 matches.
-    let mut left = GenericSpectrum::with_capacity(150.0_f32, 2).expect("valid spectrum allocation");
+    let mut left = GenericSpectrum::with_capacity(150.0, 2).expect("valid spectrum allocation");
     left.add_peak(100.0, 10.0).unwrap();
     left.add_peak(110.0, 10.0).unwrap();
 
-    let mut right =
-        GenericSpectrum::with_capacity(140.0_f32, 2).expect("valid spectrum allocation");
+    let mut right = GenericSpectrum::with_capacity(140.0, 2).expect("valid spectrum allocation");
     right.add_peak(100.0, 10.0).unwrap();
     right.add_peak(110.0, 8.0).unwrap();
 
-    let modified_linear =
-        ModifiedLinearCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let modified_linear = ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
     let modified_hungarian =
-        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+        ModifiedHungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
 
     let (linear_score, linear_matches) = modified_linear
         .similarity(&left, &right)

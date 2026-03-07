@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of diniconazole.
-pub trait DiniconazoleSpectrum: SpectrumAlloc + Sized {
+pub trait DiniconazoleSpectrum: SpectrumAlloc {
     /// Create a new spectrum of diniconazole.
     fn diniconazole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -9,7 +9,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of stypoltrione.
-pub trait StypolTrioneSpectrum: SpectrumAlloc + Sized {
+pub trait StypolTrioneSpectrum: SpectrumAlloc {
     /// Create a new spectrum of stypoltrione.
     fn stypoltrione() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

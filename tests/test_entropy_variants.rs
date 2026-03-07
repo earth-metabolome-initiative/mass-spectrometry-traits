@@ -9,7 +9,7 @@ use mass_spectrometry::prelude::{
 
 // ========== Helper spectra ==========
 
-fn build_spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum<f64, f64> {
+fn build_spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
     let mut s =
         GenericSpectrum::try_with_capacity(precursor, peaks.len()).expect("valid precursor");
     for &(mz, int) in peaks {
@@ -19,14 +19,14 @@ fn build_spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum<f64, 
 }
 
 /// Well-separated spectrum (peaks > 2 * 0.1 = 0.2 apart) for linear variants.
-fn well_separated_a() -> GenericSpectrum<f64, f64> {
+fn well_separated_a() -> GenericSpectrum {
     build_spectrum(
         50.0,
         &[(100.0, 10.0), (200.0, 20.0), (300.0, 30.0), (400.0, 40.0)],
     )
 }
 
-fn well_separated_b() -> GenericSpectrum<f64, f64> {
+fn well_separated_b() -> GenericSpectrum {
     build_spectrum(
         55.0,
         &[(100.05, 15.0), (200.05, 25.0), (300.05, 35.0), (500.0, 5.0)],
@@ -34,18 +34,18 @@ fn well_separated_b() -> GenericSpectrum<f64, f64> {
 }
 
 /// Spectrum with same mz as well_separated_a but different precursor.
-fn well_separated_shifted() -> GenericSpectrum<f64, f64> {
+fn well_separated_shifted() -> GenericSpectrum {
     build_spectrum(
         60.0,
         &[(100.0, 10.0), (200.0, 20.0), (300.0, 30.0), (400.0, 40.0)],
     )
 }
 
-fn empty_spectrum() -> GenericSpectrum<f64, f64> {
+fn empty_spectrum() -> GenericSpectrum {
     GenericSpectrum::try_with_capacity(100.0, 0).expect("valid precursor")
 }
 
-fn zero_intensity_spectrum() -> GenericSpectrum<f64, f64> {
+fn zero_intensity_spectrum() -> GenericSpectrum {
     // Zero-intensity peaks are rejected; return an empty spectrum.
     GenericSpectrum::try_with_capacity(100.0, 0).expect("valid precursor")
 }

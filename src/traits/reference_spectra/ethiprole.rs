@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of ethiprole.
-pub trait EthiproleSpectrum: SpectrumAlloc + Sized {
+pub trait EthiproleSpectrum: SpectrumAlloc {
     /// Create a new spectrum of ethiprole.
     fn ethiprole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

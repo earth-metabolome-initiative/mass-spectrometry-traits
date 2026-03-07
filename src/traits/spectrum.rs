@@ -4,10 +4,9 @@ use alloc::vec::Vec;
 
 use geometric_traits::prelude::*;
 use multi_ranged::{BiRange, MultiRanged, SimpleRange};
-use num_traits::ToPrimitive;
 
-use crate::numeric_validation::{NumericValidationError, checked_to_f64};
-use crate::prelude::Annotation;
+use super::spectrum_annotation::Annotation;
+
 use crate::structs::SimilarityComputationError;
 
 #[inline]
@@ -20,19 +19,6 @@ enum TolerancePosition {
     Below,
     Within,
     Above,
-}
-
-#[inline]
-fn to_f64_checked<T: ToPrimitive>(
-    value: T,
-    name: &'static str,
-) -> Result<f64, SimilarityComputationError> {
-    checked_to_f64(value, name).map_err(|error| match error {
-        NumericValidationError::NonRepresentable(name) => {
-            SimilarityComputationError::ValueNotRepresentable(name)
-        }
-        NumericValidationError::NonFinite(name) => SimilarityComputationError::NonFiniteValue(name),
-    })
 }
 
 #[inline]
@@ -81,7 +67,6 @@ fn collect_window_matches<S, F>(
 ) -> Result<usize, SimilarityComputationError>
 where
     S: Spectrum,
-    S::Mz: ToPrimitive,
     F: FnMut(u32),
 {
     let mut new_lowest = lowest_other_index;
@@ -90,15 +75,14 @@ where
         .enumerate()
         .map(|(j, mz)| (j + lowest_other_index, mz))
     {
-        let other_mz_f64 = to_f64_checked(other_mz, "right_mz")?;
-        let shifted_other_mz_f64 = other_mz_f64 + mz_shift_f64;
-        if !shifted_other_mz_f64.is_finite() {
+        let shifted_other_mz = other_mz + mz_shift_f64;
+        if !shifted_other_mz.is_finite() {
             return Err(SimilarityComputationError::NonFiniteValue(
                 non_finite_shift_label,
             ));
         }
 
-        match tolerance_position_f64(mz_f64, shifted_other_mz_f64, mz_tolerance_f64) {
+        match tolerance_position_f64(mz_f64, shifted_other_mz, mz_tolerance_f64) {
             TolerancePosition::Above => break,
             TolerancePosition::Below => {
                 new_lowest = j + 1;
@@ -113,21 +97,17 @@ where
 
 /// Trait for a single Spectrum.
 pub trait Spectrum {
-    /// The type of the Intensity.
-    type Intensity: Number;
-    /// The type of the mass over charge.
-    type Mz: Number;
     /// Iterator over the intensities in the Spectrum, sorted by mass over
     /// charge.
-    type SortedIntensitiesIter<'a>: Iterator<Item = Self::Intensity>
+    type SortedIntensitiesIter<'a>: Iterator<Item = f64>
     where
         Self: 'a;
     /// Iterator over the sorted mass over charge values in the Spectrum.
-    type SortedMzIter<'a>: Iterator<Item = Self::Mz>
+    type SortedMzIter<'a>: Iterator<Item = f64>
     where
         Self: 'a;
     /// Iterator over the peaks in the Spectrum, sorted by mass over charge
-    type SortedPeaksIter<'a>: Iterator<Item = (Self::Mz, Self::Intensity)>
+    type SortedPeaksIter<'a>: Iterator<Item = (f64, f64)>
     where
         Self: 'a;
 
@@ -153,7 +133,7 @@ pub trait Spectrum {
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
-    fn intensity_nth(&self, n: usize) -> Self::Intensity;
+    fn intensity_nth(&self, n: usize) -> f64;
 
     /// Returns an iterator over the SORTED mass over charge values in the
     /// Spectrum.
@@ -172,7 +152,7 @@ pub trait Spectrum {
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
-    fn mz_nth(&self, n: usize) -> Self::Mz;
+    fn mz_nth(&self, n: usize) -> f64;
 
     /// Returns an iterator over the peaks in the Spectrum, SORTED by mass over
     /// charge.
@@ -187,10 +167,10 @@ pub trait Spectrum {
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
-    fn peak_nth(&self, n: usize) -> (Self::Mz, Self::Intensity);
+    fn peak_nth(&self, n: usize) -> (f64, f64);
 
     /// Returns the precursor mass over charge.
-    fn precursor_mz(&self) -> Self::Mz;
+    fn precursor_mz(&self) -> f64;
 
     /// Returns the matching peaks graph for the provided tolerance.
     ///
@@ -198,16 +178,15 @@ pub trait Spectrum {
     ///
     /// * `other`: The other Spectrum.
     /// * `mz_tolerance`: The mass over charge
-    fn matching_peaks<S: Spectrum<Mz = Self::Mz>>(
+    fn matching_peaks<S: Spectrum>(
         &self,
         other: &S,
-        mz_tolerance: Self::Mz,
-    ) -> Result<RangedCSR2D<u32, u32, SimpleRange<u32>>, SimilarityComputationError>
-    where
-        Self::Mz: ToPrimitive,
-    {
-        let mz_tolerance_f64 = to_f64_checked(mz_tolerance, "mz_tolerance")?;
-        if mz_tolerance_f64 < 0.0 {
+        mz_tolerance: f64,
+    ) -> Result<RangedCSR2D<u32, u32, SimpleRange<u32>>, SimilarityComputationError> {
+        if !mz_tolerance.is_finite() {
+            return Err(SimilarityComputationError::NonFiniteValue("mz_tolerance"));
+        }
+        if mz_tolerance < 0.0 {
             return Err(SimilarityComputationError::NegativeTolerance);
         }
         let mut matching_peaks =
@@ -215,16 +194,18 @@ pub trait Spectrum {
         let mut lowest_other_index = 0usize;
         let mut row_matches: Vec<u32> = Vec::new();
         for (i, mz) in self.mz().enumerate() {
+            if !mz.is_finite() {
+                return Err(SimilarityComputationError::NonFiniteValue("left_mz"));
+            }
             let row = to_matrix_index(i)?;
-            let mz_f64 = to_f64_checked(mz, "left_mz")?;
             row_matches.clear();
             lowest_other_index = collect_window_matches(
                 other,
                 lowest_other_index,
-                mz_f64,
-                mz_tolerance_f64,
+                mz,
+                mz_tolerance,
                 0.0,
-                "shifted_other_mz",
+                "right_mz",
                 |col| row_matches.push(col),
             )?;
             for &col in &row_matches {
@@ -252,41 +233,40 @@ pub trait Spectrum {
     /// * `mz_tolerance`: The mass over charge tolerance.
     /// * `self_precursor`: The precursor m/z of `self`.
     /// * `other_precursor`: The precursor m/z of `other`.
-    fn modified_matching_peaks<S: Spectrum<Mz = Self::Mz>>(
+    fn modified_matching_peaks<S: Spectrum>(
         &self,
         other: &S,
-        mz_tolerance: Self::Mz,
-        self_precursor: Self::Mz,
-        other_precursor: Self::Mz,
-    ) -> Result<RangedCSR2D<u32, u32, BiRange<u32>>, SimilarityComputationError>
-    where
-        Self::Mz: ToPrimitive,
-    {
-        let mz_tolerance_f64 = to_f64_checked(mz_tolerance, "mz_tolerance")?;
-        if mz_tolerance_f64 < 0.0 {
+        mz_tolerance: f64,
+        self_precursor: f64,
+        other_precursor: f64,
+    ) -> Result<RangedCSR2D<u32, u32, BiRange<u32>>, SimilarityComputationError> {
+        if !mz_tolerance.is_finite() {
+            return Err(SimilarityComputationError::NonFiniteValue("mz_tolerance"));
+        }
+        if mz_tolerance < 0.0 {
             return Err(SimilarityComputationError::NegativeTolerance);
         }
-        let self_prec_f64 = to_f64_checked(self_precursor, "self_precursor_mz")?;
-        let other_prec_f64 = to_f64_checked(other_precursor, "other_precursor_mz")?;
-        let use_shifted_window = (self_prec_f64 - other_prec_f64).abs() > mz_tolerance_f64;
+        let use_shifted_window = (self_precursor - other_precursor).abs() > mz_tolerance;
         let mut matching_peaks = allocate_matching_peaks::<BiRange<u32>>(self.len(), other.len())?;
         let mut lowest_direct = 0usize;
         let mut lowest_shifted = 0usize;
         let mut row_matches: Vec<u32> = Vec::new();
 
         for (i, mz) in self.mz().enumerate() {
+            if !mz.is_finite() {
+                return Err(SimilarityComputationError::NonFiniteValue("left_mz"));
+            }
             let row = to_matrix_index(i)?;
-            let mz_f64 = to_f64_checked(mz, "left_mz")?;
 
             row_matches.clear();
 
             lowest_direct = collect_window_matches(
                 other,
                 lowest_direct,
-                mz_f64,
-                mz_tolerance_f64,
+                mz,
+                mz_tolerance,
                 0.0,
-                "shifted_other_mz",
+                "right_mz",
                 |col| row_matches.push(col),
             )?;
 
@@ -299,9 +279,9 @@ pub trait Spectrum {
                 lowest_shifted = collect_window_matches(
                     other,
                     lowest_shifted,
-                    mz_f64 - self_prec_f64,
-                    mz_tolerance_f64,
-                    -other_prec_f64,
+                    mz - self_precursor,
+                    mz_tolerance,
+                    -other_precursor,
                     "shifted_other_mz",
                     |col| row_matches.push(col),
                 )?;

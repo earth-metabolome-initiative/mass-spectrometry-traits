@@ -3,8 +3,8 @@
 use super::cosine_common::{impl_cosine_wrapper_config_api, impl_cosine_wrapper_similarity};
 
 /// Implementation of the Hungarian cosine similarity for mass spectra.
-pub struct HungarianCosine<EXP, MZ> {
-    config: super::cosine_common::CosineConfig<EXP, MZ>,
+pub struct HungarianCosine {
+    config: super::cosine_common::CosineConfig,
 }
 
 impl_cosine_wrapper_config_api!(

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of clothianidin.
-pub trait ClothianidinSpectrum: SpectrumAlloc + Sized {
+pub trait ClothianidinSpectrum: SpectrumAlloc {
     /// Create a new spectrum of clothianidin.
     fn clothianidin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

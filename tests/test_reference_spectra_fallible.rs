@@ -16,22 +16,20 @@ impl fmt::Display for AlwaysErr {
 impl std::error::Error for AlwaysErr {}
 
 struct FailingSpectrum {
-    inner: GenericSpectrum<f32, f32>,
+    inner: GenericSpectrum,
 }
 
 impl Spectrum for FailingSpectrum {
-    type Intensity = f32;
-    type Mz = f32;
     type SortedIntensitiesIter<'a>
-        = <GenericSpectrum<f32, f32> as Spectrum>::SortedIntensitiesIter<'a>
+        = <GenericSpectrum as Spectrum>::SortedIntensitiesIter<'a>
     where
         Self: 'a;
     type SortedMzIter<'a>
-        = <GenericSpectrum<f32, f32> as Spectrum>::SortedMzIter<'a>
+        = <GenericSpectrum as Spectrum>::SortedMzIter<'a>
     where
         Self: 'a;
     type SortedPeaksIter<'a>
-        = <GenericSpectrum<f32, f32> as Spectrum>::SortedPeaksIter<'a>
+        = <GenericSpectrum as Spectrum>::SortedPeaksIter<'a>
     where
         Self: 'a;
 
@@ -43,7 +41,7 @@ impl Spectrum for FailingSpectrum {
         self.inner.intensities()
     }
 
-    fn intensity_nth(&self, n: usize) -> Self::Intensity {
+    fn intensity_nth(&self, n: usize) -> f64 {
         self.inner.intensity_nth(n)
     }
 
@@ -55,7 +53,7 @@ impl Spectrum for FailingSpectrum {
         self.inner.mz_from(index)
     }
 
-    fn mz_nth(&self, n: usize) -> Self::Mz {
+    fn mz_nth(&self, n: usize) -> f64 {
         self.inner.mz_nth(n)
     }
 
@@ -63,11 +61,11 @@ impl Spectrum for FailingSpectrum {
         self.inner.peaks()
     }
 
-    fn peak_nth(&self, n: usize) -> (Self::Mz, Self::Intensity) {
+    fn peak_nth(&self, n: usize) -> (f64, f64) {
         self.inner.peak_nth(n)
     }
 
-    fn precursor_mz(&self) -> Self::Mz {
+    fn precursor_mz(&self) -> f64 {
         self.inner.precursor_mz()
     }
 }
@@ -75,17 +73,13 @@ impl Spectrum for FailingSpectrum {
 impl SpectrumMut for FailingSpectrum {
     type MutationError = AlwaysErr;
 
-    fn add_peak(
-        &mut self,
-        _mz: Self::Mz,
-        _intensity: Self::Intensity,
-    ) -> Result<(), Self::MutationError> {
+    fn add_peak(&mut self, _mz: f64, _intensity: f64) -> Result<(), Self::MutationError> {
         Err(AlwaysErr)
     }
 }
 
 impl SpectrumAlloc for FailingSpectrum {
-    fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Result<Self, Self::MutationError> {
+    fn with_capacity(precursor_mz: f64, capacity: usize) -> Result<Self, Self::MutationError> {
         Ok(Self {
             inner: GenericSpectrum::with_capacity(precursor_mz, capacity)
                 .expect("valid failing spectrum allocation"),
@@ -104,6 +98,6 @@ fn reference_constructor_returns_err_for_failing_spectrum_mutation() {
 
 #[test]
 fn generic_spectrum_reference_constructor_returns_ok() {
-    let spectrum = GenericSpectrum::<f32, f32>::adenine().expect("reference spectrum should build");
+    let spectrum = GenericSpectrum::adenine().expect("reference spectrum should build");
     assert!(!spectrum.is_empty());
 }

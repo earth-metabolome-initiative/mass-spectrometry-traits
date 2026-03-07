@@ -5,12 +5,11 @@
 //! This eliminates assignment ambiguity, allowing a simple two-pointer sweep
 //! to produce the same result as Hungarian (optimal) assignment in O(n+m) time.
 
-use geometric_traits::prelude::{Finite, Number, ScalarSimilarity, TotalOrd};
-use num_traits::{Float, Pow, ToPrimitive, Zero};
+use geometric_traits::prelude::ScalarSimilarity;
 
 use super::cosine_common::{
-    CosineConfig, finalize_similarity_score, impl_cosine_wrapper_config_api, linear_cosine_sweep,
-    prepare_peak_products, to_f64_checked_for_computation, validate_well_separated,
+    CosineConfig, ensure_finite, finalize_similarity_score, impl_cosine_wrapper_config_api,
+    linear_cosine_sweep, prepare_peak_products, validate_well_separated,
 };
 use super::similarity_errors::SimilarityComputationError;
 use crate::traits::{ScalarSpectralSimilarity, Spectrum};
@@ -23,8 +22,8 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 /// Under this invariant the two-pointer sweep is provably optimal.
 ///
 /// Returns an error when the strict peak-spacing precondition is violated.
-pub struct LinearCosine<EXP, MZ> {
-    config: CosineConfig<EXP, MZ>,
+pub struct LinearCosine {
+    config: CosineConfig,
 }
 
 impl_cosine_wrapper_config_api!(
@@ -33,14 +32,12 @@ impl_cosine_wrapper_config_api!(
     "Returns the tolerance for the mass/charge ratio."
 );
 
-impl<EXP, S1, S2> ScalarSimilarity<S1, S2> for LinearCosine<EXP, S1::Mz>
+impl<S1, S2> ScalarSimilarity<S1, S2> for LinearCosine
 where
-    EXP: Number,
-    S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Number + Finite + TotalOrd + ToPrimitive,
-    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
-    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
-    type Similarity = Result<(S1::Mz, usize), SimilarityComputationError>;
+    type Similarity = Result<(f64, usize), SimilarityComputationError>;
 
     fn similarity(&self, left: &S1, right: &S2) -> Self::Similarity {
         let left_peaks =
@@ -48,21 +45,15 @@ where
         let right_peaks =
             prepare_peak_products(right, self.config.mz_power(), self.config.intensity_power())?;
 
-        if left_peaks.max_f64 == 0.0 || right_peaks.max_f64 == 0.0 {
-            return Ok((S1::Mz::zero(), 0));
+        if left_peaks.max == 0.0 || right_peaks.max == 0.0 {
+            return Ok((0.0, 0));
         }
 
-        let tolerance = to_f64_checked_for_computation(self.config.mz_tolerance(), "mz_tolerance")?;
+        let tolerance = ensure_finite(self.config.mz_tolerance(), "mz_tolerance")?;
 
-        // Collect mz as f64 with numeric validation.
-        let left_mz: alloc::vec::Vec<f64> = left
-            .peaks()
-            .map(|(mz, _)| to_f64_checked_for_computation(mz, "left_mz"))
-            .collect::<Result<alloc::vec::Vec<f64>, SimilarityComputationError>>()?;
-        let right_mz: alloc::vec::Vec<f64> = right
-            .peaks()
-            .map(|(mz, _)| to_f64_checked_for_computation(mz, "right_mz"))
-            .collect::<Result<alloc::vec::Vec<f64>, SimilarityComputationError>>()?;
+        // Collect mz as f64.
+        let left_mz: alloc::vec::Vec<f64> = left.mz().collect();
+        let right_mz: alloc::vec::Vec<f64> = right.mz().collect();
 
         validate_well_separated(&left_mz, tolerance, "left spectrum")?;
         validate_well_separated(&right_mz, tolerance, "right spectrum")?;
@@ -80,11 +71,9 @@ where
     }
 }
 
-impl<S1, S2, EXP> ScalarSpectralSimilarity<S1, S2> for LinearCosine<EXP, S1::Mz>
+impl<S1, S2> ScalarSpectralSimilarity<S1, S2> for LinearCosine
 where
-    EXP: Number,
-    S1::Mz: Pow<EXP, Output = S1::Mz> + Float + Finite + TotalOrd,
-    S1: Spectrum<Intensity = <S1 as Spectrum>::Mz>,
-    S2: Spectrum<Intensity = S1::Mz, Mz = S1::Mz>,
+    S1: Spectrum,
+    S2: Spectrum,
 {
 }

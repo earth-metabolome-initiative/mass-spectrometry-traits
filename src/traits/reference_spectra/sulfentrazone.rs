@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of sulfentrazone.
-pub trait SulfentrazoneSpectrum: SpectrumAlloc + Sized {
+pub trait SulfentrazoneSpectrum: SpectrumAlloc {
     /// Create a new spectrum of sulfentrazone.
     fn sulfentrazone() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

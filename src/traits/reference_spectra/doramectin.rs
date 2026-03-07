@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of doramectin.
-pub trait DoramectinSpectrum: SpectrumAlloc + Sized {
+pub trait DoramectinSpectrum: SpectrumAlloc {
     /// Create a new spectrum of doramectin.
     fn doramectin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

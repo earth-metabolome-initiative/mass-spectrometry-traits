@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of diuron.
-pub trait DiuronSpectrum: SpectrumAlloc + Sized {
+pub trait DiuronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of diuron.
     fn diuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

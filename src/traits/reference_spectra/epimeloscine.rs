@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of epimeloscine.
-pub trait EpimeloscineSpectrum: SpectrumAlloc + Sized {
+pub trait EpimeloscineSpectrum: SpectrumAlloc {
     /// Create a new spectrum of Epimeloscine.
     fn epimeloscine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

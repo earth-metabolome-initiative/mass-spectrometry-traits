@@ -22,9 +22,9 @@ fn validate_modified_hungarian_cosine_against_matchms() {
 
         let left_name = &record[0];
         let right_name = &record[1];
-        let tolerance: f32 = record[2].parse().expect("bad tolerance");
-        let mz_power: f32 = record[3].parse().expect("bad mz_power");
-        let intensity_power: f32 = record[4].parse().expect("bad intensity_power");
+        let tolerance: f64 = record[2].parse().expect("bad tolerance");
+        let mz_power: f64 = record[3].parse().expect("bad mz_power");
+        let intensity_power: f64 = record[4].parse().expect("bad intensity_power");
         let matchms_score: f64 = record[5].parse().expect("bad score");
 
         let Some(left) = build_spectrum(left_name) else {
@@ -39,7 +39,7 @@ fn validate_modified_hungarian_cosine_against_matchms() {
         let (score, matches) = modified
             .similarity(&left, &right)
             .expect("similarity computation should succeed");
-        let our_score = score as f64;
+        let our_score = score;
 
         // Our optimal assignment should produce scores >= matchms greedy
         // (minus small tolerance for floating point differences).
@@ -54,7 +54,7 @@ fn validate_modified_hungarian_cosine_against_matchms() {
         let (score_ba, matches_ba) = modified
             .similarity(&right, &left)
             .expect("similarity computation should succeed");
-        if (score as f64 - score_ba as f64).abs() >= 1e-6 {
+        if (score - score_ba).abs() >= 1e-6 {
             failures.push(format!(
                 "{left_name} vs {right_name} (tol={tolerance}, mz_pow={mz_power}, int_pow={intensity_power}): \
                  symmetry violation: sim(A,B)={score:.12} != sim(B,A)={score_ba:.12}, \

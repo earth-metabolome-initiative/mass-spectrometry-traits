@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of triflumuron.
-pub trait TriflumuronSpectrum: SpectrumAlloc + Sized {
+pub trait TriflumuronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of triflumuron.
     fn triflumuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

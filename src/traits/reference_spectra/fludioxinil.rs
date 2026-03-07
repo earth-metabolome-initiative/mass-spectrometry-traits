@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fludioxinil.
-pub trait FludioxinilSpectrum: SpectrumAlloc + Sized {
+pub trait FludioxinilSpectrum: SpectrumAlloc {
     /// Create a new spectrum of fludioxinil.
     fn fludioxinil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of adenosine.
-pub trait AdenosineSpectrum: SpectrumAlloc + Sized {
+pub trait AdenosineSpectrum: SpectrumAlloc {
     /// Create a new spectrum of adenosine.
     fn adenosine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

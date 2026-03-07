@@ -3,9 +3,9 @@ use mass_spectrometry::prelude::*;
 
 #[test]
 fn count_matching_edges() {
-    let epi: GenericSpectrum<f64, f64> = GenericSpectrum::epimeloscine().unwrap();
-    let salicin: GenericSpectrum<f64, f64> = GenericSpectrum::salicin().unwrap();
-    let hc: GenericSpectrum<f64, f64> = GenericSpectrum::hydroxy_cholesterol().unwrap();
+    let epi: GenericSpectrum = GenericSpectrum::epimeloscine().unwrap();
+    let salicin: GenericSpectrum = GenericSpectrum::salicin().unwrap();
+    let hc: GenericSpectrum = GenericSpectrum::hydroxy_cholesterol().unwrap();
 
     for (name, left, right) in [
         ("salicin×salicin", &salicin, &salicin),

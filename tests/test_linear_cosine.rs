@@ -9,15 +9,15 @@ use mass_spectrometry::prelude::{
     SimilarityComputationError, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 
-fn cosine() -> LinearCosine<f32, f32> {
+fn cosine() -> LinearCosine {
     LinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
-fn hungarian() -> HungarianCosine<f32, f32> {
+fn hungarian() -> HungarianCosine {
     HungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config")
 }
 
-fn make_spectrum(precursor: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f32> {
+fn make_spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
     let mut spectrum =
         GenericSpectrum::with_capacity(precursor, peaks.len()).expect("valid spectrum allocation");
     for &(mz, intensity) in peaks {
@@ -26,12 +26,12 @@ fn make_spectrum(precursor: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f
     spectrum
 }
 
-fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum<f32, f32>) {
+fn assert_self_similarity(name: &str, spectrum: &GenericSpectrum) {
     let (sim, peaks) = cosine()
         .similarity(spectrum, spectrum)
         .expect("similarity computation should succeed");
     assert!(
-        (1.0_f32 - sim).abs() < 1e-6,
+        (1.0 - sim).abs() < 1e-6,
         "{name} self-similarity: expected ~1.0, got {sim}"
     );
     assert_eq!(peaks, spectrum.len());
@@ -81,11 +81,7 @@ fn self_similarity_phenylalanine() {
 
 // ---------- cross-similarity equivalence with HungarianCosine ----------
 
-fn assert_matches_hungarian(
-    name: &str,
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
-) {
+fn assert_matches_hungarian(name: &str, left: &GenericSpectrum, right: &GenericSpectrum) {
     let (linear_score, linear_matches) = cosine()
         .similarity(left, right)
         .expect("LinearCosine similarity should succeed");
@@ -195,11 +191,7 @@ fn equivalence_salicin_phenylalanine() {
 
 // ---------- symmetry: sim(A, B) == sim(B, A) ----------
 
-fn assert_symmetry(
-    name: &str,
-    left: &GenericSpectrum<f32, f32>,
-    right: &GenericSpectrum<f32, f32>,
-) {
+fn assert_symmetry(name: &str, left: &GenericSpectrum, right: &GenericSpectrum) {
     let c = cosine();
     let (score_ab, matches_ab) = c
         .similarity(left, right)
@@ -240,7 +232,7 @@ fn boundary_gap_equal_2x_tolerance_returns_error() {
     // Binary-exact boundary: 2 * 0.125 == 0.25 exactly in f32/f64.
     let left = make_spectrum(200.0, &[(100.0, 10.0), (100.25, 8.0)]);
     let right = make_spectrum(200.0, &[(100.0, 10.0), (100.25, 8.0)]);
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, 0.125_f32).expect("valid scorer config");
+    let linear = LinearCosine::new(1.0, 1.0, 0.125).expect("valid scorer config");
 
     let error = linear
         .similarity(&left, &right)
@@ -255,11 +247,11 @@ fn boundary_gap_equal_2x_tolerance_returns_error() {
 fn boundary_gap_strictly_above_2x_tolerance_succeeds() {
     let left = make_spectrum(200.0, &[(100.0, 10.0), (100.2501, 8.0)]);
     let right = make_spectrum(200.0, &[(100.0, 10.0), (100.2501, 8.0)]);
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, 0.125_f32).expect("valid scorer config");
+    let linear = LinearCosine::new(1.0, 1.0, 0.125).expect("valid scorer config");
 
     let (score, matches) = linear
         .similarity(&left, &right)
         .expect("strictly separated spectra should be accepted");
-    assert!((1.0_f32 - score).abs() < 1e-6);
+    assert!((1.0 - score).abs() < 1e-6);
     assert_eq!(matches, 2);
 }

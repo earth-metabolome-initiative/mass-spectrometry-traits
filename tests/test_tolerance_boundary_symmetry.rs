@@ -5,7 +5,7 @@ use mass_spectrometry::prelude::{
     SpectrumMut,
 };
 
-fn one_peak_spectrum(mz: f32, precursor_mz: f32) -> GenericSpectrum<f32, f32> {
+fn one_peak_spectrum(mz: f64, precursor_mz: f64) -> GenericSpectrum {
     let mut spectrum =
         GenericSpectrum::with_capacity(precursor_mz, 1).expect("valid spectrum allocation");
     spectrum
@@ -18,7 +18,7 @@ fn one_peak_spectrum(mz: f32, precursor_mz: f32) -> GenericSpectrum<f32, f32> {
 fn hungarian_is_symmetric_on_tolerance_boundary_single_peak() {
     let left = one_peak_spectrum(3.96, 500.0);
     let right = one_peak_spectrum(4.01, 500.0);
-    let scorer = HungarianCosine::new(1.0_f32, 1.0_f32, 0.05_f32).expect("valid scorer config");
+    let scorer = HungarianCosine::new(1.0, 1.0, 0.05).expect("valid scorer config");
 
     let (score_ab, matches_ab) = scorer
         .similarity(&left, &right)
@@ -41,8 +41,7 @@ fn hungarian_is_symmetric_on_tolerance_boundary_single_peak() {
 fn modified_is_symmetric_on_tolerance_boundary_single_peak() {
     let left = one_peak_spectrum(3.96, 500.0);
     let right = one_peak_spectrum(4.01, 500.0);
-    let scorer =
-        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.05_f32).expect("valid scorer config");
+    let scorer = ModifiedHungarianCosine::new(1.0, 1.0, 0.05).expect("valid scorer config");
 
     let (score_ab, matches_ab) = scorer
         .similarity(&left, &right)
@@ -65,8 +64,7 @@ fn modified_is_symmetric_on_tolerance_boundary_single_peak() {
 fn modified_is_symmetric_on_shifted_boundary_single_peak() {
     let left = one_peak_spectrum(80.0, 500.0);
     let right = one_peak_spectrum(90.05, 510.0);
-    let scorer =
-        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.05_f32).expect("valid scorer config");
+    let scorer = ModifiedHungarianCosine::new(1.0, 1.0, 0.05).expect("valid scorer config");
 
     let (score_ab, matches_ab) = scorer
         .similarity(&left, &right)

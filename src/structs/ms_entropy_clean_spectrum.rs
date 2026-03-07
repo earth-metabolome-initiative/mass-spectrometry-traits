@@ -11,67 +11,56 @@
 
 use alloc::vec::Vec;
 
-use geometric_traits::prelude::{Finite, Number};
-use num_traits::{Float, NumCast, ToPrimitive};
-
 use super::cosine_common::validate_numeric_parameter;
 use super::similarity_errors::SimilarityConfigError;
 use crate::structs::GenericSpectrum;
 use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
 
 /// Spectral processor mirroring `ms_entropy.clean_spectrum` behavior.
-pub struct MsEntropyCleanSpectrum<MZ> {
-    min_mz: Option<MZ>,
-    max_mz: Option<MZ>,
-    noise_threshold: Option<MZ>,
-    min_ms2_difference_in_da: MZ,
-    min_ms2_difference_in_ppm: Option<MZ>,
+pub struct MsEntropyCleanSpectrum {
+    min_mz: Option<f64>,
+    max_mz: Option<f64>,
+    noise_threshold: Option<f64>,
+    min_ms2_difference_in_da: f64,
+    min_ms2_difference_in_ppm: Option<f64>,
     max_peak_num: Option<usize>,
     normalize_intensity: bool,
 }
 
-impl<MZ> MsEntropyCleanSpectrum<MZ>
-where
-    MZ: NumCast,
-{
+impl MsEntropyCleanSpectrum {
     /// Returns a builder configured with `ms_entropy` defaults.
     #[inline]
-    pub fn builder() -> MsEntropyCleanSpectrumBuilder<MZ> {
+    pub fn builder() -> MsEntropyCleanSpectrumBuilder {
         MsEntropyCleanSpectrumBuilder::default()
     }
-}
 
-impl<MZ> MsEntropyCleanSpectrum<MZ>
-where
-    MZ: Number,
-{
     /// Returns the configured minimum mz filter (enabled only when > 0).
     #[inline]
-    pub fn min_mz(&self) -> Option<MZ> {
+    pub fn min_mz(&self) -> Option<f64> {
         self.min_mz
     }
 
     /// Returns the configured maximum mz filter (enabled only when > 0).
     #[inline]
-    pub fn max_mz(&self) -> Option<MZ> {
+    pub fn max_mz(&self) -> Option<f64> {
         self.max_mz
     }
 
     /// Returns the configured relative noise threshold.
     #[inline]
-    pub fn noise_threshold(&self) -> Option<MZ> {
+    pub fn noise_threshold(&self) -> Option<f64> {
         self.noise_threshold
     }
 
     /// Returns the configured Da centroid threshold.
     #[inline]
-    pub fn min_ms2_difference_in_da(&self) -> MZ {
+    pub fn min_ms2_difference_in_da(&self) -> f64 {
         self.min_ms2_difference_in_da
     }
 
     /// Returns the configured ppm centroid threshold.
     #[inline]
-    pub fn min_ms2_difference_in_ppm(&self) -> Option<MZ> {
+    pub fn min_ms2_difference_in_ppm(&self) -> Option<f64> {
         self.min_ms2_difference_in_ppm
     }
 
@@ -86,24 +75,19 @@ where
     pub fn normalize_intensity(&self) -> bool {
         self.normalize_intensity
     }
-}
 
-impl<MZ> MsEntropyCleanSpectrum<MZ>
-where
-    MZ: Float + Number + ToPrimitive,
-{
-    fn clean_peaks(&self, mut peaks: Vec<(MZ, MZ)>) -> Vec<(MZ, MZ)> {
+    fn clean_peaks(&self, mut peaks: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
         // Step 1. Remove empty peaks.
-        peaks.retain(|(mz, intensity)| *mz > MZ::zero() && *intensity > MZ::zero());
+        peaks.retain(|(mz, intensity)| *mz > 0.0 && *intensity > 0.0);
 
         // Step 2. Min/max mz filtering.
         if let Some(min_mz) = self.min_mz
-            && min_mz > MZ::zero()
+            && min_mz > 0.0
         {
             peaks.retain(|(mz, _)| *mz >= min_mz);
         }
         if let Some(max_mz) = self.max_mz
-            && max_mz > MZ::zero()
+            && max_mz > 0.0
         {
             peaks.retain(|(mz, _)| *mz <= max_mz);
         }
@@ -113,7 +97,7 @@ where
         }
 
         // Step 3. Centroiding.
-        let ppm = self.min_ms2_difference_in_ppm.filter(|&v| v > MZ::zero());
+        let ppm = self.min_ms2_difference_in_ppm.filter(|&v| v > 0.0);
         peaks = centroid_spectrum(peaks, self.min_ms2_difference_in_da, ppm);
 
         if peaks.is_empty() {
@@ -125,7 +109,7 @@ where
             let max_intensity = peaks
                 .iter()
                 .map(|&(_, intensity)| intensity)
-                .fold(MZ::zero(), |a, b| if b > a { b } else { a });
+                .fold(0.0_f64, f64::max);
             let threshold = noise_threshold * max_intensity;
             peaks.retain(|&(_, intensity)| intensity >= threshold);
         }
@@ -146,12 +130,10 @@ where
 
         // Step 6. Normalize to sum 1.
         if self.normalize_intensity {
-            let spectrum_sum = peaks
-                .iter()
-                .fold(MZ::zero(), |acc, &(_, intensity)| acc + intensity);
-            if spectrum_sum > MZ::zero() {
+            let spectrum_sum: f64 = peaks.iter().map(|&(_, intensity)| intensity).sum();
+            if spectrum_sum > 0.0 {
                 for (_, intensity) in &mut peaks {
-                    *intensity = *intensity / spectrum_sum;
+                    *intensity /= spectrum_sum;
                 }
             } else {
                 peaks.clear();
@@ -162,14 +144,11 @@ where
     }
 }
 
-impl<MZ> SpectralProcessor for MsEntropyCleanSpectrum<MZ>
-where
-    MZ: Float + NumCast + Number + Finite + ToPrimitive,
-{
-    type Spectrum = GenericSpectrum<MZ, MZ>;
+impl SpectralProcessor for MsEntropyCleanSpectrum {
+    type Spectrum = GenericSpectrum;
 
     fn process(&self, spectrum: &Self::Spectrum) -> Self::Spectrum {
-        let input_peaks: Vec<(MZ, MZ)> = spectrum.peaks().collect();
+        let input_peaks: Vec<(f64, f64)> = spectrum.peaks().collect();
 
         let cleaned = self.clean_peaks(input_peaks);
 
@@ -187,30 +166,23 @@ where
 }
 
 /// Builder for [`MsEntropyCleanSpectrum`].
-pub struct MsEntropyCleanSpectrumBuilder<MZ> {
-    min_mz: Option<MZ>,
-    max_mz: Option<MZ>,
-    noise_threshold: Option<MZ>,
-    min_ms2_difference_in_da: MZ,
-    min_ms2_difference_in_ppm: Option<MZ>,
+pub struct MsEntropyCleanSpectrumBuilder {
+    min_mz: Option<f64>,
+    max_mz: Option<f64>,
+    noise_threshold: Option<f64>,
+    min_ms2_difference_in_da: f64,
+    min_ms2_difference_in_ppm: Option<f64>,
     max_peak_num: Option<usize>,
     normalize_intensity: bool,
 }
 
-impl<MZ> Default for MsEntropyCleanSpectrumBuilder<MZ>
-where
-    MZ: NumCast,
-{
+impl Default for MsEntropyCleanSpectrumBuilder {
     fn default() -> Self {
         Self {
             min_mz: None,
             max_mz: None,
-            noise_threshold: Some(
-                NumCast::from(0.01)
-                    .expect("0.01 must be representable in the configured numeric type"),
-            ),
-            min_ms2_difference_in_da: NumCast::from(0.05)
-                .expect("0.05 must be representable in the configured numeric type"),
+            noise_threshold: Some(0.01),
+            min_ms2_difference_in_da: 0.05,
             min_ms2_difference_in_ppm: None,
             max_peak_num: None,
             normalize_intensity: true,
@@ -218,36 +190,10 @@ where
     }
 }
 
-impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
+impl MsEntropyCleanSpectrumBuilder {
     /// Sets the minimum m/z filter.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityConfigError`] if `min_mz` is not finite or not representable as `f64`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
-    ///
-    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
-    ///     .min_mz(Some(100.0))
-    ///     .expect("finite value")
-    ///     .build()
-    ///     .expect("valid configuration");
-    /// assert_eq!(cleaner.min_mz(), Some(100.0));
-    ///
-    /// let err = MsEntropyCleanSpectrum::<f32>::builder().min_mz(Some(f32::NAN));
-    /// assert!(matches!(
-    ///     err,
-    ///     Err(SimilarityConfigError::NonFiniteParameter("min_mz"))
-    /// ));
-    /// ```
     #[inline]
-    pub fn min_mz(mut self, min_mz: Option<MZ>) -> Result<Self, SimilarityConfigError>
-    where
-        MZ: ToPrimitive + Copy,
-    {
+    pub fn min_mz(mut self, min_mz: Option<f64>) -> Result<Self, SimilarityConfigError> {
         if let Some(v) = min_mz {
             validate_numeric_parameter(v, "min_mz")?;
         }
@@ -256,34 +202,8 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     }
 
     /// Sets the maximum m/z filter.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityConfigError`] if `max_mz` is not finite or not representable as `f64`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
-    ///
-    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
-    ///     .max_mz(Some(500.0))
-    ///     .expect("finite value")
-    ///     .build()
-    ///     .expect("valid configuration");
-    /// assert_eq!(cleaner.max_mz(), Some(500.0));
-    ///
-    /// let err = MsEntropyCleanSpectrum::<f32>::builder().max_mz(Some(f32::INFINITY));
-    /// assert!(matches!(
-    ///     err,
-    ///     Err(SimilarityConfigError::NonFiniteParameter("max_mz"))
-    /// ));
-    /// ```
     #[inline]
-    pub fn max_mz(mut self, max_mz: Option<MZ>) -> Result<Self, SimilarityConfigError>
-    where
-        MZ: ToPrimitive + Copy,
-    {
+    pub fn max_mz(mut self, max_mz: Option<f64>) -> Result<Self, SimilarityConfigError> {
         if let Some(v) = max_mz {
             validate_numeric_parameter(v, "max_mz")?;
         }
@@ -292,38 +212,11 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     }
 
     /// Sets the relative noise threshold.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityConfigError`] if `noise_threshold` is not finite or not representable
-    /// as `f64`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
-    ///
-    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
-    ///     .noise_threshold(Some(0.02))
-    ///     .expect("finite value")
-    ///     .build()
-    ///     .expect("valid configuration");
-    /// assert_eq!(cleaner.noise_threshold(), Some(0.02));
-    ///
-    /// let err = MsEntropyCleanSpectrum::<f32>::builder().noise_threshold(Some(f32::NAN));
-    /// assert!(matches!(
-    ///     err,
-    ///     Err(SimilarityConfigError::NonFiniteParameter("noise_threshold"))
-    /// ));
-    /// ```
     #[inline]
     pub fn noise_threshold(
         mut self,
-        noise_threshold: Option<MZ>,
-    ) -> Result<Self, SimilarityConfigError>
-    where
-        MZ: ToPrimitive + Copy,
-    {
+        noise_threshold: Option<f64>,
+    ) -> Result<Self, SimilarityConfigError> {
         if let Some(v) = noise_threshold {
             validate_numeric_parameter(v, "noise_threshold")?;
         }
@@ -332,81 +225,22 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     }
 
     /// Sets the minimum Da centroid distance.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityConfigError`] if `min_ms2_difference_in_da` is not finite or not
-    /// representable as `f64`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
-    ///
-    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
-    ///     .min_ms2_difference_in_da(0.1)
-    ///     .expect("finite value")
-    ///     .build()
-    ///     .expect("valid configuration");
-    /// assert_eq!(cleaner.min_ms2_difference_in_da(), 0.1);
-    ///
-    /// let err = MsEntropyCleanSpectrum::<f32>::builder().min_ms2_difference_in_da(f32::NAN);
-    /// assert!(matches!(
-    ///     err,
-    ///     Err(SimilarityConfigError::NonFiniteParameter(
-    ///         "min_ms2_difference_in_da"
-    ///     ))
-    /// ));
-    /// ```
     #[inline]
     pub fn min_ms2_difference_in_da(
         mut self,
-        min_ms2_difference_in_da: MZ,
-    ) -> Result<Self, SimilarityConfigError>
-    where
-        MZ: ToPrimitive + Copy,
-    {
+        min_ms2_difference_in_da: f64,
+    ) -> Result<Self, SimilarityConfigError> {
         validate_numeric_parameter(min_ms2_difference_in_da, "min_ms2_difference_in_da")?;
         self.min_ms2_difference_in_da = min_ms2_difference_in_da;
         Ok(self)
     }
 
     /// Sets the minimum ppm centroid distance.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityConfigError`] if `min_ms2_difference_in_ppm` is not finite or not
-    /// representable as `f64`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
-    ///
-    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
-    ///     .min_ms2_difference_in_ppm(Some(20.0))
-    ///     .expect("finite value")
-    ///     .build()
-    ///     .expect("valid configuration");
-    /// assert_eq!(cleaner.min_ms2_difference_in_ppm(), Some(20.0));
-    ///
-    /// let err =
-    ///     MsEntropyCleanSpectrum::<f32>::builder().min_ms2_difference_in_ppm(Some(f32::NAN));
-    /// assert!(matches!(
-    ///     err,
-    ///     Err(SimilarityConfigError::NonFiniteParameter(
-    ///         "min_ms2_difference_in_ppm"
-    ///     ))
-    /// ));
-    /// ```
     #[inline]
     pub fn min_ms2_difference_in_ppm(
         mut self,
-        min_ms2_difference_in_ppm: Option<MZ>,
-    ) -> Result<Self, SimilarityConfigError>
-    where
-        MZ: ToPrimitive + Copy,
-    {
+        min_ms2_difference_in_ppm: Option<f64>,
+    ) -> Result<Self, SimilarityConfigError> {
         if let Some(v) = min_ms2_difference_in_ppm {
             validate_numeric_parameter(v, "min_ms2_difference_in_ppm")?;
         }
@@ -415,29 +249,6 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     }
 
     /// Sets the maximum number of retained peaks.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityConfigError::InvalidParameter`] when `max_peak_num` is `Some(0)`.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mass_spectrometry::prelude::{MsEntropyCleanSpectrum, SimilarityConfigError};
-    ///
-    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
-    ///     .max_peak_num(Some(10))
-    ///     .expect("positive value")
-    ///     .build()
-    ///     .expect("valid configuration");
-    /// assert_eq!(cleaner.max_peak_num(), Some(10));
-    ///
-    /// let err = MsEntropyCleanSpectrum::<f32>::builder().max_peak_num(Some(0));
-    /// assert!(matches!(
-    ///     err,
-    ///     Err(SimilarityConfigError::InvalidParameter("max_peak_num"))
-    /// ));
-    /// ```
     #[inline]
     pub fn max_peak_num(
         mut self,
@@ -451,19 +262,6 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     }
 
     /// Enables or disables output intensity normalization.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use mass_spectrometry::prelude::MsEntropyCleanSpectrum;
-    ///
-    /// let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
-    ///     .normalize_intensity(false)
-    ///     .expect("always valid")
-    ///     .build()
-    ///     .expect("valid configuration");
-    /// assert!(!cleaner.normalize_intensity());
-    /// ```
     #[inline]
     pub fn normalize_intensity(
         mut self,
@@ -474,22 +272,9 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     }
 
     /// Builds the cleaner from validated builder fields.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityConfigError::InvalidParameter`] when the centroiding configuration
-    /// is invalid, i.e. when both `min_ms2_difference_in_da` and
-    /// `min_ms2_difference_in_ppm` are non-positive/disabled.
-    ///
-    /// Per-field numeric validation is performed in setter methods.
-    pub fn build(self) -> Result<MsEntropyCleanSpectrum<MZ>, SimilarityConfigError>
-    where
-        MZ: Float + Number + ToPrimitive,
-    {
-        let ppm_positive = self
-            .min_ms2_difference_in_ppm
-            .is_some_and(|ppm| ppm > MZ::zero());
-        let da_positive = self.min_ms2_difference_in_da > MZ::zero();
+    pub fn build(self) -> Result<MsEntropyCleanSpectrum, SimilarityConfigError> {
+        let ppm_positive = self.min_ms2_difference_in_ppm.is_some_and(|ppm| ppm > 0.0);
+        let da_positive = self.min_ms2_difference_in_da > 0.0;
         if !ppm_positive && !da_positive {
             return Err(SimilarityConfigError::InvalidParameter(
                 "min_ms2_difference_in_da/min_ms2_difference_in_ppm",
@@ -508,28 +293,25 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     }
 }
 
-/// Returns `true` when all consecutive mz gaps strictly exceed the tolerance,
-/// matching the C `need_centroid` function which triggers on `<=`.
 #[inline]
-fn check_centroid<F: Float>(peaks: &[(F, F)], ms2_da: F, ms2_ppm: Option<F>) -> bool {
+fn check_centroid(peaks: &[(f64, f64)], ms2_da: f64, ms2_ppm: Option<f64>) -> bool {
     if peaks.len() <= 1 {
         return true;
     }
     if let Some(ppm) = ms2_ppm {
-        let ppm_factor: F = F::from(1e-6).expect("1e-6 representable");
         peaks
             .windows(2)
-            .all(|w| (w[1].0 - w[0].0) > (w[1].0 * ppm * ppm_factor))
+            .all(|w| (w[1].0 - w[0].0) > (w[1].0 * ppm * 1e-6))
     } else {
         peaks.windows(2).all(|w| (w[1].0 - w[0].0) > ms2_da)
     }
 }
 
-fn centroid_spectrum<F: Float>(
-    mut peaks: Vec<(F, F)>,
-    ms2_da: F,
-    ms2_ppm: Option<F>,
-) -> Vec<(F, F)> {
+fn centroid_spectrum(
+    mut peaks: Vec<(f64, f64)>,
+    ms2_da: f64,
+    ms2_ppm: Option<f64>,
+) -> Vec<(f64, f64)> {
     peaks.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).expect("non-NaN mz"));
     while !check_centroid(&peaks, ms2_da, ms2_ppm) {
         peaks = centroid_once(peaks, ms2_da, ms2_ppm);
@@ -537,17 +319,9 @@ fn centroid_spectrum<F: Float>(
     peaks
 }
 
-/// In-place centroiding matching the C implementation in ms_entropy.
-///
-/// Peaks are modified in-place: merged peaks keep the weighted-average mz and
-/// summed intensity at the center index; all other peaks in the merge range
-/// have their intensity zeroed. After the pass, zeroed peaks are removed and
-/// the remaining peaks are sorted by mz.
-fn centroid_once<F: Float>(mut peaks: Vec<(F, F)>, ms2_da: F, ms2_ppm: Option<F>) -> Vec<(F, F)> {
+fn centroid_once(mut peaks: Vec<(f64, f64)>, ms2_da: f64, ms2_ppm: Option<f64>) -> Vec<(f64, f64)> {
     let n = peaks.len();
     let mut intensity_order: Vec<usize> = (0..n).collect();
-    // Sort descending by intensity (highest first), matching the C quicksort
-    // which sorts descending then iterates forward.
     intensity_order.sort_unstable_by(|&a, &b| {
         peaks[b]
             .1
@@ -555,17 +329,15 @@ fn centroid_once<F: Float>(mut peaks: Vec<(F, F)>, ms2_da: F, ms2_ppm: Option<F>
             .expect("non-NaN intensity")
     });
 
-    let ppm_factor: F = F::from(1e-6).expect("1e-6 representable");
-
     for &idx in &intensity_order {
-        if peaks[idx].1 <= F::zero() {
+        if peaks[idx].1 <= 0.0 {
             continue;
         }
 
         let mz = peaks[idx].0;
         let (delta_left, delta_right) = if let Some(ppm) = ms2_ppm {
-            let left = mz * ppm * ppm_factor;
-            let right = mz * ppm / (F::from(1e6).expect("1e6 representable") - ppm);
+            let left = mz * ppm * 1e-6;
+            let right = mz * ppm / (1e6 - ppm);
             (left, right)
         } else {
             (ms2_da, ms2_da)
@@ -581,24 +353,23 @@ fn centroid_once<F: Float>(mut peaks: Vec<(F, F)>, ms2_da: F, ms2_ppm: Option<F>
             right_idx += 1;
         }
 
-        let mut intensity_sum = F::zero();
-        let mut intensity_weighted_mz_sum = F::zero();
+        let mut intensity_sum = 0.0_f64;
+        let mut intensity_weighted_mz_sum = 0.0_f64;
         for peak in peaks.iter_mut().take(right_idx).skip(left_idx) {
-            intensity_sum = intensity_sum + peak.1;
-            intensity_weighted_mz_sum = intensity_weighted_mz_sum + peak.1 * peak.0;
-            peak.1 = F::zero();
+            intensity_sum += peak.1;
+            intensity_weighted_mz_sum += peak.1 * peak.0;
+            peak.1 = 0.0;
         }
 
-        if intensity_sum > F::zero() {
+        if intensity_sum > 0.0 {
             peaks[idx].0 = intensity_weighted_mz_sum / intensity_sum;
         } else {
-            peaks[idx].0 = F::zero();
+            peaks[idx].0 = 0.0;
         }
         peaks[idx].1 = intensity_sum;
     }
 
-    // Remove zeroed-out peaks and sort by mz (matching sort_spectrum_by_mz_and_zero_intensity).
-    peaks.retain(|&(_, intensity)| intensity > F::zero());
+    peaks.retain(|&(_, intensity)| intensity > 0.0);
     peaks.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).expect("non-NaN mz"));
     peaks
 }

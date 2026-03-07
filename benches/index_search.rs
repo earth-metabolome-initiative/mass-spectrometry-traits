@@ -14,7 +14,7 @@ use mass_spectrometry::prelude::{
     ModifiedLinearEntropy, RandomSpectrumConfig, ScalarSimilarity, SpectrumAlloc,
 };
 
-type BenchSpectrum = mass_spectrometry::prelude::GenericSpectrum<f64, f64>;
+type BenchSpectrum = mass_spectrometry::prelude::GenericSpectrum;
 
 const LIBRARY_SIZE: usize = 1_000;
 const QUERY_COUNT: usize = 32;
@@ -71,7 +71,7 @@ fn build_random_spectra(count: usize, seed: u64) -> Vec<BenchSpectrum> {
 }
 
 fn cosine_without_index(
-    scorer: &LinearCosine<f64, f64>,
+    scorer: &LinearCosine,
     query: &BenchSpectrum,
     library: &[BenchSpectrum],
 ) -> (f64, usize) {
@@ -88,7 +88,7 @@ fn cosine_without_index(
 }
 
 fn modified_cosine_without_index(
-    scorer: &ModifiedLinearCosine<f64, f64>,
+    scorer: &ModifiedLinearCosine,
     query: &BenchSpectrum,
     library: &[BenchSpectrum],
 ) -> (f64, usize) {
@@ -105,7 +105,7 @@ fn modified_cosine_without_index(
 }
 
 fn entropy_without_index(
-    scorer: &LinearEntropy<f64, f64>,
+    scorer: &LinearEntropy,
     query: &BenchSpectrum,
     library: &[BenchSpectrum],
 ) -> (f64, usize) {
@@ -122,7 +122,7 @@ fn entropy_without_index(
 }
 
 fn modified_entropy_without_index(
-    scorer: &ModifiedLinearEntropy<f64, f64>,
+    scorer: &ModifiedLinearEntropy,
     query: &BenchSpectrum,
     library: &[BenchSpectrum],
 ) -> (f64, usize) {
@@ -138,7 +138,7 @@ fn modified_entropy_without_index(
     (score_sum, match_sum)
 }
 
-fn cosine_with_index(index: &FlashCosineIndex<f64>, query: &BenchSpectrum) -> (f64, usize) {
+fn cosine_with_index(index: &FlashCosineIndex, query: &BenchSpectrum) -> (f64, usize) {
     let results = index
         .search(query)
         .expect("flash cosine search should succeed");
@@ -151,10 +151,7 @@ fn cosine_with_index(index: &FlashCosineIndex<f64>, query: &BenchSpectrum) -> (f
     (score_sum, match_sum)
 }
 
-fn modified_cosine_with_index(
-    index: &FlashCosineIndex<f64>,
-    query: &BenchSpectrum,
-) -> (f64, usize) {
+fn modified_cosine_with_index(index: &FlashCosineIndex, query: &BenchSpectrum) -> (f64, usize) {
     let results = index
         .search_modified(query)
         .expect("flash modified cosine search should succeed");

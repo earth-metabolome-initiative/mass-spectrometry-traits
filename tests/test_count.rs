@@ -4,20 +4,15 @@ use multi_ranged::SimpleRange;
 
 #[test]
 fn count_edges() {
-    let salicin: GenericSpectrum<f64, f64> =
+    let salicin: GenericSpectrum =
         GenericSpectrum::salicin().expect("reference spectrum should build");
-    let hc: GenericSpectrum<f64, f64> =
+    let hc: GenericSpectrum =
         GenericSpectrum::hydroxy_cholesterol().expect("reference spectrum should build");
-    let epi: GenericSpectrum<f64, f64> =
+    let epi: GenericSpectrum =
         GenericSpectrum::epimeloscine().expect("reference spectrum should build");
     let tol = 0.1f64;
 
-    type SpectrumPair<'a> = (
-        &'a str,
-        &'a GenericSpectrum<f64, f64>,
-        &'a str,
-        &'a GenericSpectrum<f64, f64>,
-    );
+    type SpectrumPair<'a> = (&'a str, &'a GenericSpectrum, &'a str, &'a GenericSpectrum);
     let pairs: Vec<SpectrumPair<'_>> = vec![
         ("HC", &hc, "salicin", &salicin),
         ("HC", &hc, "HC", &hc),

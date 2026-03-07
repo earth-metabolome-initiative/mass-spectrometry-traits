@@ -12,30 +12,30 @@ use mass_spectrometry::prelude::{
     SiriusMergeClosePeaks, SpectralProcessor, SpectrumMut,
 };
 
-const TOLERANCE: f32 = 0.01;
-const MZ_POWER: f32 = 0.0;
-const INTENSITY_POWER: f32 = 1.0;
+const TOLERANCE: f64 = 0.01;
+const MZ_POWER: f64 = 0.0;
+const INTENSITY_POWER: f64 = 1.0;
 
 /// Load a spectrum from `tests/fixtures/benchmark_spectra/<id>.txt`.
 ///
 /// File format: first line is precursor_mz, subsequent lines are `mz intensity`.
-fn load_spectrum(id: u32) -> GenericSpectrum<f32, f32> {
+fn load_spectrum(id: u32) -> GenericSpectrum {
     let path = format!("tests/fixtures/benchmark_spectra/{id}.txt");
     let content =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
     let mut lines = content.lines();
-    let precursor_mz: f32 = lines
+    let precursor_mz: f64 = lines
         .next()
         .expect("empty fixture file")
         .trim()
         .parse()
         .expect("bad precursor_mz");
-    let peaks: Vec<(f32, f32)> = lines
+    let peaks: Vec<(f64, f64)> = lines
         .filter(|l| !l.is_empty())
         .map(|line| {
             let mut parts = line.split_whitespace();
-            let mz: f32 = parts.next().expect("missing mz").parse().expect("bad mz");
-            let intensity: f32 = parts
+            let mz: f64 = parts.next().expect("missing mz").parse().expect("bad mz");
+            let intensity: f64 = parts
                 .next()
                 .expect("missing intensity")
                 .parse()

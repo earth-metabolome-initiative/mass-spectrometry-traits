@@ -6,7 +6,7 @@ use mass_spectrometry::prelude::{
     ScalarSimilarity, SimilarityComputationError, SiriusMergeClosePeaks, SpectralProcessor,
 };
 
-pub type BenchSpectrum = GenericSpectrum<f64, f64>;
+pub type BenchSpectrum = GenericSpectrum;
 
 type SimilarityResult = Result<(f64, usize), SimilarityComputationError>;
 

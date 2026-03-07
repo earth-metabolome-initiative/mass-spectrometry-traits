@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of flonicamid.
-pub trait FlonicamidSpectrum: SpectrumAlloc + Sized {
+pub trait FlonicamidSpectrum: SpectrumAlloc {
     /// Create a new spectrum of flonicamid.
     fn flonicamid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

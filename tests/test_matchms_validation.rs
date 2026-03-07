@@ -24,9 +24,9 @@ fn validate_against_matchms() {
 
         let left_name = &record[0];
         let right_name = &record[1];
-        let tolerance: f32 = record[2].parse().expect("bad tolerance");
-        let mz_power: f32 = record[3].parse().expect("bad mz_power");
-        let intensity_power: f32 = record[4].parse().expect("bad intensity_power");
+        let tolerance: f64 = record[2].parse().expect("bad tolerance");
+        let mz_power: f64 = record[3].parse().expect("bad mz_power");
+        let intensity_power: f64 = record[4].parse().expect("bad intensity_power");
         let expected_score: f64 = record[5].parse().expect("bad score");
         let expected_matches: usize = record[6].parse().expect("bad matches");
 
@@ -51,7 +51,7 @@ fn validate_against_matchms() {
             .similarity(&left, &right)
             .expect("similarity computation should succeed");
 
-        let score_diff = (score as f64 - expected_score).abs();
+        let score_diff = (score - expected_score).abs();
         // Allow 1e-4 tolerance: for very large spectra (5000+ peaks) with
         // wide mz_tolerance, the LAP solver may find a slightly suboptimal
         // assignment compared to matchms's scipy.optimize.linear_sum_assignment.

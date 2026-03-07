@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of dihydrosphingosine.
-pub trait DihydrosphingosineSpectrum: SpectrumAlloc + Sized {
+pub trait DihydrosphingosineSpectrum: SpectrumAlloc {
     /// Create a new spectrum of dihydrosphingosine.
     fn dihydrosphingosine() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

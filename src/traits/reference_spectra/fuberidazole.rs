@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fuberidazole.
-pub trait FuberidazoleSpectrum: SpectrumAlloc + Sized {
+pub trait FuberidazoleSpectrum: SpectrumAlloc {
     /// Create a new spectrum of fuberidazole.
     fn fuberidazole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

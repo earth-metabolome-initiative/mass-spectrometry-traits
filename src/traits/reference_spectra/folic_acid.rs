@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of folic acid.
-pub trait FolicAcidSpectrum: SpectrumAlloc + Sized {
+pub trait FolicAcidSpectrum: SpectrumAlloc {
     /// Create a new spectrum of folic acid.
     fn folic_acid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

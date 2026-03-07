@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of forchlorfenuron.
-pub trait ForchlorfenuronSpectrum: SpectrumAlloc + Sized {
+pub trait ForchlorfenuronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of forchlorfenuron.
     fn forchlorfenuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

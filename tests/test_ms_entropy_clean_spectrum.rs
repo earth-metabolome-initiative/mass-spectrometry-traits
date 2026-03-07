@@ -5,7 +5,7 @@ use mass_spectrometry::prelude::{
     SpectrumMut,
 };
 
-fn make_spectrum(precursor: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f32> {
+fn make_spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
     let mut s =
         GenericSpectrum::try_with_capacity(precursor, peaks.len()).expect("valid precursor");
     for &(mz, intensity) in peaks {
@@ -16,7 +16,7 @@ fn make_spectrum(precursor: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f
 
 #[test]
 fn default_cleaning_centroids_with_weighted_mz_and_normalizes() {
-    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    let cleaner = MsEntropyCleanSpectrum::builder()
         .build()
         .expect("valid default builder config");
 
@@ -44,7 +44,7 @@ fn default_cleaning_centroids_with_weighted_mz_and_normalizes() {
 
 #[test]
 fn noise_filter_removes_weak_peaks() {
-    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    let cleaner = MsEntropyCleanSpectrum::builder()
         .build()
         .expect("valid default builder config");
 
@@ -59,7 +59,7 @@ fn noise_filter_removes_weak_peaks() {
 
 #[test]
 fn top_n_keeps_most_intense_then_sorts_by_mz() {
-    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    let cleaner = MsEntropyCleanSpectrum::builder()
         .noise_threshold(None)
         .expect("valid noise threshold")
         .max_peak_num(Some(2))
@@ -82,7 +82,7 @@ fn top_n_keeps_most_intense_then_sorts_by_mz() {
 
 #[test]
 fn ppm_centroiding_merges_close_peaks_when_da_disabled() {
-    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    let cleaner = MsEntropyCleanSpectrum::builder()
         .noise_threshold(None)
         .expect("valid noise threshold")
         .normalize_intensity(false)
@@ -112,7 +112,7 @@ fn ppm_centroiding_merges_close_peaks_when_da_disabled() {
 
 #[test]
 fn min_and_max_mz_filters_are_applied() {
-    let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+    let cleaner = MsEntropyCleanSpectrum::builder()
         .noise_threshold(None)
         .expect("valid noise threshold")
         .normalize_intensity(false)
@@ -135,7 +135,7 @@ fn min_and_max_mz_filters_are_applied() {
 
 #[test]
 fn builder_rejects_invalid_centroid_configuration() {
-    let result = MsEntropyCleanSpectrum::<f32>::builder()
+    let result = MsEntropyCleanSpectrum::builder()
         .min_ms2_difference_in_da(-1.0)
         .expect("finite min_ms2_difference_in_da")
         .min_ms2_difference_in_ppm(Some(-1.0))

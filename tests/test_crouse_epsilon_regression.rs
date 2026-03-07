@@ -11,11 +11,10 @@ use mass_spectrometry::prelude::*;
 /// matrix where all entries cluster near 1 + f64::EPSILON.
 #[test]
 fn stypoltrione_self_similarity_mz_power_zero() {
-    let spectrum: GenericSpectrum<f32, f32> =
-        GenericSpectrum::stypoltrione().expect("valid spectrum");
+    let spectrum: GenericSpectrum = GenericSpectrum::stypoltrione().expect("valid spectrum");
     assert_eq!(spectrum.len(), 218);
 
-    let scorer = HungarianCosine::new(0.0_f32, 1.0_f32, 2.0_f32).expect("valid scorer config");
+    let scorer = HungarianCosine::new(0.0, 1.0, 2.0).expect("valid scorer config");
     let (score, matches) = scorer
         .similarity(&spectrum, &spectrum)
         .expect("similarity computation should succeed");
@@ -36,10 +35,9 @@ fn stypoltrione_self_similarity_mz_power_zero() {
 /// exact — this was never broken but serves as a baseline.
 #[test]
 fn stypoltrione_self_similarity_default() {
-    let spectrum: GenericSpectrum<f32, f32> =
-        GenericSpectrum::stypoltrione().expect("valid spectrum");
+    let spectrum: GenericSpectrum = GenericSpectrum::stypoltrione().expect("valid spectrum");
 
-    let scorer = HungarianCosine::new(1.0_f32, 1.0_f32, 0.1_f32).expect("valid scorer config");
+    let scorer = HungarianCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
     let (score, matches) = scorer
         .similarity(&spectrum, &spectrum)
         .expect("similarity computation should succeed");
@@ -62,11 +60,10 @@ fn stypoltrione_self_similarity_default() {
 /// by the stypoltrione test above) resolves the structural suboptimality.
 #[test]
 fn epimeloscine_self_similarity_mz_power_zero() {
-    let spectrum: GenericSpectrum<f32, f32> =
-        GenericSpectrum::epimeloscine().expect("valid spectrum");
+    let spectrum: GenericSpectrum = GenericSpectrum::epimeloscine().expect("valid spectrum");
     assert_eq!(spectrum.len(), 5379);
 
-    let scorer = HungarianCosine::new(0.0_f32, 1.0_f32, 2.0_f32).expect("valid scorer config");
+    let scorer = HungarianCosine::new(0.0, 1.0, 2.0).expect("valid scorer config");
     let (score, matches) = scorer
         .similarity(&spectrum, &spectrum)
         .expect("similarity computation should succeed");

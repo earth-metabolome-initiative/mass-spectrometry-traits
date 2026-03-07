@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of dinotefuran.
-pub trait DinotefuranSpectrum: SpectrumAlloc + Sized {
+pub trait DinotefuranSpectrum: SpectrumAlloc {
     /// Create a new spectrum of dinotefuran.
     fn dinotefuran() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

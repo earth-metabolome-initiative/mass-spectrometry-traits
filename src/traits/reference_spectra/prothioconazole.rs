@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of prothioconazole.
-pub trait ProthioconazoleSpectrum: SpectrumAlloc + Sized {
+pub trait ProthioconazoleSpectrum: SpectrumAlloc {
     /// Create a new spectrum of prothioconazole.
     fn prothioconazole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

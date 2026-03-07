@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of boscalid.
-pub trait BoscalidSpectrum: SpectrumAlloc + Sized {
+pub trait BoscalidSpectrum: SpectrumAlloc {
     /// Create a new spectrum of boscalid.
     fn boscalid() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of pyrimethanil.
-pub trait PyrimethanilSpectrum: SpectrumAlloc + Sized {
+pub trait PyrimethanilSpectrum: SpectrumAlloc {
     /// Create a new spectrum of pyrimethanil.
     fn pyrimethanil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

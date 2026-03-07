@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of biotin.
-pub trait BiotinSpectrum: SpectrumAlloc + Sized {
+pub trait BiotinSpectrum: SpectrumAlloc {
     /// Create a new spectrum of biotin.
     fn biotin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

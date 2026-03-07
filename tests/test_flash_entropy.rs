@@ -9,7 +9,7 @@ use mass_spectrometry::prelude::{
     ScalarSimilarity, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 
-fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum<f64, f64> {
+fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
     let mut spectrum =
         GenericSpectrum::with_capacity(precursor, peaks.len()).expect("valid spectrum allocation");
     for &(mz, intensity) in peaks {
@@ -18,7 +18,7 @@ fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum<f6
     spectrum
 }
 
-fn reference_spectra() -> Vec<(&'static str, GenericSpectrum<f64, f64>)> {
+fn reference_spectra() -> Vec<(&'static str, GenericSpectrum)> {
     vec![
         ("cocaine", GenericSpectrum::cocaine().unwrap()),
         ("glucose", GenericSpectrum::glucose().unwrap()),
@@ -198,12 +198,12 @@ fn equivalence_with_linear_entropy_unweighted() {
 
 #[test]
 fn empty_library() {
-    let empty: Vec<&GenericSpectrum<f64, f64>> = Vec::new();
+    let empty: Vec<&GenericSpectrum> = Vec::new();
     let index = FlashEntropyIndex::new(0.0_f64, 1.0_f64, 0.1_f64, true, empty)
         .expect("empty index should build");
     assert_eq!(index.n_spectra(), 0);
 
-    let query: GenericSpectrum<f64, f64> = GenericSpectrum::cocaine().unwrap();
+    let query: GenericSpectrum = GenericSpectrum::cocaine().unwrap();
     let results = index.search(&query).expect("search should succeed");
     assert!(results.is_empty());
 }

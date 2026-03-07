@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of cytidine 5 triphosphate.
-pub trait Cytidine5TriphosphateSpectrum: SpectrumAlloc + Sized {
+pub trait Cytidine5TriphosphateSpectrum: SpectrumAlloc {
     /// Create a new spectrum of cytidine 5 triphosphate.
     fn cytidine_5_triphosphate() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

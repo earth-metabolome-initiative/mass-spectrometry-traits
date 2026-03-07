@@ -6,9 +6,6 @@ pub enum SimilarityConfigError {
     /// A numeric parameter was NaN or infinite.
     #[error("parameter `{0}` must be finite")]
     NonFiniteParameter(&'static str),
-    /// A numeric parameter could not be represented as an `f64`.
-    #[error("parameter `{0}` must be representable as f64")]
-    NonRepresentableParameter(&'static str),
     /// A parameter combination is invalid.
     #[error("invalid parameter `{0}`")]
     InvalidParameter(&'static str),
@@ -20,9 +17,6 @@ pub enum SimilarityConfigError {
 /// Error returned when computing similarity scores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SimilarityComputationError {
-    /// A value required by the algorithm could not be represented as an `f64`.
-    #[error("value `{0}` must be representable as f64")]
-    ValueNotRepresentable(&'static str),
     /// A numeric value required by the algorithm was not finite.
     #[error("value `{0}` must be finite")]
     NonFiniteValue(&'static str),

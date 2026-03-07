@@ -5,13 +5,13 @@ use mass_spectrometry::prelude::{
     SiriusMergeClosePeaks, SpectralProcessor, Spectrum, SpectrumMut,
 };
 
-const TOLERANCE: f32 = 0.1;
+const TOLERANCE: f64 = 0.1;
 
-fn merger() -> SiriusMergeClosePeaks<f32> {
+fn merger() -> SiriusMergeClosePeaks {
     SiriusMergeClosePeaks::new(TOLERANCE).expect("valid tolerance")
 }
 
-fn make_spectrum(precursor: f32, peaks: &[(f32, f32)]) -> GenericSpectrum<f32, f32> {
+fn make_spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
     let mut s =
         GenericSpectrum::try_with_capacity(precursor, peaks.len()).expect("valid precursor");
     for &(mz, intensity) in peaks {
@@ -113,7 +113,7 @@ fn preserves_precursor_mz() {
 
 #[test]
 fn aspirin_after_merge_is_well_separated() {
-    let aspirin: GenericSpectrum<f32, f32> =
+    let aspirin: GenericSpectrum =
         GenericSpectrum::aspirin().expect("reference spectrum should build");
 
     // Aspirin has peaks 105.0333 and 105.0445 that are only 0.0112 apart,
@@ -122,7 +122,7 @@ fn aspirin_after_merge_is_well_separated() {
 
     // Verify the strict well-separated invariant: consecutive peaks > 2*tolerance apart.
     let min_gap = 2.0 * TOLERANCE;
-    let mz_values: Vec<f32> = result.mz().collect();
+    let mz_values: Vec<f64> = result.mz().collect();
     for w in mz_values.windows(2) {
         assert!(
             w[1] - w[0] > min_gap,
@@ -146,16 +146,16 @@ fn aspirin_after_merge_is_well_separated() {
 
 #[test]
 fn linear_cosine_after_merge_matches_hungarian() {
-    let aspirin: GenericSpectrum<f32, f32> =
+    let aspirin: GenericSpectrum =
         GenericSpectrum::aspirin().expect("reference spectrum should build");
     let m = merger();
     let merged = m.process(&aspirin);
 
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, TOLERANCE).expect("valid config");
-    let hungarian = HungarianCosine::new(1.0_f32, 1.0_f32, TOLERANCE).expect("valid config");
+    let linear = LinearCosine::new(1.0, 1.0, TOLERANCE).expect("valid config");
+    let hungarian = HungarianCosine::new(1.0, 1.0, TOLERANCE).expect("valid config");
 
     // Use a well-separated reference as the other spectrum.
-    let cocaine: GenericSpectrum<f32, f32> = make_spectrum(
+    let cocaine: GenericSpectrum = make_spectrum(
         304.154,
         &[
             (82.065, 100.0),
@@ -184,17 +184,17 @@ fn linear_cosine_after_merge_matches_hungarian() {
 
 #[test]
 fn self_similarity_after_merge() {
-    let aspirin: GenericSpectrum<f32, f32> =
+    let aspirin: GenericSpectrum =
         GenericSpectrum::aspirin().expect("reference spectrum should build");
     let merged = merger().process(&aspirin);
 
-    let linear = LinearCosine::new(1.0_f32, 1.0_f32, TOLERANCE).expect("valid config");
+    let linear = LinearCosine::new(1.0, 1.0, TOLERANCE).expect("valid config");
     let (sim, matches) = linear
         .similarity(&merged, &merged)
         .expect("self-similarity should succeed");
 
     assert!(
-        (1.0_f32 - sim).abs() < 1e-6,
+        (1.0 - sim).abs() < 1e-6,
         "self-similarity should be ~1.0, got {sim}"
     );
     assert_eq!(
@@ -206,19 +206,19 @@ fn self_similarity_after_merge() {
 
 #[test]
 fn overflowing_cluster_is_clamped_to_max_finite_intensity() {
-    let s = make_spectrum(200.0, &[(100.0, f32::MAX), (100.05, f32::MAX)]);
+    let s = make_spectrum(200.0, &[(100.0, f64::MAX), (100.05, f64::MAX)]);
     let result = merger().process(&s);
     assert_eq!(result.len(), 1);
     let (_, intensity) = result.peak_nth(0);
     assert!(intensity.is_finite(), "merged intensity must be finite");
-    assert_eq!(intensity, f32::MAX);
+    assert_eq!(intensity, f64::MAX);
 }
 
 #[test]
 fn overflow_clamping_preserves_sorted_valid_output() {
     let s = make_spectrum(
         200.0,
-        &[(100.0, f32::MAX), (100.05, f32::MAX), (101.0, 1.0)],
+        &[(100.0, f64::MAX), (100.05, f64::MAX), (101.0, 1.0)],
     );
     let result = merger().process(&s);
 
@@ -231,5 +231,5 @@ fn overflow_clamping_preserves_sorted_valid_output() {
         i0.is_finite() && i1.is_finite(),
         "intensities must remain finite"
     );
-    assert_eq!(i0, f32::MAX, "overflowed merged cluster must be clamped");
+    assert_eq!(i0, f64::MAX, "overflowed merged cluster must be clamped");
 }

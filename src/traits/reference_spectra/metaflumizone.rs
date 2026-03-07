@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of metaflumizone.
-pub trait MetaflumizoneSpectrum: SpectrumAlloc + Sized {
+pub trait MetaflumizoneSpectrum: SpectrumAlloc {
     /// Create a new spectrum of metaflumizone.
     fn metaflumizone() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of acephate.
-pub trait AcephateSpectrum: SpectrumAlloc + Sized {
+pub trait AcephateSpectrum: SpectrumAlloc {
     /// Create a new spectrum of acephate.
     fn acephate() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

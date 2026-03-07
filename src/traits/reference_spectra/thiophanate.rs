@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of thiophanate.
-pub trait ThiophanateSpectrum: SpectrumAlloc + Sized {
+pub trait ThiophanateSpectrum: SpectrumAlloc {
     /// Create a new spectrum of thiophanate.
     fn thiophanate() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of chlorotoluron.
-pub trait ChlorotoluronSpectrum: SpectrumAlloc + Sized {
+pub trait ChlorotoluronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of chlorotoluron.
     fn chlorotoluron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

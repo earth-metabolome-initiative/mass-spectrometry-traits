@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of adenosine 5 diphosphate.
-pub trait Adenosine5DiphosphateSpectrum: SpectrumAlloc + Sized {
+pub trait Adenosine5DiphosphateSpectrum: SpectrumAlloc {
     /// Create a new spectrum of adenosine 5 diphosphate.
     fn adenosine_5_diphosphate() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

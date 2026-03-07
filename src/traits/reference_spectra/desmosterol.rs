@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of desmosterol.
-pub trait DesmosterolSpectrum: SpectrumAlloc + Sized {
+pub trait DesmosterolSpectrum: SpectrumAlloc {
     /// Create a new spectrum of desmosterol.
     fn desmosterol() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

@@ -2,28 +2,25 @@
 
 use alloc::vec::Vec;
 
-use num_traits::{Float, NumCast, ToPrimitive};
-
 use super::Spectrum;
-use crate::numeric_validation::{NumericValidationError, checked_to_f64};
 
 /// Parameters for generating a random spectrum with [`SpectrumAlloc::random`].
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RandomSpectrumConfig<Mz, Intensity> {
+pub struct RandomSpectrumConfig {
     /// Precursor m/z for the generated spectrum.
-    pub precursor_mz: Mz,
+    pub precursor_mz: f64,
     /// Number of peaks to generate.
     pub n_peaks: usize,
     /// Minimum generated peak m/z.
-    pub mz_min: Mz,
+    pub mz_min: f64,
     /// Maximum generated peak m/z.
-    pub mz_max: Mz,
+    pub mz_max: f64,
     /// Minimum spacing between consecutive m/z values.
-    pub min_peak_gap: Mz,
+    pub min_peak_gap: f64,
     /// Minimum generated intensity.
-    pub intensity_min: Intensity,
+    pub intensity_min: f64,
     /// Maximum generated intensity.
-    pub intensity_max: Intensity,
+    pub intensity_max: f64,
 }
 
 /// Error returned by [`SpectrumAlloc::random`].
@@ -35,15 +32,9 @@ where
     /// Input parameter set is invalid.
     #[error("invalid random spectrum config: {0}")]
     InvalidConfig(&'static str),
-    /// Input value cannot be represented as `f64`.
-    #[error("value is not representable as f64: {0}")]
-    ValueNotRepresentable(&'static str),
     /// Input value is non-finite.
     #[error("value must be finite: {0}")]
     NonFiniteValue(&'static str),
-    /// Generated numeric value cannot be represented in target type.
-    #[error("generated value is not representable in target type: {0}")]
-    GeneratedValueNotRepresentable(&'static str),
     /// Error while constructing or mutating the spectrum.
     #[error(transparent)]
     Mutation(E),
@@ -76,22 +67,14 @@ fn next_unit_f64(state: &mut u64) -> f64 {
 }
 
 #[inline]
-fn to_f64_checked<E, T>(
-    value: T,
+fn ensure_finite<E: core::error::Error>(
+    value: f64,
     name: &'static str,
-) -> Result<f64, RandomSpectrumGenerationError<E>>
-where
-    E: core::error::Error,
-    T: ToPrimitive,
-{
-    checked_to_f64(value, name).map_err(|error| match error {
-        NumericValidationError::NonRepresentable(name) => {
-            RandomSpectrumGenerationError::ValueNotRepresentable(name)
-        }
-        NumericValidationError::NonFinite(name) => {
-            RandomSpectrumGenerationError::NonFiniteValue(name)
-        }
-    })
+) -> Result<f64, RandomSpectrumGenerationError<E>> {
+    if !value.is_finite() {
+        return Err(RandomSpectrumGenerationError::NonFiniteValue(name));
+    }
+    Ok(value)
 }
 
 /// Trait for a mutable Spectrum.
@@ -105,11 +88,7 @@ pub trait SpectrumMut: Spectrum {
     /// strictly increasing `mz` ordering (rejecting duplicates), reject
     /// non-positive intensity values, and validate mz within
     /// `[ELECTRON_MASS, MAX_MZ]`.
-    fn add_peak(
-        &mut self,
-        mz: Self::Mz,
-        intensity: Self::Intensity,
-    ) -> Result<(), Self::MutationError>;
+    fn add_peak(&mut self, mz: f64, intensity: f64) -> Result<(), Self::MutationError>;
 }
 
 /// Trait for an allocable Spectrum.
@@ -123,7 +102,7 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
     ///
     /// Implementations are expected to enforce constructor-time invariants for
     /// `precursor_mz`, returning an error when the value is invalid.
-    fn with_capacity(precursor_mz: Self::Mz, capacity: usize) -> Result<Self, Self::MutationError>;
+    fn with_capacity(precursor_mz: f64, capacity: usize) -> Result<Self, Self::MutationError>;
 
     /// Generate a random spectrum from a parameterized configuration.
     ///
@@ -135,21 +114,14 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
     /// This default implementation is intended for benchmarks and synthetic
     /// tests where reproducible random spectra are useful.
     fn random(
-        config: RandomSpectrumConfig<Self::Mz, Self::Intensity>,
+        config: RandomSpectrumConfig,
         seed: u64,
-    ) -> Result<Self, RandomSpectrumGenerationError<Self::MutationError>>
-    where
-        Self::Mz: Float + NumCast + ToPrimitive,
-        Self::Intensity: Float + NumCast + ToPrimitive,
-    {
-        let mz_min = to_f64_checked::<Self::MutationError, _>(config.mz_min, "mz_min")?;
-        let mz_max = to_f64_checked::<Self::MutationError, _>(config.mz_max, "mz_max")?;
-        let min_peak_gap =
-            to_f64_checked::<Self::MutationError, _>(config.min_peak_gap, "min_peak_gap")?;
-        let intensity_min =
-            to_f64_checked::<Self::MutationError, _>(config.intensity_min, "intensity_min")?;
-        let intensity_max =
-            to_f64_checked::<Self::MutationError, _>(config.intensity_max, "intensity_max")?;
+    ) -> Result<Self, RandomSpectrumGenerationError<Self::MutationError>> {
+        let mz_min = ensure_finite(config.mz_min, "mz_min")?;
+        let mz_max = ensure_finite(config.mz_max, "mz_max")?;
+        let min_peak_gap = ensure_finite(config.min_peak_gap, "min_peak_gap")?;
+        let intensity_min = ensure_finite(config.intensity_min, "intensity_min")?;
+        let intensity_max = ensure_finite(config.intensity_max, "intensity_max")?;
 
         if mz_max < mz_min {
             return Err(RandomSpectrumGenerationError::InvalidConfig(
@@ -193,18 +165,12 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
 
         let intensity_span = intensity_max - intensity_min;
         for (i, offset) in offsets.into_iter().enumerate() {
-            let mz_f64 = mz_min + ((i as f64) * min_peak_gap) + offset;
-            let intensity_f64 = if intensity_span == 0.0 {
+            let mz = mz_min + ((i as f64) * min_peak_gap) + offset;
+            let intensity = if intensity_span == 0.0 {
                 intensity_min
             } else {
                 intensity_min + (next_unit_f64(&mut state) * intensity_span)
             };
-
-            let mz = num_traits::cast::<f64, Self::Mz>(mz_f64)
-                .ok_or(RandomSpectrumGenerationError::GeneratedValueNotRepresentable("mz"))?;
-            let intensity = num_traits::cast::<f64, Self::Intensity>(intensity_f64).ok_or(
-                RandomSpectrumGenerationError::GeneratedValueNotRepresentable("intensity"),
-            )?;
 
             spectrum
                 .add_peak(mz, intensity)

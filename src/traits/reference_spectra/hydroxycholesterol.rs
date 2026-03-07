@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of hydroxy-cholesterol.
-pub trait HydroxyCholesterolSpectrum: SpectrumAlloc + Sized {
+pub trait HydroxyCholesterolSpectrum: SpectrumAlloc {
     /// Create a new spectrum of hydroxy-cholesterol.
     fn hydroxy_cholesterol() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

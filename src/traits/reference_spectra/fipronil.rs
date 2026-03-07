@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fipronil.
-pub trait FipronilSpectrum: SpectrumAlloc + Sized {
+pub trait FipronilSpectrum: SpectrumAlloc {
     /// Create a new spectrum of fipronil.
     fn fipronil() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

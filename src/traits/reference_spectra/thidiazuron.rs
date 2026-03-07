@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of thidiazuron.
-pub trait ThidiazuronSpectrum: SpectrumAlloc + Sized {
+pub trait ThidiazuronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of thidiazuron.
     fn thidiazuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

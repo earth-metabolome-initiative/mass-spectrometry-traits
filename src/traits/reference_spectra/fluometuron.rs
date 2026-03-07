@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of fluometuron.
-pub trait FluometuronSpectrum: SpectrumAlloc + Sized {
+pub trait FluometuronSpectrum: SpectrumAlloc {
     /// Create a new spectrum of fluometuron.
     fn fluometuron() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

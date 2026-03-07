@@ -7,27 +7,23 @@ use mass_spectrometry::prelude::{
 };
 use multi_ranged::{BiRange, SimpleRange};
 
-fn linear_spectrum(size: usize, precursor_mz: f32) -> GenericSpectrum<f32, f32> {
+fn linear_spectrum(size: usize, precursor_mz: f64) -> GenericSpectrum {
     let mut spectrum =
         GenericSpectrum::with_capacity(precursor_mz, size).expect("valid spectrum allocation");
     for i in 0..size {
         spectrum
-            .add_peak((i + 1) as f32, 1.0)
+            .add_peak((i + 1) as f64, 1.0)
             .expect("test peaks must be sorted by m/z");
     }
     spectrum
 }
 
-fn shifted_linear_spectrum(
-    size: usize,
-    precursor_mz: f32,
-    mz_offset: f32,
-) -> GenericSpectrum<f32, f32> {
+fn shifted_linear_spectrum(size: usize, precursor_mz: f64, mz_offset: f64) -> GenericSpectrum {
     let mut spectrum =
         GenericSpectrum::with_capacity(precursor_mz, size).expect("valid spectrum allocation");
     for i in 0..size {
         spectrum
-            .add_peak(mz_offset + (i + 1) as f32, 1.0)
+            .add_peak(mz_offset + (i + 1) as f64, 1.0)
             .expect("test peaks must be sorted by m/z");
     }
     spectrum
@@ -119,18 +115,17 @@ fn similarity_match_count_type_is_usize() {
     let left = linear_spectrum(4, 1_000.0);
     let right = linear_spectrum(4, 1_000.0);
 
-    let exact = HungarianCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
-    let modified =
-        ModifiedHungarianCosine::new(1.0_f32, 1.0_f32, 0.0_f32).expect("valid scorer config");
-    let entropy = LinearEntropy::unweighted(0.0_f32).expect("valid scorer config");
+    let exact = HungarianCosine::new(1.0, 1.0, 0.0).expect("valid scorer config");
+    let modified = ModifiedHungarianCosine::new(1.0, 1.0, 0.0).expect("valid scorer config");
+    let entropy = LinearEntropy::unweighted(0.0).expect("valid scorer config");
 
-    let (_s1, m1): (f32, usize) = exact
+    let (_s1, m1): (f64, usize) = exact
         .similarity(&left, &right)
         .expect("similarity computation should succeed");
-    let (_s2, m2): (f32, usize) = modified
+    let (_s2, m2): (f64, usize) = modified
         .similarity(&left, &right)
         .expect("similarity computation should succeed");
-    let (_s3, m3): (f32, usize) = entropy
+    let (_s3, m3): (f64, usize) = entropy
         .similarity(&left, &right)
         .expect("similarity computation should succeed");
 

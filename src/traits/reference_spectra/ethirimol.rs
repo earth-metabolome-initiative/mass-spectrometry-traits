@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of ethirimol.
-pub trait EthirimolSpectrum: SpectrumAlloc + Sized {
+pub trait EthirimolSpectrum: SpectrumAlloc {
     /// Create a new spectrum of ethirimol.
     fn ethirimol() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

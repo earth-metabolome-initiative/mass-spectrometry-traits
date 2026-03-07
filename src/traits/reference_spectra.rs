@@ -3,15 +3,11 @@
 
 macro_rules! impl_reference_spectrum {
     ($trait_name:ident, $method_name:ident, $precursor:ident, $mz:ident, $intensities:ident) => {
-        impl<S: crate::traits::SpectrumAlloc> $trait_name for S
-        where
-            S::Mz: From<f32>,
-            S::Intensity: From<f32>,
-        {
+        impl<S: crate::traits::SpectrumAlloc> $trait_name for S {
             fn $method_name() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError> {
-                let mut spectrum = Self::with_capacity($precursor.into(), $mz.len())?;
+                let mut spectrum = Self::with_capacity(f64::from($precursor), $mz.len())?;
                 for (&mz, &intensity) in $mz.iter().zip($intensities.iter()) {
-                    spectrum.add_peak(mz.into(), intensity.into())?;
+                    spectrum.add_peak(f64::from(mz), f64::from(intensity))?;
                 }
                 Ok(spectrum)
             }

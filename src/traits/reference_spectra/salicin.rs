@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of salicin.
-pub trait SalicinSpectrum: SpectrumAlloc + Sized {
+pub trait SalicinSpectrum: SpectrumAlloc {
     /// Create a new spectrum of salicin.
     fn salicin() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

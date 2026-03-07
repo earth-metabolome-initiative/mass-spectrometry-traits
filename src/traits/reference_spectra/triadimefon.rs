@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of triadimefon.
-pub trait TriadimefonSpectrum: SpectrumAlloc + Sized {
+pub trait TriadimefonSpectrum: SpectrumAlloc {
     /// Create a new spectrum of triadimefon.
     fn triadimefon() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

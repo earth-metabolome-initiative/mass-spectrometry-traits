@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of chlorantraniliprole.
-pub trait ChlorantraniliproleSpectrum: SpectrumAlloc + Sized {
+pub trait ChlorantraniliproleSpectrum: SpectrumAlloc {
     /// Create a new spectrum of chlorantraniliprole.
     fn chlorantraniliprole() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

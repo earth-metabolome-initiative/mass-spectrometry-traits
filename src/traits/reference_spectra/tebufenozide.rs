@@ -3,7 +3,7 @@
 use crate::traits::SpectrumAlloc;
 
 /// Trait for a spectrum of tebufenozide.
-pub trait TebufenozideSpectrum: SpectrumAlloc + Sized {
+pub trait TebufenozideSpectrum: SpectrumAlloc {
     /// Create a new spectrum of tebufenozide.
     fn tebufenozide() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError>;
 }

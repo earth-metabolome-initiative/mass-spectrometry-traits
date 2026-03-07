@@ -7,9 +7,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use geometric_traits::prelude::{Finite, Number};
-use num_traits::{Float, ToPrimitive};
-
 use super::cosine_common::validate_non_negative_tolerance;
 use super::similarity_errors::SimilarityConfigError;
 use crate::structs::GenericSpectrum;
@@ -24,42 +21,34 @@ use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
 /// The algorithm processes peaks from highest to lowest intensity. For each
 /// surviving peak, all unconsumed neighbors within the merge window have their
 /// intensities summed into the dominant peak, which keeps its original m/z.
-/// If the running sum overflows to a non-finite value, it is clamped to the
-/// maximum finite value for `MZ`.
-pub struct SiriusMergeClosePeaks<MZ> {
-    mz_tolerance: MZ,
+/// If the running sum overflows to a non-finite value, it is clamped to
+/// `f64::MAX`.
+pub struct SiriusMergeClosePeaks {
+    mz_tolerance: f64,
 }
 
-impl<MZ: Number> SiriusMergeClosePeaks<MZ> {
+impl SiriusMergeClosePeaks {
     /// Returns the m/z tolerance used for merging.
     #[inline]
-    pub fn mz_tolerance(&self) -> MZ {
+    pub fn mz_tolerance(&self) -> f64 {
         self.mz_tolerance
     }
-}
 
-impl<MZ> SiriusMergeClosePeaks<MZ>
-where
-    MZ: Number + ToPrimitive + PartialOrd,
-{
     /// Creates a new `SiriusMergeClosePeaks` processor.
     ///
     /// # Errors
     ///
-    /// Returns [`SimilarityConfigError`] if `mz_tolerance` is negative,
-    /// non-finite, or not representable as `f64`.
+    /// Returns [`SimilarityConfigError`] if `mz_tolerance` is negative or
+    /// non-finite.
     #[inline]
-    pub fn new(mz_tolerance: MZ) -> Result<Self, SimilarityConfigError> {
+    pub fn new(mz_tolerance: f64) -> Result<Self, SimilarityConfigError> {
         validate_non_negative_tolerance(mz_tolerance)?;
         Ok(Self { mz_tolerance })
     }
 }
 
-impl<MZ> SpectralProcessor for SiriusMergeClosePeaks<MZ>
-where
-    MZ: Float + Number + Finite + ToPrimitive,
-{
-    type Spectrum = GenericSpectrum<MZ, MZ>;
+impl SpectralProcessor for SiriusMergeClosePeaks {
+    type Spectrum = GenericSpectrum;
 
     fn process(&self, spectrum: &Self::Spectrum) -> Self::Spectrum {
         let n = spectrum.len();
@@ -71,7 +60,7 @@ where
         let merge_window = self.mz_tolerance + self.mz_tolerance;
 
         // Collect peaks into a working vec.
-        let peaks: Vec<(MZ, MZ)> = spectrum.peaks().collect();
+        let peaks: Vec<(f64, f64)> = spectrum.peaks().collect();
 
         // Build indices sorted by descending intensity.
         let mut order: Vec<usize> = (0..n).collect();
@@ -83,7 +72,7 @@ where
         });
 
         let mut consumed = vec![false; n];
-        let mut survivors: Vec<(MZ, MZ)> = Vec::with_capacity(n);
+        let mut survivors: Vec<(f64, f64)> = Vec::with_capacity(n);
 
         for &idx in &order {
             if consumed[idx] {
@@ -102,11 +91,7 @@ where
                 }
                 if dominant_mz - peaks[j].0 <= merge_window {
                     let merged = summed_intensity + peaks[j].1;
-                    summed_intensity = if merged.is_finite() {
-                        merged
-                    } else {
-                        <MZ as Float>::max_value()
-                    };
+                    summed_intensity = if merged.is_finite() { merged } else { f64::MAX };
                     consumed[j] = true;
                 } else {
                     break;
@@ -120,11 +105,7 @@ where
                 }
                 if peaks[k].0 - dominant_mz <= merge_window {
                     let merged = summed_intensity + peaks[k].1;
-                    summed_intensity = if merged.is_finite() {
-                        merged
-                    } else {
-                        <MZ as Float>::max_value()
-                    };
+                    summed_intensity = if merged.is_finite() { merged } else { f64::MAX };
                     consumed[k] = true;
                 } else {
                     break;

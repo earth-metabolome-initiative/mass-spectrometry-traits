@@ -28,7 +28,7 @@ fn validate_linear_entropy_against_ms_entropy() {
 
         let left_name = &record[0];
         let right_name = &record[1];
-        let tolerance: f32 = record[2].parse().expect("bad tolerance");
+        let tolerance: f64 = record[2].parse().expect("bad tolerance");
         let weighted = match record[3].trim() {
             "true" => true,
             "false" => false,
@@ -43,7 +43,7 @@ fn validate_linear_entropy_against_ms_entropy() {
             continue;
         };
 
-        let cleaner = MsEntropyCleanSpectrum::<f32>::builder()
+        let cleaner = MsEntropyCleanSpectrum::builder()
             .min_ms2_difference_in_da(2.0 * tolerance)
             .expect("finite min_ms2_difference_in_da")
             .build()
@@ -64,16 +64,15 @@ fn validate_linear_entropy_against_ms_entropy() {
             .similarity(&right, &left)
             .expect("similarity computation should succeed");
 
-        let score_ab_f64 = score_ab as f64;
-        let score_diff = (score_ab_f64 - expected_score).abs();
+        let score_diff = (score_ab - expected_score).abs();
         if score_diff > 1e-4 {
             failures.push(format!(
                 "{left_name} vs {right_name} (weighted={weighted}, tol={tolerance}): \
-                 score={score_ab_f64:.12} expected={expected_score:.12} diff={score_diff:.2e}"
+                 score={score_ab:.12} expected={expected_score:.12} diff={score_diff:.2e}"
             ));
         }
 
-        if (score_ab as f64 - score_ba as f64).abs() > 1e-6 || matches_ab != matches_ba {
+        if (score_ab - score_ba).abs() > 1e-6 || matches_ab != matches_ba {
             failures.push(format!(
                 "{left_name} vs {right_name} (weighted={weighted}, tol={tolerance}): \
                  symmetry violation sim_ab={score_ab:.12}, sim_ba={score_ba:.12}, \
