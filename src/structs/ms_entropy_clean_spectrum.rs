@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 use geometric_traits::prelude::{Finite, Number};
 use num_traits::{Float, NumCast, ToPrimitive};
 
-use super::cosine_common::{to_f64_checked_for_computation, validate_numeric_parameter};
+use super::cosine_common::validate_numeric_parameter;
 use super::similarity_errors::SimilarityConfigError;
 use crate::structs::GenericSpectrum;
 use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
@@ -90,43 +90,22 @@ where
 
 impl<MZ> MsEntropyCleanSpectrum<MZ>
 where
-    MZ: Number + ToPrimitive,
+    MZ: Float + Number + ToPrimitive,
 {
-    #[inline]
-    fn centroid_tolerance(&self) -> (f64, Option<f64>) {
-        let da = to_f64_checked_for_computation(
-            self.min_ms2_difference_in_da,
-            "min_ms2_difference_in_da",
-        )
-        .expect("validated min_ms2_difference_in_da must be finite/representable");
-
-        let ppm = self.min_ms2_difference_in_ppm.and_then(|value| {
-            let ppm = to_f64_checked_for_computation(value, "min_ms2_difference_in_ppm")
-                .expect("validated min_ms2_difference_in_ppm must be finite/representable");
-            (ppm > 0.0).then_some(ppm)
-        });
-
-        (da, ppm)
-    }
-
-    fn clean_peaks(&self, mut peaks: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    fn clean_peaks(&self, mut peaks: Vec<(MZ, MZ)>) -> Vec<(MZ, MZ)> {
         // Step 1. Remove empty peaks.
-        peaks.retain(|(mz, intensity)| *mz > 0.0 && *intensity > 0.0);
+        peaks.retain(|(mz, intensity)| *mz > MZ::zero() && *intensity > MZ::zero());
 
         // Step 2. Min/max mz filtering.
-        if let Some(min_mz) = self.min_mz.and_then(|value| {
-            let min_mz = to_f64_checked_for_computation(value, "min_mz")
-                .expect("validated min_mz must be finite/representable");
-            (min_mz > 0.0).then_some(min_mz)
-        }) {
-            peaks.retain(|(mz, _)| *mz >= min_mz);
+        if let Some(min_mz) = self.min_mz {
+            if min_mz > MZ::zero() {
+                peaks.retain(|(mz, _)| *mz >= min_mz);
+            }
         }
-        if let Some(max_mz) = self.max_mz.and_then(|value| {
-            let max_mz = to_f64_checked_for_computation(value, "max_mz")
-                .expect("validated max_mz must be finite/representable");
-            (max_mz > 0.0).then_some(max_mz)
-        }) {
-            peaks.retain(|(mz, _)| *mz <= max_mz);
+        if let Some(max_mz) = self.max_mz {
+            if max_mz > MZ::zero() {
+                peaks.retain(|(mz, _)| *mz <= max_mz);
+            }
         }
 
         if peaks.is_empty() {
@@ -134,23 +113,23 @@ where
         }
 
         // Step 3. Centroiding.
-        let (da, ppm) = self.centroid_tolerance();
-        peaks = centroid_spectrum(peaks, da, ppm);
+        let ppm = self
+            .min_ms2_difference_in_ppm
+            .filter(|&v| v > MZ::zero());
+        peaks = centroid_spectrum(peaks, self.min_ms2_difference_in_da, ppm);
 
         if peaks.is_empty() {
             return peaks;
         }
 
         // Step 4. Noise filtering.
-        if let Some(noise_threshold) = self.noise_threshold.map(|value| {
-            to_f64_checked_for_computation(value, "noise_threshold")
-                .expect("validated noise_threshold must be finite/representable")
-        }) {
+        if let Some(noise_threshold) = self.noise_threshold {
             let max_intensity = peaks
                 .iter()
-                .map(|(_, intensity)| *intensity)
-                .fold(0.0, f64::max);
-            peaks.retain(|(_, intensity)| *intensity >= noise_threshold * max_intensity);
+                .map(|&(_, intensity)| intensity)
+                .fold(MZ::zero(), |a, b| if b > a { b } else { a });
+            let threshold = noise_threshold * max_intensity;
+            peaks.retain(|&(_, intensity)| intensity >= threshold);
         }
 
         if peaks.is_empty() {
@@ -162,17 +141,19 @@ where
             && max_peak_num > 0
             && peaks.len() > max_peak_num
         {
-            peaks.sort_unstable_by(|a, b| a.1.total_cmp(&b.1));
+            peaks.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).expect("non-NaN intensity"));
             peaks = peaks[peaks.len() - max_peak_num..].to_vec();
-            peaks.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+            peaks.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).expect("non-NaN mz"));
         }
 
         // Step 6. Normalize to sum 1.
         if self.normalize_intensity {
-            let spectrum_sum: f64 = peaks.iter().map(|(_, intensity)| *intensity).sum();
-            if spectrum_sum > 0.0 {
+            let spectrum_sum = peaks
+                .iter()
+                .fold(MZ::zero(), |acc, &(_, intensity)| acc + intensity);
+            if spectrum_sum > MZ::zero() {
                 for (_, intensity) in &mut peaks {
-                    *intensity /= spectrum_sum;
+                    *intensity = *intensity / spectrum_sum;
                 }
             } else {
                 peaks.clear();
@@ -190,16 +171,7 @@ where
     type Spectrum = GenericSpectrum<MZ, MZ>;
 
     fn process(&self, spectrum: &Self::Spectrum) -> Self::Spectrum {
-        let input_peaks: Vec<(f64, f64)> = spectrum
-            .peaks()
-            .map(|(mz, intensity)| {
-                let mz = to_f64_checked_for_computation(mz, "mz")
-                    .expect("input spectrum m/z values must be finite/representable");
-                let intensity = to_f64_checked_for_computation(intensity, "intensity")
-                    .expect("input spectrum intensities must be finite/representable");
-                (mz, intensity)
-            })
-            .collect();
+        let input_peaks: Vec<(MZ, MZ)> = spectrum.peaks().collect();
 
         let cleaned = self.clean_peaks(input_peaks);
 
@@ -207,12 +179,8 @@ where
             .expect("precursor_mz from valid spectrum must be valid");
 
         for (mz, intensity) in cleaned {
-            let mz_cast: MZ = NumCast::from(mz)
-                .expect("cleaned m/z must be representable in output numeric type");
-            let intensity_cast: MZ = NumCast::from(intensity)
-                .expect("cleaned intensity must be representable in output numeric type");
             result
-                .add_peak(mz_cast, intensity_cast)
+                .add_peak(mz, intensity)
                 .expect("cleaned peaks should be valid and sorted by m/z");
         }
 
@@ -542,79 +510,93 @@ impl<MZ> MsEntropyCleanSpectrumBuilder<MZ> {
     }
 }
 
+/// Returns `true` when all consecutive mz gaps strictly exceed the tolerance,
+/// matching the C `need_centroid` function which triggers on `<=`.
 #[inline]
-fn check_centroid(peaks: &[(f64, f64)], ms2_da: f64, ms2_ppm: Option<f64>) -> bool {
+fn check_centroid<F: Float>(peaks: &[(F, F)], ms2_da: F, ms2_ppm: Option<F>) -> bool {
     if peaks.len() <= 1 {
         return true;
     }
-
     if let Some(ppm) = ms2_ppm {
+        let ppm_factor: F = F::from(1e-6).expect("1e-6 representable");
         peaks
             .windows(2)
-            .all(|w| (w[1].0 - w[0].0) >= (w[1].0 * ppm * 1e-6))
+            .all(|w| (w[1].0 - w[0].0) > (w[1].0 * ppm * ppm_factor))
     } else {
-        peaks.windows(2).all(|w| (w[1].0 - w[0].0) >= ms2_da)
+        peaks.windows(2).all(|w| (w[1].0 - w[0].0) > ms2_da)
     }
 }
 
-fn centroid_spectrum(
-    mut peaks: Vec<(f64, f64)>,
-    ms2_da: f64,
-    ms2_ppm: Option<f64>,
-) -> Vec<(f64, f64)> {
-    peaks.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+fn centroid_spectrum<F: Float>(mut peaks: Vec<(F, F)>, ms2_da: F, ms2_ppm: Option<F>) -> Vec<(F, F)> {
+    peaks.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).expect("non-NaN mz"));
     while !check_centroid(&peaks, ms2_da, ms2_ppm) {
         peaks = centroid_once(peaks, ms2_da, ms2_ppm);
     }
     peaks
 }
 
-fn centroid_once(mut peaks: Vec<(f64, f64)>, ms2_da: f64, ms2_ppm: Option<f64>) -> Vec<(f64, f64)> {
-    let mut intensity_order: Vec<usize> = (0..peaks.len()).collect();
-    intensity_order.sort_unstable_by(|&a, &b| peaks[a].1.total_cmp(&peaks[b].1));
+/// In-place centroiding matching the C implementation in ms_entropy.
+///
+/// Peaks are modified in-place: merged peaks keep the weighted-average mz and
+/// summed intensity at the center index; all other peaks in the merge range
+/// have their intensity zeroed. After the pass, zeroed peaks are removed and
+/// the remaining peaks are sorted by mz.
+fn centroid_once<F: Float>(mut peaks: Vec<(F, F)>, ms2_da: F, ms2_ppm: Option<F>) -> Vec<(F, F)> {
+    let n = peaks.len();
+    let mut intensity_order: Vec<usize> = (0..n).collect();
+    // Sort descending by intensity (highest first), matching the C quicksort
+    // which sorts descending then iterates forward.
+    intensity_order.sort_unstable_by(|&a, &b| {
+        peaks[b]
+            .1
+            .partial_cmp(&peaks[a].1)
+            .expect("non-NaN intensity")
+    });
 
-    let mut merged: Vec<(f64, f64)> = Vec::with_capacity(peaks.len());
+    let ppm_factor: F = F::from(1e-6).expect("1e-6 representable");
 
-    for &idx in intensity_order.iter().rev() {
-        if peaks[idx].1 <= 0.0 {
+    for &idx in &intensity_order {
+        if peaks[idx].1 <= F::zero() {
             continue;
         }
 
         let mz = peaks[idx].0;
-        let (mz_delta_allowed_left, mz_delta_allowed_right) = if let Some(ppm) = ms2_ppm {
-            let left = mz * ppm * 1e-6;
-            let right = mz / (1.0 - ppm * 1e-6) - mz;
+        let (delta_left, delta_right) = if let Some(ppm) = ms2_ppm {
+            let left = mz * ppm * ppm_factor;
+            let right = mz * ppm / (F::from(1e6).expect("1e6 representable") - ppm);
             (left, right)
         } else {
             (ms2_da, ms2_da)
         };
 
         let mut left_idx = idx;
-        while left_idx > 0 && (mz - peaks[left_idx - 1].0) <= mz_delta_allowed_left {
+        while left_idx > 0 && (peaks[idx].0 - peaks[left_idx - 1].0) <= delta_left {
             left_idx -= 1;
         }
 
         let mut right_idx = idx + 1;
-        while right_idx < peaks.len() && (peaks[right_idx].0 - mz) <= mz_delta_allowed_right {
+        while right_idx < n && (peaks[right_idx].0 - peaks[idx].0) <= delta_right {
             right_idx += 1;
         }
 
-        let mut intensity_sum = 0.0;
-        let mut intensity_weighted_mz_sum = 0.0;
-        for (peak_mz, peak_intensity) in peaks[left_idx..right_idx].iter().copied() {
-            intensity_sum += peak_intensity;
-            intensity_weighted_mz_sum += peak_mz * peak_intensity;
+        let mut intensity_sum = F::zero();
+        let mut intensity_weighted_mz_sum = F::zero();
+        for i in left_idx..right_idx {
+            intensity_sum = intensity_sum + peaks[i].1;
+            intensity_weighted_mz_sum = intensity_weighted_mz_sum + peaks[i].1 * peaks[i].0;
+            peaks[i].1 = F::zero();
         }
 
-        if intensity_sum > 0.0 {
-            merged.push((intensity_weighted_mz_sum / intensity_sum, intensity_sum));
+        if intensity_sum > F::zero() {
+            peaks[idx].0 = intensity_weighted_mz_sum / intensity_sum;
+        } else {
+            peaks[idx].0 = F::zero();
         }
-
-        for peak in peaks[left_idx..right_idx].iter_mut() {
-            peak.1 = 0.0;
-        }
+        peaks[idx].1 = intensity_sum;
     }
 
-    merged.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-    merged
+    // Remove zeroed-out peaks and sort by mz (matching sort_spectrum_by_mz_and_zero_intensity).
+    peaks.retain(|&(_, intensity)| intensity > F::zero());
+    peaks.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).expect("non-NaN mz"));
+    peaks
 }
