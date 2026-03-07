@@ -59,7 +59,7 @@ fn modified_matching_peaks_supports_indices_above_u16() {
     let right = linear_spectrum(n, 1_000_000.0);
 
     let graph: RangedCSR2D<u32, u32, BiRange<u32>> = left
-        .modified_matching_peaks(&right, 0.0, 0.0)
+        .modified_matching_peaks(&right, 0.0, 1_000_000.0, 1_000_000.0)
         .expect("matching graph construction should succeed");
 
     assert_eq!(graph.number_of_rows() as usize, n);
@@ -90,7 +90,7 @@ fn modified_matching_peaks_preserves_full_shape_without_edges() {
     let right = shifted_linear_spectrum(93, 2_000_000.0, 10_000.0);
 
     let graph: RangedCSR2D<u32, u32, BiRange<u32>> = left
-        .modified_matching_peaks(&right, 0.0, 0.0)
+        .modified_matching_peaks(&right, 0.0, 1_000_000.0, 2_000_000.0)
         .expect("matching graph construction should succeed");
 
     assert_eq!(graph.number_of_rows() as usize, left.len());

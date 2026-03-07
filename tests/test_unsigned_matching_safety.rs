@@ -31,7 +31,7 @@ fn modified_matching_peaks_u32_does_not_panic_with_shift() {
     let left = one_peak_u32_spectrum(100, 10);
     let right = one_peak_u32_spectrum(100, u32::MAX);
 
-    let result = std::panic::catch_unwind(|| left.modified_matching_peaks(&right, 1, 1));
+    let result = std::panic::catch_unwind(|| left.modified_matching_peaks(&right, 1, 100, 100));
     assert!(
         result.is_ok(),
         "modified_matching_peaks panicked for unsigned mz"

@@ -127,7 +127,7 @@ fn modified_matching_peaks_rejects_negative_tolerance() {
     let right = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
 
     let error = left
-        .modified_matching_peaks(&right, -0.1, 0.0)
+        .modified_matching_peaks(&right, -0.1, 100.0, 100.0)
         .expect_err("negative tolerance should be rejected");
     assert_eq!(error, SimilarityComputationError::NegativeTolerance);
 }
@@ -163,7 +163,7 @@ fn modified_matching_peaks_rejects_non_finite_left_mz() {
     let right = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
 
     let error = left
-        .modified_matching_peaks(&right, 0.1, 0.0)
+        .modified_matching_peaks(&right, 0.1, 100.0, 100.0)
         .expect_err("non-finite left mz should be rejected");
     assert_eq!(error, SimilarityComputationError::NonFiniteValue("left_mz"));
 }
@@ -174,7 +174,7 @@ fn modified_matching_peaks_rejects_non_finite_right_mz() {
     let right = raw_spectrum_from_peaks(100.0, &[(f32::INFINITY, 1.0)]);
 
     let error = left
-        .modified_matching_peaks(&right, 0.1, 0.0)
+        .modified_matching_peaks(&right, 0.1, 100.0, 100.0)
         .expect_err("non-finite right mz should be rejected");
     assert_eq!(
         error,

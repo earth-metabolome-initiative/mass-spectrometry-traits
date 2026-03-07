@@ -239,8 +239,9 @@ pub trait Spectrum {
     /// Returns the matching peaks graph for modified cosine similarity.
     ///
     /// Two windows are used per left peak: a direct window (same as
-    /// `matching_peaks`) and, when `|mz_shift| > mz_tolerance`, a shifted
-    /// window offset by `mz_shift` (`precursor_mz_self - precursor_mz_other`).
+    /// `matching_peaks`) and, when the precursor difference exceeds
+    /// `mz_tolerance`, a shifted window that matches neutral losses
+    /// (`self_mz - self_precursor` vs `other_mz - other_precursor`).
     /// This captures both direct matches and neutral-loss-related
     /// correspondences while remaining identical to non-modified matching for
     /// precursor differences within tolerance.
@@ -249,12 +250,14 @@ pub trait Spectrum {
     ///
     /// * `other`: The other Spectrum.
     /// * `mz_tolerance`: The mass over charge tolerance.
-    /// * `mz_shift`: The precursor mass difference (`self - other`).
+    /// * `self_precursor`: The precursor m/z of `self`.
+    /// * `other_precursor`: The precursor m/z of `other`.
     fn modified_matching_peaks<S: Spectrum<Mz = Self::Mz>>(
         &self,
         other: &S,
         mz_tolerance: Self::Mz,
-        mz_shift: Self::Mz,
+        self_precursor: Self::Mz,
+        other_precursor: Self::Mz,
     ) -> Result<RangedCSR2D<u32, u32, BiRange<u32>>, SimilarityComputationError>
     where
         Self::Mz: ToPrimitive,
@@ -263,8 +266,9 @@ pub trait Spectrum {
         if mz_tolerance_f64 < 0.0 {
             return Err(SimilarityComputationError::NegativeTolerance);
         }
-        let mz_shift_f64 = to_f64_checked(mz_shift, "mz_shift")?;
-        let use_shifted_window = mz_shift_f64.abs() > mz_tolerance_f64;
+        let self_prec_f64 = to_f64_checked(self_precursor, "self_precursor_mz")?;
+        let other_prec_f64 = to_f64_checked(other_precursor, "other_precursor_mz")?;
+        let use_shifted_window = (self_prec_f64 - other_prec_f64).abs() > mz_tolerance_f64;
         let mut matching_peaks = allocate_matching_peaks::<BiRange<u32>>(self.len(), other.len())?;
         let mut lowest_direct = 0usize;
         let mut lowest_shifted = 0usize;
@@ -287,12 +291,17 @@ pub trait Spectrum {
             )?;
 
             if use_shifted_window {
+                // Compare neutral losses directly to avoid floating-point
+                // absorption when the shift magnitude dwarfs peak mz values.
+                // self_nl = self_mz - self_prec, other_nl = other_mz - other_prec.
+                // Passing -other_prec as the shift makes collect_window_matches
+                // compute other_mz + (-other_prec) = other_nl for each right peak.
                 lowest_shifted = collect_window_matches(
                     other,
                     lowest_shifted,
-                    mz_f64,
+                    mz_f64 - self_prec_f64,
                     mz_tolerance_f64,
-                    mz_shift_f64,
+                    -other_prec_f64,
                     "shifted_other_mz",
                     |col| row_matches.push(col),
                 )?;
