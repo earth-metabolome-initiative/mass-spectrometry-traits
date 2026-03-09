@@ -4,9 +4,10 @@
 //! self-similarity, symmetry, empty/edge cases, and modified search.
 
 use mass_spectrometry::prelude::{
-    CocaineSpectrum, FlashCosineIndex, GenericSpectrum, GlucoseSpectrum,
-    HydroxyCholesterolSpectrum, LinearCosine, PhenylalanineSpectrum, SalicinSpectrum,
-    ScalarSimilarity, Spectrum, SpectrumAlloc, SpectrumMut,
+    CocaineSpectrum, FlashCosineIndex, FlashCosineIndexError, FlashSearchResult, GenericSpectrum,
+    GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearCosine, PhenylalanineSpectrum,
+    SalicinSpectrum, ScalarSimilarity, SimilarityComputationError, SimilarityConfigError, Spectrum,
+    SpectrumAlloc, SpectrumMut,
 };
 
 fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
@@ -29,6 +30,68 @@ fn reference_spectra() -> Vec<(&'static str, GenericSpectrum)> {
         ("salicin", GenericSpectrum::salicin().unwrap()),
         ("phenylalanine", GenericSpectrum::phenylalanine().unwrap()),
     ]
+}
+
+#[derive(Clone)]
+struct RawSpectrum {
+    precursor_mz: f64,
+    peaks: Vec<(f64, f64)>,
+}
+
+impl Spectrum for RawSpectrum {
+    type SortedIntensitiesIter<'a>
+        = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+    where
+        Self: 'a;
+    type SortedMzIter<'a>
+        = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+    where
+        Self: 'a;
+    type SortedPeaksIter<'a>
+        = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+    where
+        Self: 'a;
+
+    fn len(&self) -> usize {
+        self.peaks.len()
+    }
+
+    fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+        self.peaks.iter().map(|peak| peak.1)
+    }
+
+    fn intensity_nth(&self, n: usize) -> f64 {
+        self.peaks[n].1
+    }
+
+    fn mz(&self) -> Self::SortedMzIter<'_> {
+        self.peaks.iter().map(|peak| peak.0)
+    }
+
+    fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+        self.peaks[index..].iter().map(|peak| peak.0)
+    }
+
+    fn mz_nth(&self, n: usize) -> f64 {
+        self.peaks[n].0
+    }
+
+    fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+        self.peaks.iter().copied()
+    }
+
+    fn peak_nth(&self, n: usize) -> (f64, f64) {
+        self.peaks[n]
+    }
+
+    fn precursor_mz(&self) -> f64 {
+        self.precursor_mz
+    }
+}
+
+fn sorted_results(mut results: Vec<FlashSearchResult>) -> Vec<FlashSearchResult> {
+    results.sort_by_key(|result| result.spectrum_id);
+    results
 }
 
 // ---------- self-similarity: flash score ~1.0 for each spectrum ----------
@@ -223,6 +286,152 @@ fn single_spectrum_library() {
     let results = index.search(&cocaine).expect("search should succeed");
     assert_eq!(results.len(), 1);
     assert!((1.0 - results[0].score).abs() < 1e-10);
+}
+
+#[test]
+fn accessors_and_search_with_state_match_stateless_results() {
+    let spectra = reference_spectra();
+    let index = FlashCosineIndex::new(0.5_f64, 2.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
+
+    assert_eq!(index.mz_power(), 0.5);
+    assert_eq!(index.intensity_power(), 2.0);
+    assert_eq!(index.tolerance(), 0.1);
+    assert_eq!(index.n_spectra(), spectra.len() as u32);
+
+    let mut state = index.new_search_state();
+    let query_a = &spectra[0].1;
+    let query_b = &spectra[1].1;
+    let empty = make_spectrum_f64(100.0, &[]);
+
+    let stateless_a = sorted_results(index.search(query_a).expect("search should succeed"));
+    let stateful_a = sorted_results(
+        index
+            .search_with_state(query_a, &mut state)
+            .expect("stateful search should succeed"),
+    );
+    assert_eq!(stateful_a, stateless_a);
+
+    let stateless_b = sorted_results(index.search(query_b).expect("search should succeed"));
+    let stateful_b = sorted_results(
+        index
+            .search_with_state(query_b, &mut state)
+            .expect("stateful search should succeed"),
+    );
+    assert_eq!(stateful_b, stateless_b);
+
+    let empty_results = index
+        .search_with_state(&empty, &mut state)
+        .expect("empty stateful search should succeed");
+    assert!(empty_results.is_empty());
+
+    let repeated_a = sorted_results(
+        index
+            .search_with_state(query_a, &mut state)
+            .expect("reused stateful search should succeed"),
+    );
+    assert_eq!(repeated_a, stateless_a);
+}
+
+#[test]
+fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
+    let library = [
+        make_spectrum_f64(300.0, &[(100.0, 10.0), (200.0, 5.0)]),
+        make_spectrum_f64(500.0, &[(50.0, 3.0)]),
+    ];
+    let query = make_spectrum_f64(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
+    let nonmatching_query = make_spectrum_f64(700.0, &[(400.0, 9.0)]);
+
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
+        .expect("index build should succeed");
+    let mut state = index.new_search_state();
+
+    let stateless = sorted_results(
+        index
+            .search_modified(&query)
+            .expect("modified search should succeed"),
+    );
+    let stateful = sorted_results(
+        index
+            .search_modified_with_state(&query, &mut state)
+            .expect("stateful modified search should succeed"),
+    );
+    assert_eq!(stateful, stateless);
+
+    let no_match = index
+        .search_modified_with_state(&nonmatching_query, &mut state)
+        .expect("nonmatching modified search should succeed");
+    assert!(no_match.is_empty());
+
+    let repeated = sorted_results(
+        index
+            .search_modified_with_state(&query, &mut state)
+            .expect("reused stateful modified search should succeed"),
+    );
+    assert_eq!(repeated, stateless);
+}
+
+#[test]
+fn constructor_and_query_validation_errors_are_exposed() {
+    let spectra = reference_spectra();
+
+    let nan_power = FlashCosineIndex::new(f64::NAN, 1.0, 0.1, spectra.iter().map(|(_, s)| s));
+    assert!(matches!(
+        nan_power,
+        Err(FlashCosineIndexError::Computation(
+            SimilarityComputationError::NonFiniteValue("mz_power")
+        ))
+    ));
+
+    let inf_intensity =
+        FlashCosineIndex::new(1.0, f64::INFINITY, 0.1, spectra.iter().map(|(_, s)| s));
+    assert!(matches!(
+        inf_intensity,
+        Err(FlashCosineIndexError::Computation(
+            SimilarityComputationError::NonFiniteValue("intensity_power")
+        ))
+    ));
+
+    let nan_tolerance = FlashCosineIndex::new(1.0, 1.0, f64::NAN, spectra.iter().map(|(_, s)| s));
+    assert!(matches!(
+        nan_tolerance,
+        Err(FlashCosineIndexError::Config(
+            SimilarityConfigError::NonFiniteParameter("mz_tolerance")
+        ))
+    ));
+
+    let bad_library = RawSpectrum {
+        precursor_mz: f64::NAN,
+        peaks: vec![(100.0, 1.0)],
+    };
+    let build_error = FlashCosineIndex::new(1.0, 1.0, 0.1, [&bad_library]);
+    assert!(matches!(
+        build_error,
+        Err(FlashCosineIndexError::Computation(
+            SimilarityComputationError::NonFiniteValue("precursor_mz")
+        ))
+    ));
+
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
+    let bad_query = RawSpectrum {
+        precursor_mz: f64::NAN,
+        peaks: vec![(100.0, 1.0)],
+    };
+    assert!(matches!(
+        index.search_modified(&bad_query),
+        Err(SimilarityComputationError::NonFiniteValue(
+            "query_precursor_mz"
+        ))
+    ));
+
+    let mut state = index.new_search_state();
+    assert!(matches!(
+        index.search_modified_with_state(&bad_query, &mut state),
+        Err(SimilarityComputationError::NonFiniteValue(
+            "query_precursor_mz"
+        ))
+    ));
 }
 
 // ---------- modified search ----------
