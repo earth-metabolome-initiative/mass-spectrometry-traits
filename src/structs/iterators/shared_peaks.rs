@@ -206,3 +206,223 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::{string::ToString, vec, vec::Vec};
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct RawSpectrum {
+        precursor_mz: f64,
+        peaks: Vec<(f64, f64)>,
+    }
+
+    impl Spectrum for RawSpectrum {
+        type SortedIntensitiesIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedMzIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedPeaksIter<'a>
+            = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+        where
+            Self: 'a;
+
+        fn len(&self) -> usize {
+            self.peaks.len()
+        }
+
+        fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+            self.peaks.iter().map(|peak| peak.1)
+        }
+
+        fn intensity_nth(&self, n: usize) -> f64 {
+            self.peaks[n].1
+        }
+
+        fn mz(&self) -> Self::SortedMzIter<'_> {
+            self.peaks.iter().map(|peak| peak.0)
+        }
+
+        fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+            self.peaks[index..].iter().map(|peak| peak.0)
+        }
+
+        fn mz_nth(&self, n: usize) -> f64 {
+            self.peaks[n].0
+        }
+
+        fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+            self.peaks.iter().copied()
+        }
+
+        fn peak_nth(&self, n: usize) -> (f64, f64) {
+            self.peaks[n]
+        }
+
+        fn precursor_mz(&self) -> f64 {
+            self.precursor_mz
+        }
+    }
+
+    #[test]
+    fn attribute_display_strings_are_stable() {
+        assert_eq!(GreedySharedPeaksAttribute::Left.to_string(), "left");
+        assert_eq!(GreedySharedPeaksAttribute::Right.to_string(), "right");
+        assert_eq!(
+            GreedySharedPeaksAttribute::Tolerance.to_string(),
+            "tolerance"
+        );
+        assert_eq!(
+            GreedySharedPeaksAttribute::RightShift.to_string(),
+            "right_shift"
+        );
+    }
+
+    #[test]
+    fn builder_reports_missing_required_attributes() {
+        let left = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(1.0, 1.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(1.0, 1.0)],
+        };
+
+        let missing_left = GreedySharedPeaksBuilder::<RawSpectrum, RawSpectrum>::default()
+            .right(&right)
+            .tolerance(0.1)
+            .build();
+        let missing_left = match missing_left {
+            Ok(_) => panic!("missing left must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            missing_left,
+            GreedySharedPeaksBuilderError::IncompleteBuild(GreedySharedPeaksAttribute::Left)
+        );
+
+        let missing_right = GreedySharedPeaksBuilder::<RawSpectrum, RawSpectrum>::default()
+            .left(&left)
+            .tolerance(0.1)
+            .build();
+        let missing_right = match missing_right {
+            Ok(_) => panic!("missing right must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            missing_right,
+            GreedySharedPeaksBuilderError::IncompleteBuild(GreedySharedPeaksAttribute::Right)
+        );
+
+        let missing_tolerance = GreedySharedPeaksBuilder::<RawSpectrum, RawSpectrum>::default()
+            .left(&left)
+            .right(&right)
+            .build();
+        let missing_tolerance = match missing_tolerance {
+            Ok(_) => panic!("missing tolerance must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            missing_tolerance,
+            GreedySharedPeaksBuilderError::IncompleteBuild(GreedySharedPeaksAttribute::Tolerance)
+        );
+        assert_eq!(
+            missing_tolerance.to_string(),
+            "Incomplete build: missing attribute `tolerance`"
+        );
+    }
+
+    #[test]
+    fn default_right_shift_of_zero_matches_direct_peaks() {
+        let left = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(1.0, 1.0), (2.0, 1.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(1.05, 2.0), (2.05, 2.0)],
+        };
+
+        let pairs = GreedySharedPeaksBuilder::default()
+            .left(&left)
+            .right(&right)
+            .tolerance(0.1)
+            .build()
+            .expect("builder should succeed")
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            pairs,
+            vec![((1.0, 1.0), (1.05, 2.0)), ((2.0, 1.0), (2.05, 2.0))]
+        );
+    }
+
+    #[test]
+    fn iterator_returns_none_after_advancing_past_non_matches() {
+        let left = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(5.0, 1.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(1.0, 1.0), (2.0, 1.0)],
+        };
+
+        let mut iter = GreedySharedPeaksBuilder::default()
+            .left(&left)
+            .right(&right)
+            .tolerance(0.1)
+            .build()
+            .expect("builder should succeed");
+
+        assert!(iter.next().is_none());
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn empty_input_iterators_return_none_immediately() {
+        let left = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(1.0, 1.0)],
+        };
+
+        let mut iter = GreedySharedPeaksBuilder::default()
+            .left(&left)
+            .right(&right)
+            .tolerance(0.1)
+            .build()
+            .expect("builder should succeed");
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn builder_rejects_negative_tolerance() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(1.0, 1.0)],
+        };
+
+        let error = GreedySharedPeaksBuilder::default()
+            .left(&spectrum)
+            .right(&spectrum)
+            .tolerance(-0.1)
+            .build();
+        let error = match error {
+            Ok(_) => panic!("negative tolerance should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error, GreedySharedPeaksBuilderError::NegativeTolerance);
+    }
+}

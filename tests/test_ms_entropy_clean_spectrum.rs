@@ -149,3 +149,61 @@ fn builder_rejects_invalid_centroid_configuration() {
         ))
     ));
 }
+
+#[test]
+fn builder_defaults_and_getters_round_trip() {
+    let cleaner = MsEntropyCleanSpectrum::builder()
+        .build()
+        .expect("valid default builder config");
+
+    assert_eq!(cleaner.min_mz(), None);
+    assert_eq!(cleaner.max_mz(), None);
+    assert_eq!(cleaner.noise_threshold(), Some(0.01));
+    assert_eq!(cleaner.min_ms2_difference_in_da(), 0.05);
+    assert_eq!(cleaner.min_ms2_difference_in_ppm(), None);
+    assert_eq!(cleaner.max_peak_num(), None);
+    assert!(cleaner.normalize_intensity());
+}
+
+#[test]
+fn cleaning_can_return_empty_after_filters_remove_everything() {
+    let cleaner = MsEntropyCleanSpectrum::builder()
+        .noise_threshold(Some(1.1))
+        .expect("finite noise threshold")
+        .build()
+        .expect("valid builder config");
+
+    let input = make_spectrum(500.0, &[(100.0, 1.0), (200.0, 0.5)]);
+    let out = cleaner.process(&input);
+
+    assert_eq!(out.len(), 0);
+}
+
+#[test]
+fn getter_round_trip_preserves_custom_configuration() {
+    let cleaner = MsEntropyCleanSpectrum::builder()
+        .min_mz(Some(50.0))
+        .expect("finite min_mz")
+        .max_mz(Some(500.0))
+        .expect("finite max_mz")
+        .noise_threshold(None)
+        .expect("noise threshold can be disabled")
+        .min_ms2_difference_in_da(0.2)
+        .expect("finite min_ms2_difference_in_da")
+        .min_ms2_difference_in_ppm(Some(15.0))
+        .expect("finite min_ms2_difference_in_ppm")
+        .max_peak_num(Some(5))
+        .expect("non-zero max_peak_num")
+        .normalize_intensity(false)
+        .expect("normalize_intensity is always valid")
+        .build()
+        .expect("valid builder config");
+
+    assert_eq!(cleaner.min_mz(), Some(50.0));
+    assert_eq!(cleaner.max_mz(), Some(500.0));
+    assert_eq!(cleaner.noise_threshold(), None);
+    assert_eq!(cleaner.min_ms2_difference_in_da(), 0.2);
+    assert_eq!(cleaner.min_ms2_difference_in_ppm(), Some(15.0));
+    assert_eq!(cleaner.max_peak_num(), Some(5));
+    assert!(!cleaner.normalize_intensity());
+}

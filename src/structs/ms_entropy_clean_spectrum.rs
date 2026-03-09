@@ -385,3 +385,79 @@ fn centroid_once(mut peaks: Vec<(f64, f64)>, ms2_da: f64, ms2_ppm: Option<f64>) 
     peaks.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).expect("non-NaN mz"));
     peaks
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use super::*;
+
+    fn default_cleaner() -> MsEntropyCleanSpectrum {
+        MsEntropyCleanSpectrum::builder()
+            .build()
+            .expect("default cleaner should build")
+    }
+
+    #[test]
+    fn clean_peaks_returns_early_after_mz_filtering() {
+        let cleaner = MsEntropyCleanSpectrum::builder()
+            .min_mz(Some(200.0))
+            .expect("min_mz should be valid")
+            .build()
+            .expect("cleaner should build");
+
+        let cleaned = cleaner.clean_peaks(vec![(50.0, 1.0), (75.0, 2.0)]);
+        assert!(cleaned.is_empty());
+    }
+
+    #[test]
+    fn builder_rejects_zero_max_peak_num() {
+        let error = match MsEntropyCleanSpectrum::builder().max_peak_num(Some(0)) {
+            Ok(_) => panic!("zero max_peak_num should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            SimilarityConfigError::InvalidParameter("max_peak_num")
+        );
+    }
+
+    #[test]
+    fn check_centroid_uses_ppm_thresholds() {
+        assert!(!check_centroid(
+            &[(100.0, 1.0), (100.00005, 1.0)],
+            0.0,
+            Some(1.0)
+        ));
+        assert!(check_centroid(
+            &[(100.0, 1.0), (100.0003, 1.0)],
+            0.0,
+            Some(1.0)
+        ));
+    }
+
+    #[test]
+    fn centroid_once_drops_zero_sum_clusters() {
+        let peaks = centroid_once(vec![(100.0, 0.0), (100.05, 0.0)], 0.1, None);
+        assert!(peaks.is_empty());
+    }
+
+    #[test]
+    fn centroid_once_clears_clusters_whose_total_intensity_cancels_out() {
+        let peaks = centroid_once(vec![(100.0, 1.0), (100.05, -1.5), (100.08, 0.5)], 0.1, None);
+        assert!(peaks.is_empty());
+    }
+
+    #[test]
+    fn clean_peaks_keeps_non_positive_bounds_inactive() {
+        let cleaner = MsEntropyCleanSpectrum::builder()
+            .min_mz(Some(0.0))
+            .expect("zero min_mz should be accepted")
+            .max_mz(Some(0.0))
+            .expect("zero max_mz should be accepted")
+            .build()
+            .expect("cleaner should build");
+        let cleaned = cleaner.clean_peaks(vec![(50.0, 1.0)]);
+        assert_eq!(cleaned, default_cleaner().clean_peaks(vec![(50.0, 1.0)]));
+    }
+}

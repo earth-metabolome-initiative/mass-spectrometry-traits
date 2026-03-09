@@ -433,4 +433,113 @@ mod tests {
             SimilarityComputationError::NonFiniteValue("shifted_other_mz")
         );
     }
+
+    #[test]
+    fn spectrum_is_empty_reflects_len() {
+        let empty = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![],
+        };
+        let nonempty = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(1.0, 1.0)],
+        };
+
+        assert!(empty.is_empty());
+        assert!(!nonempty.is_empty());
+    }
+
+    #[test]
+    fn matching_peaks_collects_multiple_columns_in_single_row() {
+        let left = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(1.0, 1.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(0.95, 1.0), (1.05, 1.0), (1.3, 1.0)],
+        };
+
+        let graph = left
+            .matching_peaks(&right, 0.1)
+            .expect("matching graph should build");
+        let cols: Vec<u32> = graph.sparse_row(0).collect();
+
+        assert_eq!(cols, alloc::vec![0, 1]);
+        assert_eq!(graph.number_of_defined_values(), 2);
+    }
+
+    #[test]
+    fn modified_matching_peaks_uses_shifted_window_only_when_needed() {
+        let left = RawSpectrum {
+            precursor_mz: 210.0,
+            peaks: alloc::vec![(100.0, 1.0), (110.5, 1.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 200.0,
+            peaks: alloc::vec![(100.0, 1.0)],
+        };
+
+        let shifted = left
+            .modified_matching_peaks(&right, 1.0, 210.0, 200.0)
+            .expect("shifted matching graph should build");
+        assert_eq!(shifted.number_of_defined_values(), 2);
+
+        let unshifted = left
+            .modified_matching_peaks(&right, 10.0, 210.0, 200.0)
+            .expect("within-tolerance precursor difference should disable shift");
+        assert_eq!(unshifted.number_of_defined_values(), 1);
+    }
+
+    #[test]
+    fn collect_window_matches_can_advance_past_below_values_without_matching() {
+        let other = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(0.8, 1.0)],
+        };
+        let mut matched_cols = Vec::new();
+        let new_lowest = collect_window_matches(&other, 0, 1.0, 0.05, 0.0, "right_mz", |col| {
+            matched_cols.push(col)
+        })
+        .expect("window collection should succeed");
+
+        assert_eq!(new_lowest, 1);
+        assert!(matched_cols.is_empty());
+    }
+
+    #[test]
+    fn modified_matching_peaks_rejects_non_finite_tolerance() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(1.0, 1.0)],
+        };
+
+        let error = spectrum
+            .modified_matching_peaks(&spectrum, f64::NAN, 100.0, 100.0)
+            .expect_err("non-finite tolerance should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("mz_tolerance")
+        );
+    }
+
+    #[test]
+    fn modified_matching_peaks_propagates_shifted_non_finite_values() {
+        let left = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(1.0, 1.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: -f64::MAX,
+            peaks: alloc::vec![(f64::MAX, 1.0)],
+        };
+
+        let error = left
+            .modified_matching_peaks(&right, 0.1, 100.0, -f64::MAX)
+            .expect_err("non-finite shifted values should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("shifted_other_mz")
+        );
+    }
 }

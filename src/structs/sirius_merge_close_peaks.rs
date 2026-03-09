@@ -129,3 +129,14 @@ impl SpectralProcessor for SiriusMergeClosePeaks {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constructor_round_trips_tolerance() {
+        let processor = SiriusMergeClosePeaks::new(0.25).expect("tolerance should be valid");
+        assert_eq!(processor.mz_tolerance(), 0.25);
+    }
+}
