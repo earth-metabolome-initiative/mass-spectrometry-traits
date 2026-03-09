@@ -180,3 +180,109 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
         Ok(spectrum)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::structs::GenericSpectrum;
+
+    fn base_config() -> RandomSpectrumConfig {
+        RandomSpectrumConfig {
+            precursor_mz: 250.0,
+            n_peaks: 4,
+            mz_min: 100.0,
+            mz_max: 130.0,
+            min_peak_gap: 1.0,
+            intensity_min: 1.0,
+            intensity_max: 3.0,
+        }
+    }
+
+    #[test]
+    fn nonzero_seed_rewrites_zero_seed() {
+        assert_ne!(nonzero_seed(0), 0);
+        assert_eq!(nonzero_seed(7), 7);
+    }
+
+    #[test]
+    fn random_rejects_invalid_config_ranges() {
+        let error = GenericSpectrum::random(
+            RandomSpectrumConfig {
+                mz_max: 99.0,
+                ..base_config()
+            },
+            1,
+        )
+        .expect_err("mz range should be validated");
+        assert!(matches!(
+            error,
+            RandomSpectrumGenerationError::InvalidConfig("mz_max must be >= mz_min")
+        ));
+
+        let error = GenericSpectrum::random(
+            RandomSpectrumConfig {
+                intensity_max: 0.5,
+                ..base_config()
+            },
+            1,
+        )
+        .expect_err("intensity range should be validated");
+        assert!(matches!(
+            error,
+            RandomSpectrumGenerationError::InvalidConfig("intensity_max must be >= intensity_min")
+        ));
+
+        let error = GenericSpectrum::random(
+            RandomSpectrumConfig {
+                min_peak_gap: 0.0,
+                ..base_config()
+            },
+            1,
+        )
+        .expect_err("peak gap should be validated");
+        assert!(matches!(
+            error,
+            RandomSpectrumGenerationError::InvalidConfig("min_peak_gap must be > 0")
+        ));
+
+        let error = GenericSpectrum::random(
+            RandomSpectrumConfig {
+                mz_max: 102.0,
+                min_peak_gap: 2.0,
+                ..base_config()
+            },
+            1,
+        )
+        .expect_err("required span should be validated");
+        assert!(matches!(
+            error,
+            RandomSpectrumGenerationError::InvalidConfig(
+                "n_peaks and min_peak_gap exceed [mz_min, mz_max] span"
+            )
+        ));
+    }
+
+    #[test]
+    fn random_zero_peaks_and_constant_intensity_paths_work() {
+        let empty = GenericSpectrum::random(
+            RandomSpectrumConfig {
+                n_peaks: 0,
+                ..base_config()
+            },
+            0,
+        )
+        .expect("zero-peak spectrum should build");
+        assert!(empty.is_empty());
+
+        let constant = GenericSpectrum::random(
+            RandomSpectrumConfig {
+                intensity_max: 2.5,
+                intensity_min: 2.5,
+                ..base_config()
+            },
+            0,
+        )
+        .expect("constant-intensity spectrum should build");
+        assert!(constant.intensities().all(|intensity| intensity == 2.5));
+    }
+}
