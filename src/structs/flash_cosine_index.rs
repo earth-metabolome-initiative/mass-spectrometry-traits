@@ -7,7 +7,8 @@
 use alloc::vec::Vec;
 
 use super::cosine_common::{
-    ensure_finite, validate_non_negative_tolerance, validate_well_separated,
+    ensure_finite, normalized_peak_products, validate_non_negative_tolerance,
+    validate_well_separated,
 };
 use super::flash_common::{FlashIndex, FlashKernel, FlashSearchResult, SearchState};
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
@@ -141,16 +142,9 @@ impl FlashCosineIndex {
         let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
 
         for spectrum in spectra {
-            let mut mz_vals = Vec::with_capacity(spectrum.len());
-            let mut data_vals = Vec::with_capacity(spectrum.len());
-
-            for (mz, intensity) in spectrum.peaks() {
-                let product = mz.powf(mz_power) * intensity.powf(intensity_power);
-                ensure_finite(product, "peak_product")
-                    .map_err(FlashCosineIndexError::Computation)?;
-                mz_vals.push(mz);
-                data_vals.push(product);
-            }
+            let mz_vals: Vec<f64> = spectrum.mz().collect();
+            let data_vals = normalized_peak_products(spectrum, mz_power, intensity_power)
+                .map_err(FlashCosineIndexError::Computation)?;
 
             validate_well_separated(&mz_vals, tolerance, "library spectrum")
                 .map_err(FlashCosineIndexError::Computation)?;
@@ -269,15 +263,8 @@ impl FlashCosineIndex {
     where
         S: Spectrum,
     {
-        let mut mz_vals = Vec::with_capacity(query.len());
-        let mut data_vals = Vec::with_capacity(query.len());
-
-        for (mz, intensity) in query.peaks() {
-            let product = mz.powf(self.mz_power) * intensity.powf(self.intensity_power);
-            ensure_finite(product, "peak_product")?;
-            mz_vals.push(mz);
-            data_vals.push(product);
-        }
+        let mz_vals: Vec<f64> = query.mz().collect();
+        let data_vals = normalized_peak_products(query, self.mz_power, self.intensity_power)?;
 
         validate_well_separated(&mz_vals, self.inner.tolerance, "query spectrum")?;
 

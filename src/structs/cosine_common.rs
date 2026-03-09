@@ -176,22 +176,69 @@ fn ensure_finite_for_config(value: f64, name: &'static str) -> Result<f64, Simil
     Ok(value)
 }
 
+/// Compute `mz^mz_power * intensity^intensity_power` for each peak,
+/// normalized so the maximum product is 1.0. Uses two-phase normalization
+/// (components first, then products) to prevent f64 underflow when the raw
+/// product would be smaller than the minimum subnormal (~5e-324).
+pub(crate) fn normalized_peak_products<S: Spectrum>(
+    spectrum: &S,
+    mz_power: f64,
+    intensity_power: f64,
+) -> Result<Vec<f64>, SimilarityComputationError> {
+    let n = spectrum.len();
+    let mut mz_comps = Vec::with_capacity(n);
+    let mut int_comps = Vec::with_capacity(n);
+
+    for (mz, intensity) in spectrum.peaks() {
+        let mc = mz.powf(mz_power);
+        let ic = intensity.powf(intensity_power);
+        ensure_finite(mc, "peak_product")?;
+        ensure_finite(ic, "peak_product")?;
+        mz_comps.push(mc);
+        int_comps.push(ic);
+    }
+
+    // Normalize each component by its max so both are in [0, 1].
+    let mz_max = mz_comps.iter().copied().fold(0.0_f64, f64::max);
+    let int_max = int_comps.iter().copied().fold(0.0_f64, f64::max);
+
+    if mz_max > 0.0 {
+        for v in &mut mz_comps {
+            *v /= mz_max;
+        }
+    }
+    if int_max > 0.0 {
+        for v in &mut int_comps {
+            *v /= int_max;
+        }
+    }
+
+    // Products of values in [0, 1] cannot underflow.
+    let mut products: Vec<f64> = mz_comps
+        .into_iter()
+        .zip(int_comps)
+        .map(|(m, i)| m * i)
+        .collect();
+
+    // Re-normalize so the maximum product is exactly 1.0.
+    let prod_max = products.iter().copied().fold(0.0_f64, f64::max);
+    if prod_max > 0.0 {
+        for p in &mut products {
+            *p /= prod_max;
+        }
+    }
+
+    Ok(products)
+}
+
 pub(crate) fn prepare_peak_products<S: Spectrum>(
     spectrum: &S,
     mz_power: f64,
     intensity_power: f64,
 ) -> Result<PreparedPeaks, SimilarityComputationError> {
-    let mut products = Vec::with_capacity(spectrum.len());
-    let mut squared_sum = 0.0_f64;
+    let products = normalized_peak_products(spectrum, mz_power, intensity_power)?;
 
-    for (mz, intensity) in spectrum.peaks() {
-        let score = mz.powf(mz_power) * intensity.powf(intensity_power);
-        ensure_finite(score, "peak_product")?;
-        products.push(score);
-        squared_sum += score * score;
-    }
-
-    let norm = squared_sum.sqrt();
+    let norm: f64 = products.iter().map(|&p| p * p).sum::<f64>().sqrt();
     ensure_finite(norm, "peak_norm")?;
 
     let max = products.iter().copied().fold(0.0_f64, f64::max);

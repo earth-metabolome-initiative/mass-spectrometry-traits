@@ -299,6 +299,12 @@ impl<K: FlashKernel> FlashIndex<K> {
                 if self.product_mz[idx] > hi {
                     break;
                 }
+                // Guard against FP inconsistency between window arithmetic
+                // (qmz ± tol) and the canonical |diff| ≤ tol check used by
+                // the linear oracle.
+                if (self.product_mz[idx] - qmz).abs() > self.tolerance {
+                    continue;
+                }
                 let score = K::pair_score(query_data[q_idx], self.product_data[idx]);
                 acc.accumulate(self.product_spec_id[idx], score);
             }
@@ -384,6 +390,10 @@ impl<K: FlashKernel> FlashIndex<K> {
                 if self.product_mz[idx] > hi {
                     break;
                 }
+                if (self.product_mz[idx] - qmz).abs() > self.tolerance {
+                    idx += 1;
+                    continue;
+                }
                 let score = K::pair_score(query_data[q_idx], self.product_data[idx]);
                 acc.accumulate(self.product_spec_id[idx], score);
                 matched_products.set(idx, true);
@@ -403,6 +413,9 @@ impl<K: FlashKernel> FlashIndex<K> {
             for idx in start..self.nl_value.len() {
                 if self.nl_value[idx] > hi {
                     break;
+                }
+                if (self.nl_value[idx] - query_nl).abs() > self.tolerance {
+                    continue;
                 }
                 let product_idx = self.nl_to_product[idx] as usize;
                 let nl_score = K::pair_score(query_data[q_idx], self.nl_data[idx]);

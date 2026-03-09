@@ -135,6 +135,9 @@ impl MsEntropyCleanSpectrum {
                 for (_, intensity) in &mut peaks {
                     *intensity /= spectrum_sum;
                 }
+                // Division can produce zero/subnormal for tiny intensities
+                // relative to a large sum.  Drop any non-positive results.
+                peaks.retain(|&(_, intensity)| intensity > 0.0);
             } else {
                 peaks.clear();
             }
@@ -353,6 +356,15 @@ fn centroid_once(mut peaks: Vec<(f64, f64)>, ms2_da: f64, ms2_ppm: Option<f64>) 
             right_idx += 1;
         }
 
+        // Skip the weighted-average recomputation when no live neighbors
+        // exist. Running `(int * mz) / int` on a lone peak with subnormal
+        // intensity can lose enough precision to push mz below the valid
+        // minimum.
+        let has_live_neighbor = (left_idx..right_idx).any(|j| j != idx && peaks[j].1 > 0.0);
+        if !has_live_neighbor {
+            continue;
+        }
+
         let mut intensity_sum = 0.0_f64;
         let mut intensity_weighted_mz_sum = 0.0_f64;
         for peak in peaks.iter_mut().take(right_idx).skip(left_idx) {
@@ -369,7 +381,7 @@ fn centroid_once(mut peaks: Vec<(f64, f64)>, ms2_da: f64, ms2_ppm: Option<f64>) 
         peaks[idx].1 = intensity_sum;
     }
 
-    peaks.retain(|&(_, intensity)| intensity > 0.0);
+    peaks.retain(|&(mz, intensity)| mz.is_finite() && mz > 0.0 && intensity > 0.0);
     peaks.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).expect("non-NaN mz"));
     peaks
 }
