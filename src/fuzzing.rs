@@ -11,7 +11,8 @@ use crate::prelude::ScalarSimilarity;
 use crate::structs::{
     FlashCosineIndex, FlashEntropyIndex, FlashSearchResult, GenericSpectrum, HungarianCosine,
     LinearCosine, LinearEntropy, ModifiedHungarianCosine, ModifiedLinearCosine,
-    ModifiedLinearEntropy, SimilarityComputationError, SiriusMergeClosePeaks,
+    ModifiedLinearEntropy, MsEntropyCleanSpectrum, SimilarityComputationError,
+    SiriusMergeClosePeaks,
 };
 use crate::traits::{SpectralProcessor, Spectrum};
 
@@ -58,6 +59,13 @@ pub enum FlashCosineHarnessOutcome {
 /// Result returned by [`run_flash_entropy_case`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlashEntropyHarnessOutcome {
+    /// All configured checks completed.
+    Checked,
+}
+
+/// Result returned by [`run_ms_entropy_clean_spectrum_case`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MsEntropyCleanSpectrumHarnessOutcome {
     /// All configured checks completed.
     Checked,
 }
@@ -501,6 +509,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
 
     let uw_oracle =
         LinearEntropy::unweighted(FIXED_TOLERANCE).expect("fixed unweighted config is valid");
+
     assert_flash_entropy_equivalence(
         &uw_direct,
         &uw_oracle,
@@ -636,6 +645,137 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     FlashEntropyHarnessOutcome::Checked
 }
 
+/// Execute the ms-entropy clean-spectrum fuzz harness for an arbitrary byte
+/// slice.
+///
+/// The function intentionally panics when a postcondition invariant is
+/// violated.  This behavior is required for fuzzers and regression tests to
+/// surface bugs.
+pub fn run_ms_entropy_clean_spectrum_case(bytes: &[u8]) -> MsEntropyCleanSpectrumHarnessOutcome {
+    let mut unstructured = Unstructured::new(bytes);
+    let case = match CleanSpectrumFuzzCase::arbitrary(&mut unstructured) {
+        Ok(case) => case,
+        Err(_) => return MsEntropyCleanSpectrumHarnessOutcome::Checked,
+    };
+
+    let builder = MsEntropyCleanSpectrum::builder();
+
+    let Ok(builder) = builder.min_ms2_difference_in_da(case.min_ms2_difference_in_da) else {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    };
+    let Ok(builder) = builder.noise_threshold(case.noise_threshold) else {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    };
+    let Ok(builder) = builder.max_peak_num(case.max_peak_num) else {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    };
+    let Ok(builder) = builder.normalize_intensity(case.normalize_intensity) else {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    };
+    let Ok(builder) = builder.min_mz(case.min_mz) else {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    };
+    let Ok(builder) = builder.max_mz(case.max_mz) else {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    };
+    let Ok(builder) = builder.min_ms2_difference_in_ppm(case.min_ms2_difference_in_ppm) else {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    };
+
+    let Ok(cleaner) = builder.build() else {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    };
+
+    let input_len = case.spectrum.len();
+    let output = cleaner.process(&case.spectrum);
+    let output_len = output.len();
+
+    // Postcondition: output length <= input length.
+    assert!(
+        output_len <= input_len,
+        "clean_spectrum: output len {output_len} > input len {input_len}"
+    );
+
+    // Postcondition: max_peak_num respected.
+    if let Some(max_peak_num) = cleaner.max_peak_num() {
+        assert!(
+            output_len <= max_peak_num,
+            "clean_spectrum: output len {output_len} > max_peak_num {max_peak_num}"
+        );
+    }
+
+    if output_len == 0 {
+        return MsEntropyCleanSpectrumHarnessOutcome::Checked;
+    }
+
+    let peaks: Vec<(f64, f64)> = output.peaks().collect();
+
+    // Postcondition: all mz values positive and finite.
+    for (i, &(mz, _)) in peaks.iter().enumerate() {
+        assert!(
+            mz.is_finite() && mz > 0.0,
+            "clean_spectrum: peak {i} has invalid mz {mz}"
+        );
+    }
+
+    // Postcondition: all intensities positive and finite.
+    for (i, &(_, intensity)) in peaks.iter().enumerate() {
+        assert!(
+            intensity.is_finite() && intensity > 0.0,
+            "clean_spectrum: peak {i} has invalid intensity {intensity}"
+        );
+    }
+
+    // Postcondition: peaks sorted by mz (strictly ascending).
+    for window in peaks.windows(2) {
+        assert!(
+            window[0].0 < window[1].0,
+            "clean_spectrum: mz not strictly ascending: {} >= {}",
+            window[0].0,
+            window[1].0,
+        );
+    }
+
+    // Postcondition: adjacent peaks respect the centroiding distance.
+    // When ppm mode is active, use ppm-derived distance; otherwise use Da.
+    if let Some(ppm) = cleaner.min_ms2_difference_in_ppm() {
+        if ppm > 0.0 {
+            for window in peaks.windows(2) {
+                let ppm_delta = window[1].0 * ppm * 1e-6;
+                assert!(
+                    (window[1].0 - window[0].0) > ppm_delta,
+                    "clean_spectrum: adjacent peaks {:.6} and {:.6} closer than ppm threshold {ppm_delta:.6e}",
+                    window[0].0,
+                    window[1].0,
+                );
+            }
+        }
+    } else {
+        let da = cleaner.min_ms2_difference_in_da();
+        if da > 0.0 {
+            for window in peaks.windows(2) {
+                assert!(
+                    (window[1].0 - window[0].0) > da,
+                    "clean_spectrum: adjacent peaks {:.6} and {:.6} closer than Da threshold {da:.6e}",
+                    window[0].0,
+                    window[1].0,
+                );
+            }
+        }
+    }
+
+    // Postcondition: if normalize_intensity is enabled, intensities sum ≈ 1.0.
+    if cleaner.normalize_intensity() {
+        let sum: f64 = peaks.iter().map(|&(_, intensity)| intensity).sum();
+        assert!(
+            (sum - 1.0).abs() <= 1.0e-6,
+            "clean_spectrum: normalized intensities sum to {sum}, expected ~1.0"
+        );
+    }
+
+    MsEntropyCleanSpectrumHarnessOutcome::Checked
+}
+
 #[derive(Debug)]
 struct CosineFuzzCase {
     mz_power: f64,
@@ -728,6 +868,33 @@ impl<'a> Arbitrary<'a> for FlashEntropyFuzzCase {
                 GenericSpectrum::arbitrary(u)?,
             ],
             query: GenericSpectrum::arbitrary(u)?,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct CleanSpectrumFuzzCase {
+    min_ms2_difference_in_da: f64,
+    min_ms2_difference_in_ppm: Option<f64>,
+    noise_threshold: Option<f64>,
+    max_peak_num: Option<usize>,
+    normalize_intensity: bool,
+    min_mz: Option<f64>,
+    max_mz: Option<f64>,
+    spectrum: GenericSpectrum,
+}
+
+impl<'a> Arbitrary<'a> for CleanSpectrumFuzzCase {
+    fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            min_ms2_difference_in_da: f64::arbitrary(u)?,
+            min_ms2_difference_in_ppm: Option::<f64>::arbitrary(u)?,
+            noise_threshold: Option::<f64>::arbitrary(u)?,
+            max_peak_num: Option::<usize>::arbitrary(u)?,
+            normalize_intensity: bool::arbitrary(u)?,
+            min_mz: Option::<f64>::arbitrary(u)?,
+            max_mz: Option::<f64>::arbitrary(u)?,
+            spectrum: GenericSpectrum::arbitrary(u)?,
         })
     }
 }
@@ -855,9 +1022,11 @@ fn assert_modified_self_similarity(
     let Ok((score, matches)) = scorer.similarity(spectrum, spectrum) else {
         return;
     };
-    if matches == 0 {
-        return;
-    }
+    assert!(
+        matches > 0,
+        "{label}: non-empty spectrum ({} peaks) has 0 self-matches",
+        spectrum.len()
+    );
 
     assert_score_in_range(score, label);
     assert!(
@@ -884,9 +1053,11 @@ fn assert_self_similarity(
     let Ok((score, matches)) = scorer.similarity(spectrum, spectrum) else {
         return;
     };
-    if matches == 0 {
-        return;
-    }
+    assert!(
+        matches > 0,
+        "{label}: non-empty spectrum ({} peaks) has 0 self-matches",
+        spectrum.len()
+    );
 
     assert_score_in_range(score, label);
     assert!(
@@ -913,9 +1084,11 @@ fn assert_linear_entropy_self_similarity(
     let Ok((score, matches)) = scorer.similarity(spectrum, spectrum) else {
         return;
     };
-    if matches == 0 {
-        return;
-    }
+    assert!(
+        matches > 0,
+        "{label}: non-empty spectrum ({} peaks) has 0 self-matches",
+        spectrum.len()
+    );
 
     assert_score_in_range(score, label);
     assert!(
@@ -976,9 +1149,11 @@ fn assert_modified_linear_entropy_self_similarity(
     let Ok((score, matches)) = scorer.similarity(spectrum, spectrum) else {
         return;
     };
-    if matches == 0 {
-        return;
-    }
+    assert!(
+        matches > 0,
+        "{label}: non-empty spectrum ({} peaks) has 0 self-matches",
+        spectrum.len()
+    );
 
     assert_score_in_range(score, label);
     assert!(

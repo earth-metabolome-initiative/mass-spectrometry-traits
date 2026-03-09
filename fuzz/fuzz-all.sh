@@ -9,6 +9,7 @@ TARGETS=(
   modified_linear_entropy
   flash_cosine
   flash_entropy
+  ms_entropy_clean_spectrum
 )
 
 # Kill existing session if any, so we start fresh

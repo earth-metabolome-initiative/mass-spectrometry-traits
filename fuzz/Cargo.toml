@@ -52,3 +52,10 @@ path = "fuzz_targets/flash_entropy.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ms_entropy_clean_spectrum"
+path = "fuzz_targets/ms_entropy_clean_spectrum.rs"
+test = false
+doc = false
+bench = false
