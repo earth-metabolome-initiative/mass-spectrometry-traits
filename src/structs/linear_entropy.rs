@@ -59,3 +59,84 @@ where
         finalize_entropy_score(raw_score, n_matches)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::{vec, vec::Vec};
+
+    use geometric_traits::prelude::ScalarSimilarity;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct RawSpectrum {
+        precursor_mz: f64,
+        peaks: Vec<(f64, f64)>,
+    }
+
+    impl Spectrum for RawSpectrum {
+        type SortedIntensitiesIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedMzIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedPeaksIter<'a>
+            = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+        where
+            Self: 'a;
+
+        fn len(&self) -> usize {
+            self.peaks.len()
+        }
+
+        fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+            self.peaks.iter().map(|peak| peak.1)
+        }
+
+        fn intensity_nth(&self, n: usize) -> f64 {
+            self.peaks[n].1
+        }
+
+        fn mz(&self) -> Self::SortedMzIter<'_> {
+            self.peaks.iter().map(|peak| peak.0)
+        }
+
+        fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+            self.peaks[index..].iter().map(|peak| peak.0)
+        }
+
+        fn mz_nth(&self, n: usize) -> f64 {
+            self.peaks[n].0
+        }
+
+        fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+            self.peaks.iter().copied()
+        }
+
+        fn peak_nth(&self, n: usize) -> (f64, f64) {
+            self.peaks[n]
+        }
+
+        fn precursor_mz(&self) -> f64 {
+            self.precursor_mz
+        }
+    }
+
+    #[test]
+    fn zero_product_inputs_return_zero_similarity() {
+        let scorer = LinearEntropy::new(0.0, 1.0, 0.1, false).expect("config should build");
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(50.0, 0.0)],
+        };
+        assert_eq!(
+            scorer
+                .similarity(&spectrum, &spectrum)
+                .expect("zero-product similarity should succeed"),
+            (0.0, 0)
+        );
+    }
+}

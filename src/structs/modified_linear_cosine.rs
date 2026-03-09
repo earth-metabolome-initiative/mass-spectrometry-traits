@@ -106,3 +106,107 @@ where
     S2: Spectrum,
 {
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::{vec, vec::Vec};
+
+    use geometric_traits::prelude::ScalarSimilarity;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct RawSpectrum {
+        precursor_mz: f64,
+        peaks: Vec<(f64, f64)>,
+    }
+
+    impl Spectrum for RawSpectrum {
+        type SortedIntensitiesIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedMzIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedPeaksIter<'a>
+            = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+        where
+            Self: 'a;
+
+        fn len(&self) -> usize {
+            self.peaks.len()
+        }
+
+        fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+            self.peaks.iter().map(|peak| peak.1)
+        }
+
+        fn intensity_nth(&self, n: usize) -> f64 {
+            self.peaks[n].1
+        }
+
+        fn mz(&self) -> Self::SortedMzIter<'_> {
+            self.peaks.iter().map(|peak| peak.0)
+        }
+
+        fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+            self.peaks[index..].iter().map(|peak| peak.0)
+        }
+
+        fn mz_nth(&self, n: usize) -> f64 {
+            self.peaks[n].0
+        }
+
+        fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+            self.peaks.iter().copied()
+        }
+
+        fn peak_nth(&self, n: usize) -> (f64, f64) {
+            self.peaks[n]
+        }
+
+        fn precursor_mz(&self) -> f64 {
+            self.precursor_mz
+        }
+    }
+
+    #[test]
+    fn accessors_and_zero_product_short_circuit_work() {
+        let scorer = ModifiedLinearCosine::new(0.5, 2.0, 0.1).expect("config should build");
+        assert_eq!(scorer.mz_power(), 0.5);
+        assert_eq!(scorer.intensity_power(), 2.0);
+        assert_eq!(scorer.mz_tolerance(), 0.1);
+
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(50.0, 0.0)],
+        };
+        assert_eq!(
+            scorer
+                .similarity(&spectrum, &spectrum)
+                .expect("zero-product similarity should succeed"),
+            (0.0, 0)
+        );
+    }
+
+    #[test]
+    fn zero_product_candidates_are_ignored_inside_selected_matches() {
+        let scorer = ModifiedLinearCosine::new(0.0, 1.0, 0.1).expect("config should build");
+        let left = RawSpectrum {
+            precursor_mz: 200.0,
+            peaks: vec![(100.0, 0.0), (200.0, 2.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 200.0,
+            peaks: vec![(100.0, 3.0), (200.0, 4.0)],
+        };
+
+        let (score, matches) = scorer
+            .similarity(&left, &right)
+            .expect("similarity should succeed");
+        assert_eq!(matches, 1);
+        assert!(score.is_finite() && score > 0.0);
+    }
+}

@@ -263,3 +263,155 @@ pub(crate) fn entropy_score_pairs(
     }
     Ok((score, n_matches))
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::{vec, vec::Vec};
+
+    use super::*;
+    use crate::structs::{LinearEntropy, ModifiedLinearEntropy};
+
+    #[derive(Clone)]
+    struct RawSpectrum {
+        precursor_mz: f64,
+        peaks: Vec<(f64, f64)>,
+    }
+
+    impl Spectrum for RawSpectrum {
+        type SortedIntensitiesIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedMzIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedPeaksIter<'a>
+            = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+        where
+            Self: 'a;
+
+        fn len(&self) -> usize {
+            self.peaks.len()
+        }
+
+        fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+            self.peaks.iter().map(|peak| peak.1)
+        }
+
+        fn intensity_nth(&self, n: usize) -> f64 {
+            self.peaks[n].1
+        }
+
+        fn mz(&self) -> Self::SortedMzIter<'_> {
+            self.peaks.iter().map(|peak| peak.0)
+        }
+
+        fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+            self.peaks[index..].iter().map(|peak| peak.0)
+        }
+
+        fn mz_nth(&self, n: usize) -> f64 {
+            self.peaks[n].0
+        }
+
+        fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+            self.peaks.iter().copied()
+        }
+
+        fn peak_nth(&self, n: usize) -> (f64, f64) {
+            self.peaks[n]
+        }
+
+        fn precursor_mz(&self) -> f64 {
+            self.precursor_mz
+        }
+    }
+
+    #[test]
+    fn shannon_entropy_skips_zero_entries() {
+        let entropy = shannon_entropy(&[0.5, 0.5, 0.0]);
+        assert!((entropy - core::f64::consts::LN_2).abs() <= 1.0e-12);
+    }
+
+    #[test]
+    fn apply_entropy_weight_renormalizes_low_entropy_inputs() {
+        let mut intensities = [0.9, 0.1];
+        apply_entropy_weight(&mut intensities);
+
+        let sum: f64 = intensities.iter().sum();
+        assert!((sum - 1.0).abs() <= 1.0e-12);
+        assert!(intensities[0].is_finite() && intensities[1].is_finite());
+        assert!(intensities[0] > intensities[1]);
+    }
+
+    #[test]
+    fn entropy_config_accessors_and_convenience_constructors_round_trip() {
+        let weighted = LinearEntropy::weighted(0.1).expect("weighted config should build");
+        assert!(weighted.is_weighted());
+        assert_eq!(weighted.mz_power(), 0.0);
+        assert_eq!(weighted.intensity_power(), 1.0);
+        assert_eq!(weighted.mz_tolerance(), 0.1);
+
+        let custom =
+            ModifiedLinearEntropy::new(0.25, 1.5, 0.2, false).expect("custom config should build");
+        assert!(!custom.is_weighted());
+        assert_eq!(custom.mz_power(), 0.25);
+        assert_eq!(custom.intensity_power(), 1.5);
+        assert_eq!(custom.mz_tolerance(), 0.2);
+    }
+
+    #[test]
+    fn prepare_entropy_peaks_rejects_non_finite_product_sum() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(50.0, f64::MAX), (75.0, f64::MAX)],
+        };
+
+        let error = match prepare_entropy_peaks(&spectrum, false, 0.0, 1.0) {
+            Ok(_) => panic!("infinite product sum should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("product_sum")
+        );
+    }
+
+    #[test]
+    fn finalize_entropy_score_rejects_non_finite_similarity() {
+        let error = finalize_entropy_score(f64::NAN, 1)
+            .expect_err("non-finite entropy score should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("similarity_score")
+        );
+    }
+
+    #[test]
+    fn entropy_score_pairs_rejects_non_finite_pair_score() {
+        let error = entropy_score_pairs(&[(0, 0)], &[f64::INFINITY], &[1.0])
+            .expect_err("non-finite entropy pair score should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("entropy_pair_score")
+        );
+    }
+
+    #[test]
+    fn prepare_entropy_peaks_rejects_non_finite_weighted_product_sum() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: vec![(50.0, -1.0), (75.0, 2.0)],
+        };
+
+        let error = match prepare_entropy_peaks(&spectrum, true, 0.0, 1.0) {
+            Ok(_) => panic!("non-finite weighted sum should be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("weighted_product_sum")
+        );
+    }
+}

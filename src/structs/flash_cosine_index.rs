@@ -286,3 +286,152 @@ pub enum FlashCosineIndexError {
     #[error(transparent)]
     Computation(SimilarityComputationError),
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::{vec, vec::Vec};
+
+    use super::*;
+    use crate::structs::GenericSpectrum;
+    use crate::traits::{Spectrum, SpectrumMut};
+
+    #[derive(Clone)]
+    struct RawSpectrum {
+        precursor_mz: f64,
+        peaks: Vec<(f64, f64)>,
+    }
+
+    impl Spectrum for RawSpectrum {
+        type SortedIntensitiesIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedMzIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedPeaksIter<'a>
+            = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+        where
+            Self: 'a;
+
+        fn len(&self) -> usize {
+            self.peaks.len()
+        }
+
+        fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+            self.peaks.iter().map(|peak| peak.1)
+        }
+
+        fn intensity_nth(&self, n: usize) -> f64 {
+            self.peaks[n].1
+        }
+
+        fn mz(&self) -> Self::SortedMzIter<'_> {
+            self.peaks.iter().map(|peak| peak.0)
+        }
+
+        fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+            self.peaks[index..].iter().map(|peak| peak.0)
+        }
+
+        fn mz_nth(&self, n: usize) -> f64 {
+            self.peaks[n].0
+        }
+
+        fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+            self.peaks.iter().copied()
+        }
+
+        fn peak_nth(&self, n: usize) -> (f64, f64) {
+            self.peaks[n]
+        }
+
+        fn precursor_mz(&self) -> f64 {
+            self.precursor_mz
+        }
+    }
+
+    fn make_spectrum(precursor_mz: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
+        let mut spectrum = GenericSpectrum::try_with_capacity(precursor_mz, peaks.len())
+            .expect("test spectrum allocation should succeed");
+        for &(mz, intensity) in peaks {
+            spectrum
+                .add_peak(mz, intensity)
+                .expect("test peaks should be valid and sorted");
+        }
+        spectrum
+    }
+
+    #[test]
+    fn cosine_kernel_finalize_handles_zero_denominator_and_clamps() {
+        assert_eq!(
+            CosineKernel::finalize(1.0, 1, &CosineNorm(0.0), &CosineNorm(2.0)),
+            0.0
+        );
+        assert_eq!(
+            CosineKernel::finalize(5.0, 1, &CosineNorm(1.0), &CosineNorm(1.0)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn index_accessors_and_search_wrappers_round_trip() {
+        let library = [make_spectrum(200.0, &[(100.0, 4.0)])];
+        let index =
+            FlashCosineIndex::new(1.0, 2.0, 0.1, library.iter()).expect("index should build");
+
+        assert_eq!(index.mz_power(), 1.0);
+        assert_eq!(index.intensity_power(), 2.0);
+        assert_eq!(index.tolerance(), 0.1);
+        assert_eq!(index.n_spectra(), 1);
+
+        let direct = index
+            .search(&library[0])
+            .expect("direct search should work");
+        let mut direct_state = index.new_search_state();
+        let direct_with_state = index
+            .search_with_state(&library[0], &mut direct_state)
+            .expect("stateful direct search should work");
+        assert_eq!(direct, direct_with_state);
+
+        let shifted_query = make_spectrum(210.0, &[(110.0, 4.0)]);
+        let modified = index
+            .search_modified(&shifted_query)
+            .expect("modified search should work");
+        let mut modified_state = index.new_search_state();
+        let modified_with_state = index
+            .search_modified_with_state(&shifted_query, &mut modified_state)
+            .expect("stateful modified search should work");
+        assert_eq!(modified, modified_with_state);
+        assert_eq!(modified[0].spectrum_id, 0);
+    }
+
+    #[test]
+    fn modified_search_rejects_non_finite_query_precursor() {
+        let library = [make_spectrum(200.0, &[(100.0, 1.0)])];
+        let index =
+            FlashCosineIndex::new(1.0, 1.0, 0.1, library.iter()).expect("index should build");
+        let query = RawSpectrum {
+            precursor_mz: f64::NAN,
+            peaks: vec![(100.0, 1.0)],
+        };
+
+        let error = index
+            .search_modified(&query)
+            .expect_err("non-finite query precursor should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("query_precursor_mz")
+        );
+
+        let mut state = index.new_search_state();
+        let error = index
+            .search_modified_with_state(&query, &mut state)
+            .expect_err("stateful modified search should reject non-finite precursor");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("query_precursor_mz")
+        );
+    }
+}

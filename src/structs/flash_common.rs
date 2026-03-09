@@ -457,3 +457,141 @@ impl<K: FlashKernel> FlashIndex<K> {
         results
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::{vec, vec::Vec};
+
+    use super::*;
+
+    #[derive(Clone, Copy, Default)]
+    struct TestKernel;
+
+    impl FlashKernel for TestKernel {
+        type SpectrumMeta = ();
+
+        fn spectrum_meta(_peak_data: &[f64]) -> Self::SpectrumMeta {}
+
+        fn pair_score(query: f64, library: f64) -> f64 {
+            query * library
+        }
+
+        fn finalize(
+            raw: f64,
+            _n_matches: usize,
+            _query_meta: &Self::SpectrumMeta,
+            _lib_meta: &Self::SpectrumMeta,
+        ) -> f64 {
+            raw
+        }
+    }
+
+    fn build_test_index(
+        spectra: Vec<(f64, Vec<f64>, Vec<f64>)>,
+        tolerance: f64,
+    ) -> FlashIndex<TestKernel> {
+        FlashIndex::<TestKernel>::build(tolerance, spectra).expect("test index should build")
+    }
+
+    #[test]
+    fn dense_accumulator_drains_and_resets_touched_slots() {
+        let mut acc = DenseAccumulator::new(4);
+        acc.accumulate(2, 1.5);
+        acc.accumulate(2, 0.5);
+        acc.accumulate(1, 2.0);
+
+        let mut emitted = Vec::new();
+        acc.drain(|id, score, count| emitted.push((id, score, count)));
+
+        emitted.sort_by_key(|&(id, _, _)| id);
+        assert_eq!(emitted, vec![(1, 2.0, 1), (2, 2.0, 2)]);
+        assert!(acc.touched.is_empty());
+        assert_eq!(acc.scores, vec![0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(acc.counts, vec![0, 0, 0, 0]);
+
+        let mut second = Vec::new();
+        acc.drain(|id, score, count| second.push((id, score, count)));
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn dense_accumulator_upgrade_replaces_score_without_changing_count() {
+        let mut acc = DenseAccumulator::new(2);
+        acc.accumulate(0, 1.0);
+        acc.upgrade(0, 1.0, 3.5);
+
+        let mut emitted = Vec::new();
+        acc.drain(|id, score, count| emitted.push((id, score, count)));
+        assert_eq!(emitted, vec![(0, 3.5, 1)]);
+    }
+
+    #[test]
+    fn build_sorts_products_and_initializes_search_state() {
+        let index = build_test_index(
+            vec![
+                (210.0, vec![110.0, 100.0], vec![4.0, 1.0]),
+                (205.0, vec![90.0], vec![2.0]),
+            ],
+            0.1,
+        );
+
+        assert_eq!(index.product_mz, vec![90.0, 100.0, 110.0]);
+        assert_eq!(index.product_data, vec![2.0, 1.0, 4.0]);
+        assert_eq!(index.n_spectra, 2);
+
+        let state = index.new_search_state();
+        assert_eq!(state.matched_products.len(), 3);
+        assert_eq!(state.direct_scores.len(), 3);
+        assert_eq!(state.acc.scores.len(), 2);
+    }
+
+    #[test]
+    fn search_direct_filters_zero_scores_and_handles_empty_inputs() {
+        let empty_index = build_test_index(vec![], 0.1);
+        assert!(empty_index.search_direct(&[100.0], &[1.0], &()).is_empty());
+
+        let zero_score_index = build_test_index(vec![(200.0, vec![100.0], vec![0.0])], 0.1);
+        let mut state = zero_score_index.new_search_state();
+        let zero_results =
+            zero_score_index.search_direct_with_state(&[100.0], &[5.0], &(), &mut state);
+        assert!(zero_results.is_empty());
+
+        let repeated_empty = zero_score_index.search_direct_with_state(&[], &[], &(), &mut state);
+        assert!(repeated_empty.is_empty());
+    }
+
+    #[test]
+    fn modified_search_upgrades_direct_matches_and_reuses_state_cleanly() {
+        let index = build_test_index(vec![(200.0, vec![100.0], vec![1.0])], 0.1);
+        let mut state = index.new_search_state();
+
+        let upgraded =
+            index.search_modified_with_state(&[100.0, 110.0], &[1.0, 5.0], &(), 210.0, &mut state);
+        assert_eq!(
+            upgraded,
+            vec![FlashSearchResult {
+                spectrum_id: 0,
+                score: 5.0,
+                n_matches: 1,
+            }]
+        );
+
+        let shifted_only =
+            index.search_modified_with_state(&[110.0], &[3.0], &(), 210.0, &mut state);
+        assert_eq!(
+            shifted_only,
+            vec![FlashSearchResult {
+                spectrum_id: 0,
+                score: 3.0,
+                n_matches: 1,
+            }]
+        );
+
+        let no_match = index.search_modified_with_state(&[150.0], &[2.0], &(), 210.0, &mut state);
+        assert!(no_match.is_empty());
+
+        let repeated =
+            index.search_modified_with_state(&[100.0, 110.0], &[1.0, 5.0], &(), 210.0, &mut state);
+        assert_eq!(repeated, upgraded);
+    }
+}

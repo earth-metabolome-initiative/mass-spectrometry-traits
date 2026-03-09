@@ -685,6 +685,11 @@ pub(crate) fn validate_well_separated(
 
 #[cfg(test)]
 mod tests {
+    use core::cell::Cell;
+
+    use geometric_traits::prelude::{MatrixMut, SparseMatrixMut};
+    use multi_ranged::SimpleRange;
+
     use super::*;
 
     #[derive(Clone)]
@@ -816,5 +821,138 @@ mod tests {
             error,
             SimilarityComputationError::InvalidPeakSpacing("test spectrum")
         );
+    }
+
+    fn matching_from_pairs(
+        rows: u32,
+        cols: u32,
+        pairs: &[(u32, u32)],
+    ) -> RangedCSR2D<u32, u32, SimpleRange<u32>> {
+        let mut matching = SparseMatrixMut::with_sparse_shape((rows, cols));
+        MatrixMut::increase_shape(&mut matching, (rows, cols))
+            .expect("shape increase should succeed");
+        for &(row, col) in pairs {
+            MatrixMut::add(&mut matching, (row, col)).expect("edge insertion should succeed");
+        }
+        matching
+    }
+
+    #[test]
+    fn cosine_config_round_trips_values() {
+        let config = CosineConfig::new(0.5, 2.0, 0.1).expect("config should build");
+        assert_eq!(config.mz_power(), 0.5);
+        assert_eq!(config.intensity_power(), 2.0);
+        assert_eq!(config.mz_tolerance(), 0.1);
+    }
+
+    #[test]
+    fn prepare_peak_products_reports_norm_and_max() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(10.0, 1.0), (20.0, 4.0)],
+        };
+
+        let prepared =
+            prepare_peak_products(&spectrum, 0.0, 1.0).expect("peak preparation should succeed");
+        assert_eq!(prepared.products, alloc::vec![0.25, 1.0]);
+        assert!((prepared.norm - (1.0625_f64).sqrt()).abs() <= 1.0e-12);
+        assert_eq!(prepared.max, 1.0);
+    }
+
+    #[test]
+    fn score_from_matching_handles_zero_and_negative_cost_branches() {
+        let zero_score = score_from_matching(MatchingScoreInputs {
+            matching: matching_from_pairs(1, 1, &[(0, 0)]),
+            row_products: &[0.0],
+            col_products: &[1.0],
+            max_row: 1.0,
+            max_col: 1.0,
+            left_norm: 1.0,
+            right_norm: 1.0,
+        })
+        .expect("zero-product matching should succeed");
+        assert_eq!(zero_score, (0.0, 0));
+
+        let negative_score = score_from_matching(MatchingScoreInputs {
+            matching: matching_from_pairs(1, 1, &[(0, 0)]),
+            row_products: &[-1.0],
+            col_products: &[1.0],
+            max_row: 1.0,
+            max_col: 1.0,
+            left_norm: 1.0,
+            right_norm: 1.0,
+        })
+        .expect("negative-product matching should still score");
+        assert_eq!(negative_score, (-1.0, 1));
+    }
+
+    #[test]
+    fn compute_cosine_similarity_uses_forward_match_for_shorter_left() {
+        let left = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(10.0, 2.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(10.0, 2.0), (20.0, 1.0)],
+        };
+        let forward_called = Cell::new(false);
+
+        let result = compute_cosine_similarity::<_, _, SimpleRange<u32>, _, _>(
+            &left,
+            &right,
+            0.0,
+            1.0,
+            |_, _| {
+                forward_called.set(true);
+                Ok(matching_from_pairs(1, 2, &[(0, 0)]))
+            },
+            |_, _| panic!("reverse branch should not be used"),
+        )
+        .expect("similarity should succeed");
+
+        assert!(forward_called.get());
+        assert_eq!(result.1, 1);
+        assert!(result.0.is_finite() && result.0 > 0.0);
+    }
+
+    #[test]
+    fn compute_cosine_similarity_can_take_reverse_branch_for_tie_breaks() {
+        let left = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(10.0, 1.0), (20.0, 1.0)],
+        };
+        let right = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(10.0, 1.0), (100.0, 1.0)],
+        };
+        let reverse_called = Cell::new(false);
+
+        let result = compute_cosine_similarity::<_, _, SimpleRange<u32>, _, _>(
+            &left,
+            &right,
+            1.0,
+            1.0,
+            |_, _| panic!("forward branch should not be used"),
+            |_, _| {
+                reverse_called.set(true);
+                Ok(matching_from_pairs(2, 2, &[(0, 0)]))
+            },
+        )
+        .expect("similarity should succeed");
+
+        assert!(reverse_called.get());
+        assert_eq!(result.1, 1);
+        assert!(result.0.is_finite() && result.0 > 0.0);
+    }
+
+    #[test]
+    fn optimal_modified_linear_matches_backtracks_single_edge_and_skips_visited_start() {
+        let selected =
+            optimal_modified_linear_matches(&[1.0], &[1.0, 1.4], 0.5, 10.0, 10.0, |_, j| {
+                if j == 0 { 3.0 } else { 1.0 }
+            });
+
+        assert_eq!(selected, alloc::vec![(0, 0)]);
     }
 }

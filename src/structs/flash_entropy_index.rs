@@ -290,3 +290,163 @@ pub enum FlashEntropyIndexError {
     #[error(transparent)]
     Computation(SimilarityComputationError),
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::{vec, vec::Vec};
+
+    use super::*;
+    use crate::structs::GenericSpectrum;
+    use crate::traits::{Spectrum, SpectrumMut};
+
+    #[derive(Clone)]
+    struct RawSpectrum {
+        precursor_mz: f64,
+        peaks: Vec<(f64, f64)>,
+    }
+
+    impl Spectrum for RawSpectrum {
+        type SortedIntensitiesIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedMzIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedPeaksIter<'a>
+            = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+        where
+            Self: 'a;
+
+        fn len(&self) -> usize {
+            self.peaks.len()
+        }
+
+        fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+            self.peaks.iter().map(|peak| peak.1)
+        }
+
+        fn intensity_nth(&self, n: usize) -> f64 {
+            self.peaks[n].1
+        }
+
+        fn mz(&self) -> Self::SortedMzIter<'_> {
+            self.peaks.iter().map(|peak| peak.0)
+        }
+
+        fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+            self.peaks[index..].iter().map(|peak| peak.0)
+        }
+
+        fn mz_nth(&self, n: usize) -> f64 {
+            self.peaks[n].0
+        }
+
+        fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+            self.peaks.iter().copied()
+        }
+
+        fn peak_nth(&self, n: usize) -> (f64, f64) {
+            self.peaks[n]
+        }
+
+        fn precursor_mz(&self) -> f64 {
+            self.precursor_mz
+        }
+    }
+
+    fn make_spectrum(precursor_mz: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
+        let mut spectrum = GenericSpectrum::try_with_capacity(precursor_mz, peaks.len())
+            .expect("test spectrum allocation should succeed");
+        for &(mz, intensity) in peaks {
+            spectrum
+                .add_peak(mz, intensity)
+                .expect("test peaks should be valid and sorted");
+        }
+        spectrum
+    }
+
+    #[test]
+    fn entropy_index_accessors_convenience_constructors_and_wrappers_round_trip() {
+        let library = [make_spectrum(200.0, &[(100.0, 4.0)])];
+        let weighted =
+            FlashEntropyIndex::weighted(0.1, library.iter()).expect("weighted index should build");
+        assert!(weighted.is_weighted());
+        assert_eq!(weighted.mz_power_f64(), 0.0);
+        assert_eq!(weighted.intensity_power_f64(), 1.0);
+        assert_eq!(weighted.tolerance(), 0.1);
+        assert_eq!(weighted.n_spectra(), 1);
+
+        let direct = weighted
+            .search(&library[0])
+            .expect("direct search should work");
+        let mut direct_state = weighted.new_search_state();
+        let direct_with_state = weighted
+            .search_with_state(&library[0], &mut direct_state)
+            .expect("stateful direct search should work");
+        assert_eq!(direct, direct_with_state);
+
+        let shifted_query = make_spectrum(210.0, &[(110.0, 4.0)]);
+        let modified = weighted
+            .search_modified(&shifted_query)
+            .expect("modified search should work");
+        let mut modified_state = weighted.new_search_state();
+        let modified_with_state = weighted
+            .search_modified_with_state(&shifted_query, &mut modified_state)
+            .expect("stateful modified search should work");
+        assert_eq!(modified, modified_with_state);
+
+        let unweighted = FlashEntropyIndex::unweighted(0.1, library.iter())
+            .expect("unweighted index should build");
+        assert!(!unweighted.is_weighted());
+    }
+
+    #[test]
+    fn entropy_index_treats_underflowed_products_as_empty() {
+        let tiny = make_spectrum(200.0, &[(100.0, f64::MIN_POSITIVE)]);
+        let index = FlashEntropyIndex::new(0.0, 2.0, 0.1, false, core::iter::once(&tiny))
+            .expect("empty-product library should still build");
+
+        assert_eq!(index.n_spectra(), 1);
+        assert!(
+            index
+                .search(&tiny)
+                .expect("empty-product query should succeed")
+                .is_empty()
+        );
+        assert!(
+            index
+                .search_modified(&tiny)
+                .expect("modified empty-product query should succeed")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn modified_search_rejects_non_finite_query_precursor() {
+        let library = [make_spectrum(200.0, &[(100.0, 1.0)])];
+        let index = FlashEntropyIndex::weighted(0.1, library.iter()).expect("index should build");
+        let query = RawSpectrum {
+            precursor_mz: f64::NAN,
+            peaks: vec![(100.0, 1.0)],
+        };
+
+        let error = index
+            .search_modified(&query)
+            .expect_err("non-finite query precursor should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("query_precursor_mz")
+        );
+
+        let mut state = index.new_search_state();
+        let error = index
+            .search_modified_with_state(&query, &mut state)
+            .expect_err("stateful modified search should reject non-finite precursor");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("query_precursor_mz")
+        );
+    }
+}
