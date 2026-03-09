@@ -304,3 +304,133 @@ pub trait AnnotatedSpectrum: Spectrum {
     /// The type of the annotation.
     type Annotation: Annotation;
 }
+
+#[cfg(test)]
+mod tests {
+    use geometric_traits::prelude::*;
+    use multi_ranged::SimpleRange;
+
+    use super::*;
+
+    #[derive(Clone)]
+    struct RawSpectrum {
+        precursor_mz: f64,
+        peaks: Vec<(f64, f64)>,
+    }
+
+    impl Spectrum for RawSpectrum {
+        type SortedIntensitiesIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedMzIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedPeaksIter<'a>
+            = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+        where
+            Self: 'a;
+
+        fn len(&self) -> usize {
+            self.peaks.len()
+        }
+
+        fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+            self.peaks.iter().map(|peak| peak.1)
+        }
+
+        fn intensity_nth(&self, n: usize) -> f64 {
+            self.peaks[n].1
+        }
+
+        fn mz(&self) -> Self::SortedMzIter<'_> {
+            self.peaks.iter().map(|peak| peak.0)
+        }
+
+        fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+            self.peaks[index..].iter().map(|peak| peak.0)
+        }
+
+        fn mz_nth(&self, n: usize) -> f64 {
+            self.peaks[n].0
+        }
+
+        fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+            self.peaks.iter().copied()
+        }
+
+        fn peak_nth(&self, n: usize) -> (f64, f64) {
+            self.peaks[n]
+        }
+
+        fn precursor_mz(&self) -> f64 {
+            self.precursor_mz
+        }
+    }
+
+    #[test]
+    fn tolerance_position_f64_classifies_offsets() {
+        assert_eq!(
+            tolerance_position_f64(10.0, 9.7, 0.1),
+            TolerancePosition::Below
+        );
+        assert_eq!(
+            tolerance_position_f64(10.0, 10.0, 0.1),
+            TolerancePosition::Within
+        );
+        assert_eq!(
+            tolerance_position_f64(10.0, 10.3, 0.1),
+            TolerancePosition::Above
+        );
+    }
+
+    #[test]
+    fn allocate_matching_peaks_preserves_empty_shape() {
+        let left_empty: RangedCSR2D<u32, u32, SimpleRange<u32>> =
+            allocate_matching_peaks::<SimpleRange<u32>>(0, 2).expect("shape should allocate");
+        assert_eq!(left_empty.number_of_rows(), 0);
+        assert_eq!(left_empty.number_of_columns(), 2);
+        assert_eq!(left_empty.number_of_defined_values(), 0);
+
+        let right_empty: RangedCSR2D<u32, u32, SimpleRange<u32>> =
+            allocate_matching_peaks::<SimpleRange<u32>>(2, 0).expect("shape should allocate");
+        assert_eq!(right_empty.number_of_rows(), 2);
+        assert_eq!(right_empty.number_of_columns(), 0);
+        assert_eq!(right_empty.number_of_defined_values(), 0);
+    }
+
+    #[test]
+    fn collect_window_matches_advances_lowest_index_and_reports_non_finite_shift() {
+        let other = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(0.8, 1.0), (1.0, 1.0), (1.2, 1.0)],
+        };
+        let mut matched_cols = Vec::new();
+        let new_lowest = collect_window_matches(&other, 0, 1.0, 0.05, 0.0, "right_mz", |col| {
+            matched_cols.push(col)
+        })
+        .expect("window collection should succeed");
+        assert_eq!(new_lowest, 1);
+        assert_eq!(matched_cols, alloc::vec![1]);
+
+        let overflowing = RawSpectrum {
+            precursor_mz: -f64::MAX,
+            peaks: alloc::vec![(f64::MAX, 1.0)],
+        };
+        let error = collect_window_matches(
+            &overflowing,
+            0,
+            100.0,
+            0.1,
+            f64::MAX,
+            "shifted_other_mz",
+            |_| {},
+        )
+        .expect_err("non-finite shifted value should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("shifted_other_mz")
+        );
+    }
+}

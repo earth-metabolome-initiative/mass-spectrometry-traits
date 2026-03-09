@@ -1,5 +1,6 @@
 //! Regression tests for `Spectrum::matching_peaks` input validation.
 
+use geometric_traits::prelude::*;
 use mass_spectrometry::prelude::{
     ELECTRON_MASS, GenericSpectrum, GenericSpectrumMutationError, SimilarityComputationError,
     Spectrum, SpectrumAlloc, SpectrumMut,
@@ -177,6 +178,71 @@ fn modified_matching_peaks_rejects_non_finite_right_mz() {
     assert_eq!(
         error,
         SimilarityComputationError::NonFiniteValue("right_mz")
+    );
+}
+
+#[test]
+fn matching_peaks_empty_inputs_preserve_shape() {
+    let empty = spectrum_from_peaks(100.0, &[]);
+    let nonempty = spectrum_from_peaks(100.0, &[(100.0, 1.0), (200.0, 2.0)]);
+
+    let direct_empty_left = empty
+        .matching_peaks(&nonempty, 0.1)
+        .expect("matching graph should build");
+    assert_eq!(direct_empty_left.number_of_rows(), 0);
+    assert_eq!(direct_empty_left.number_of_columns(), nonempty.len() as u32);
+    assert_eq!(direct_empty_left.number_of_defined_values(), 0);
+
+    let direct_empty_right = nonempty
+        .matching_peaks(&empty, 0.1)
+        .expect("matching graph should build");
+    assert_eq!(direct_empty_right.number_of_rows(), nonempty.len() as u32);
+    assert_eq!(direct_empty_right.number_of_columns(), 0);
+    assert_eq!(direct_empty_right.number_of_defined_values(), 0);
+
+    let modified_empty_left = empty
+        .modified_matching_peaks(&nonempty, 0.1, 100.0, 100.3)
+        .expect("modified matching graph should build");
+    assert_eq!(modified_empty_left.number_of_rows(), 0);
+    assert_eq!(
+        modified_empty_left.number_of_columns(),
+        nonempty.len() as u32
+    );
+    assert_eq!(modified_empty_left.number_of_defined_values(), 0);
+
+    let modified_empty_right = nonempty
+        .modified_matching_peaks(&empty, 0.1, 100.3, 100.0)
+        .expect("modified matching graph should build");
+    assert_eq!(modified_empty_right.number_of_rows(), nonempty.len() as u32);
+    assert_eq!(modified_empty_right.number_of_columns(), 0);
+    assert_eq!(modified_empty_right.number_of_defined_values(), 0);
+}
+
+#[test]
+fn modified_matching_peaks_deduplicates_direct_and_shifted_overlap() {
+    let left = spectrum_from_peaks(200.15, &[(100.0, 1.0)]);
+    let right = spectrum_from_peaks(200.0, &[(99.95, 1.0)]);
+
+    let graph = left
+        .modified_matching_peaks(&right, 0.1, 200.15, 200.0)
+        .expect("modified matching graph should build");
+    let cols: Vec<u32> = graph.sparse_row(0).collect();
+
+    assert_eq!(cols, vec![0]);
+    assert_eq!(graph.number_of_defined_values(), 1);
+}
+
+#[test]
+fn modified_matching_peaks_reports_shifted_non_finite_right_value() {
+    let left = spectrum_from_peaks(100.0, &[(100.0, 1.0)]);
+    let right = raw_spectrum_from_peaks(-f64::MAX, &[(f64::MAX, 1.0)]);
+
+    let error = left
+        .modified_matching_peaks(&right, 0.1, 100.2, -f64::MAX)
+        .expect_err("shifted non-finite right mz should be rejected");
+    assert_eq!(
+        error,
+        SimilarityComputationError::NonFiniteValue("shifted_other_mz")
     );
 }
 
