@@ -682,3 +682,139 @@ pub(crate) fn validate_well_separated(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone)]
+    struct RawSpectrum {
+        precursor_mz: f64,
+        peaks: Vec<(f64, f64)>,
+    }
+
+    impl Spectrum for RawSpectrum {
+        type SortedIntensitiesIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedMzIter<'a>
+            = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+        where
+            Self: 'a;
+        type SortedPeaksIter<'a>
+            = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+        where
+            Self: 'a;
+
+        fn len(&self) -> usize {
+            self.peaks.len()
+        }
+
+        fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+            self.peaks.iter().map(|peak| peak.1)
+        }
+
+        fn intensity_nth(&self, n: usize) -> f64 {
+            self.peaks[n].1
+        }
+
+        fn mz(&self) -> Self::SortedMzIter<'_> {
+            self.peaks.iter().map(|peak| peak.0)
+        }
+
+        fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+            self.peaks[index..].iter().map(|peak| peak.0)
+        }
+
+        fn mz_nth(&self, n: usize) -> f64 {
+            self.peaks[n].0
+        }
+
+        fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+            self.peaks.iter().copied()
+        }
+
+        fn peak_nth(&self, n: usize) -> (f64, f64) {
+            self.peaks[n]
+        }
+
+        fn precursor_mz(&self) -> f64 {
+            self.precursor_mz
+        }
+    }
+
+    #[test]
+    fn normalized_peak_products_preserves_all_zero_products() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(10.0, 0.0), (20.0, 0.0)],
+        };
+
+        let products =
+            normalized_peak_products(&spectrum, 1.0, 1.0).expect("normalization should succeed");
+        assert_eq!(products, alloc::vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn finalize_similarity_score_handles_zero_clamp_and_non_finite_denominator() {
+        let zero = finalize_similarity_score(1.0, 4, 0.0, 2.0).expect("zero norm should succeed");
+        assert_eq!(zero, (0.0, 0));
+
+        let clamped =
+            finalize_similarity_score(2.0, 3, 1.0, 1.0).expect("clamped similarity should succeed");
+        assert_eq!(clamped, (1.0, 3));
+
+        let error = finalize_similarity_score(1.0, 1, f64::INFINITY, 1.0)
+            .expect_err("non-finite denominator should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::NonFiniteValue("similarity_denominator")
+        );
+    }
+
+    #[test]
+    fn accumulate_assignment_scores_ignores_zero_products() {
+        let assignments = [(0_u32, 0_u32), (1_u32, 1_u32)];
+        let (score, matches) = accumulate_assignment_scores(&assignments, &[0.0, 2.0], &[3.0, 4.0]);
+        assert_eq!(score, 8.0);
+        assert_eq!(matches, 1);
+    }
+
+    #[test]
+    fn canonical_row_order_breaks_ties_lexicographically() {
+        assert!(canonical_row_order(&[1.0, 2.0], &[1.0, 3.0]));
+        assert!(!canonical_row_order(&[1.0, 3.0], &[1.0, 2.0]));
+        assert!(canonical_row_order(&[1.0, 2.0], &[1.0, 2.0]));
+    }
+
+    #[test]
+    fn optimal_modified_linear_matches_selects_best_edge_from_two_edge_path() {
+        let selected =
+            optimal_modified_linear_matches(&[1.0], &[1.0, 1.05], 0.1, 10.0, 10.0, |_, j| {
+                if j == 0 { 10.0 } else { 1.0 }
+            });
+
+        assert_eq!(selected, alloc::vec![(0, 0)]);
+    }
+
+    #[test]
+    fn insert_neighbor_ignores_duplicate_neighbor() {
+        let mut slots = [Some(1_usize), None];
+        insert_neighbor(&mut slots, 1);
+        assert_eq!(slots, [Some(1), None]);
+
+        insert_neighbor(&mut slots, 2);
+        assert_eq!(slots, [Some(1), Some(2)]);
+    }
+
+    #[test]
+    fn validate_well_separated_rejects_boundary_gap() {
+        let error = validate_well_separated(&[10.0, 10.2], 0.1, "test spectrum")
+            .expect_err("gap equal to 2 * tolerance should be rejected");
+        assert_eq!(
+            error,
+            SimilarityComputationError::InvalidPeakSpacing("test spectrum")
+        );
+    }
+}
