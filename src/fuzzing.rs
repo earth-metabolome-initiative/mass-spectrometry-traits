@@ -1642,3 +1642,416 @@ fn assert_flash_self_similarity_entropy(
         sr.score
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::traits::{SpectrumAlloc, SpectrumMut};
+
+    fn make_spectrum(precursor_mz: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
+        let mut spectrum = GenericSpectrum::with_capacity(precursor_mz, peaks.len())
+            .expect("test spectrum allocation should succeed");
+        for &(mz, intensity) in peaks {
+            spectrum
+                .add_peak(mz, intensity)
+                .expect("test peaks must be valid and sorted");
+        }
+        spectrum
+    }
+
+    fn flash_library() -> [GenericSpectrum; 3] {
+        [
+            make_spectrum(300.0, &[(100.0, 10.0), (200.0, 5.0)]),
+            make_spectrum(450.0, &[(150.0, 7.0), (300.0, 4.0)]),
+            make_spectrum(600.0, &[(50.0, 3.0), (500.0, 2.0)]),
+        ]
+    }
+
+    #[test]
+    fn cosine_helper_assertions_cover_success_paths() {
+        let left = make_spectrum(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
+        let right = make_spectrum(300.0, &[(100.05, 9.0), (200.05, 4.0)]);
+
+        let hungarian =
+            HungarianCosine::new(1.0, 1.0, FIXED_TOLERANCE).expect("fixed config is valid");
+        let modified = ModifiedHungarianCosine::new(1.0, 1.0, FIXED_TOLERANCE)
+            .expect("fixed modified config is valid");
+
+        assert_bidirectional_properties(&hungarian, &left, &right, "cosine", true);
+        assert_modified_bidirectional_properties(&modified, &left, &right, "modified_cosine");
+        assert_self_similarity(&hungarian, &left, 1.0e-4, "self/cosine");
+        assert_modified_self_similarity(&modified, &left, 1.0e-4, "self/modified_cosine");
+        assert_modified_not_less_than_hungarian(
+            &modified,
+            &hungarian,
+            &left,
+            &right,
+            "modified>=hungarian",
+        );
+        assert_linear_matches_hungarian(&left, &right);
+    }
+
+    #[test]
+    fn entropy_helper_assertions_cover_success_paths() {
+        let left = make_spectrum(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
+        let right = make_spectrum(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
+
+        let linear = LinearEntropy::weighted(FIXED_TOLERANCE).expect("weighted config is valid");
+        let modified = ModifiedLinearEntropy::weighted(FIXED_TOLERANCE)
+            .expect("modified weighted config is valid");
+
+        assert_linear_entropy_bidirectional_properties(&linear, &left, &right, "entropy");
+        assert_linear_entropy_self_similarity(&linear, &left, 1.0e-4, "self/entropy");
+        assert_modified_linear_entropy_bidirectional_properties(
+            &modified,
+            &left,
+            &right,
+            "modified_entropy",
+        );
+        assert_modified_linear_entropy_self_similarity(
+            &modified,
+            &left,
+            1.0e-4,
+            "self/modified_entropy",
+        );
+        assert_modified_entropy_not_less_than_linear(
+            &modified,
+            &linear,
+            &left,
+            &right,
+            "modified_entropy>=linear",
+        );
+        assert_linear_entropy_original_outcome(&linear, &left, &right, "linear/original");
+        assert_modified_linear_entropy_original_outcome(
+            &modified,
+            &left,
+            &right,
+            "modified/original",
+        );
+    }
+
+    #[test]
+    fn original_outcome_helpers_accept_invalid_peak_spacing() {
+        let left = make_spectrum(200.0, &[(100.0, 10.0), (100.15, 9.0)]);
+        let right = make_spectrum(200.0, &[(100.0, 8.0), (100.15, 7.0)]);
+
+        let linear = LinearEntropy::weighted(FIXED_TOLERANCE).expect("weighted config is valid");
+        let modified = ModifiedLinearEntropy::weighted(FIXED_TOLERANCE)
+            .expect("modified weighted config is valid");
+
+        assert_linear_entropy_original_outcome(&linear, &left, &right, "linear/close");
+        assert_modified_linear_entropy_original_outcome(&modified, &left, &right, "modified/close");
+    }
+
+    #[test]
+    fn flash_helper_assertions_cover_present_and_missing_result_paths() {
+        let library = flash_library();
+        let query = make_spectrum(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
+
+        let cosine_index = FlashCosineIndex::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+            .expect("cosine index should build");
+        let cosine_direct = cosine_index
+            .search(&query)
+            .expect("cosine search should work");
+        let cosine_modified = cosine_index
+            .search_modified(&query)
+            .expect("modified cosine search should work");
+        let cosine_oracle =
+            LinearCosine::new(1.0, 1.0, FIXED_TOLERANCE).expect("linear cosine should build");
+        let modified_cosine_oracle = ModifiedLinearCosine::new(1.0, 1.0, FIXED_TOLERANCE)
+            .expect("modified linear cosine should build");
+
+        assert_flash_cosine_equivalence(
+            &cosine_direct,
+            &cosine_oracle,
+            &library,
+            &query,
+            "flash/cosine",
+        );
+        assert_flash_modified_cosine_equivalence(
+            &cosine_modified,
+            &modified_cosine_oracle,
+            &library,
+            &query,
+            "flash/modified_cosine",
+        );
+        assert_flash_modified_not_less_than_direct(
+            &cosine_modified,
+            &cosine_direct,
+            "flash/modified>=direct",
+        );
+        let mut cosine_state = cosine_index.new_search_state();
+        let cosine_state_results = cosine_index
+            .search_with_state(&query, &mut cosine_state)
+            .expect("stateful cosine search should work");
+        assert_flash_state_equivalence(&cosine_state_results, &cosine_direct, "flash/cosine/state");
+        assert_flash_self_similarity_cosine(&cosine_index, &library[0], 0, "flash/cosine/self");
+
+        let entropy_index = FlashEntropyIndex::weighted(FIXED_TOLERANCE, library.iter())
+            .expect("entropy index should build");
+        let entropy_direct = entropy_index
+            .search(&query)
+            .expect("entropy search should work");
+        let entropy_modified = entropy_index
+            .search_modified(&query)
+            .expect("modified entropy search should work");
+        let entropy_oracle =
+            LinearEntropy::weighted(FIXED_TOLERANCE).expect("linear entropy should build");
+        let modified_entropy_oracle = ModifiedLinearEntropy::weighted(FIXED_TOLERANCE)
+            .expect("modified linear entropy should build");
+
+        assert_flash_entropy_equivalence(
+            &entropy_direct,
+            &entropy_oracle,
+            &library,
+            &query,
+            "flash/entropy",
+        );
+        assert_flash_modified_entropy_equivalence(
+            &entropy_modified,
+            &modified_entropy_oracle,
+            &library,
+            &query,
+            "flash/modified_entropy",
+        );
+        let mut entropy_state = entropy_index.new_search_state();
+        let entropy_state_results = entropy_index
+            .search_with_state(&query, &mut entropy_state)
+            .expect("stateful entropy search should work");
+        assert_flash_state_equivalence(
+            &entropy_state_results,
+            &entropy_direct,
+            "flash/entropy/state",
+        );
+        assert_flash_self_similarity_entropy(&entropy_index, &library[0], 0, "flash/entropy/self");
+    }
+
+    #[test]
+    fn score_range_helper_accepts_bounds() {
+        assert_score_in_range(0.0, "zero");
+        assert_score_in_range(1.0, "one");
+        assert_score_in_range(1.0e-7, "small");
+    }
+
+    #[test]
+    fn flash_harnesses_return_checked_for_empty_bytes() {
+        assert_eq!(
+            run_flash_cosine_case(&[]),
+            FlashCosineHarnessOutcome::Checked
+        );
+        assert_eq!(
+            run_flash_entropy_case(&[]),
+            FlashEntropyHarnessOutcome::Checked
+        );
+        assert_eq!(
+            run_ms_entropy_clean_spectrum_case(&[]),
+            MsEntropyCleanSpectrumHarnessOutcome::Checked
+        );
+    }
+
+    #[test]
+    fn helper_assertions_cover_self_and_symmetric_success_paths() {
+        let spectrum = make_spectrum(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
+
+        let hungarian =
+            HungarianCosine::new(1.0, 1.0, FIXED_TOLERANCE).expect("config should build");
+        let modified_hungarian =
+            ModifiedHungarianCosine::new(1.0, 1.0, FIXED_TOLERANCE).expect("config should build");
+        let linear_entropy = LinearEntropy::weighted(FIXED_TOLERANCE).expect("config should build");
+        let modified_entropy =
+            ModifiedLinearEntropy::weighted(FIXED_TOLERANCE).expect("config should build");
+
+        assert_bidirectional_properties(&hungarian, &spectrum, &spectrum, "hungarian/self", true);
+        assert_modified_bidirectional_properties(
+            &modified_hungarian,
+            &spectrum,
+            &spectrum,
+            "modified_hungarian/self",
+        );
+        assert_self_similarity(&hungarian, &spectrum, 1.0e-6, "hungarian/self_similarity");
+        assert_modified_self_similarity(
+            &modified_hungarian,
+            &spectrum,
+            1.0e-6,
+            "modified_hungarian/self_similarity",
+        );
+
+        assert_linear_entropy_bidirectional_properties(
+            &linear_entropy,
+            &spectrum,
+            &spectrum,
+            "linear_entropy/self",
+        );
+        assert_linear_entropy_self_similarity(
+            &linear_entropy,
+            &spectrum,
+            1.0e-6,
+            "linear_entropy/self_similarity",
+        );
+        assert_modified_linear_entropy_bidirectional_properties(
+            &modified_entropy,
+            &spectrum,
+            &spectrum,
+            "modified_entropy/self",
+        );
+        assert_modified_linear_entropy_self_similarity(
+            &modified_entropy,
+            &spectrum,
+            1.0e-6,
+            "modified_entropy/self_similarity",
+        );
+        assert_modified_entropy_not_less_than_linear(
+            &modified_entropy,
+            &linear_entropy,
+            &spectrum,
+            &spectrum,
+            "modified_entropy>=linear/self",
+        );
+    }
+
+    #[test]
+    fn flash_helpers_cover_present_result_and_entropy_self_similarity_paths() {
+        let library = [
+            make_spectrum(300.0, &[(100.0, 10.0), (200.0, 5.0)]),
+            make_spectrum(450.0, &[(150.0, 7.0), (300.0, 4.0)]),
+            make_spectrum(600.0, &[(50.0, 3.0), (500.0, 2.0)]),
+        ];
+        let query = make_spectrum(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
+
+        let cosine_index = FlashCosineIndex::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+            .expect("cosine index should build");
+        let cosine_results = cosine_index.search(&query).expect("search should work");
+        let cosine_oracle =
+            LinearCosine::new(1.0, 1.0, FIXED_TOLERANCE).expect("oracle should build");
+        assert_flash_cosine_equivalence(
+            &cosine_results,
+            &cosine_oracle,
+            &library,
+            &query,
+            "flash/cosine/present",
+        );
+
+        let entropy_index = FlashEntropyIndex::weighted(FIXED_TOLERANCE, library.iter())
+            .expect("entropy index should build");
+        let entropy_results = entropy_index.search(&query).expect("search should work");
+        let entropy_oracle = LinearEntropy::weighted(FIXED_TOLERANCE).expect("oracle should build");
+        assert_flash_entropy_equivalence(
+            &entropy_results,
+            &entropy_oracle,
+            &library,
+            &query,
+            "flash/entropy/present",
+        );
+        assert_flash_self_similarity_entropy(
+            &entropy_index,
+            &library[0],
+            0,
+            "flash/entropy/self/present",
+        );
+    }
+
+    #[test]
+    fn entropy_self_similarity_helpers_return_early_on_invalid_spacing() {
+        let close = make_spectrum(300.0, &[(100.0, 10.0), (100.15, 5.0)]);
+        let linear = LinearEntropy::weighted(FIXED_TOLERANCE).expect("config should build");
+        let modified =
+            ModifiedLinearEntropy::weighted(FIXED_TOLERANCE).expect("config should build");
+
+        assert_linear_entropy_self_similarity(&linear, &close, 1.0e-6, "linear/invalid");
+        assert_modified_linear_entropy_self_similarity(
+            &modified,
+            &close,
+            1.0e-6,
+            "modified/invalid",
+        );
+    }
+
+    #[test]
+    fn flash_self_similarity_helpers_return_early_on_query_errors_and_missing_results() {
+        let library = flash_library();
+        let invalid_query = make_spectrum(300.0, &[(100.0, 10.0), (100.15, 5.0)]);
+        let missing_query = make_spectrum(900.0, &[(800.0, 1.0)]);
+
+        let cosine_index = FlashCosineIndex::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+            .expect("cosine index should build");
+        assert_flash_self_similarity_cosine(&cosine_index, &invalid_query, 0, "flash/cosine/err");
+        assert_flash_self_similarity_cosine(&cosine_index, &missing_query, 99, "flash/cosine/miss");
+
+        let entropy_index = FlashEntropyIndex::weighted(FIXED_TOLERANCE, library.iter())
+            .expect("entropy index should build");
+        assert_flash_self_similarity_entropy(
+            &entropy_index,
+            &invalid_query,
+            0,
+            "flash/entropy/err",
+        );
+        assert_flash_self_similarity_entropy(
+            &entropy_index,
+            &missing_query,
+            99,
+            "flash/entropy/miss",
+        );
+    }
+
+    #[test]
+    fn flash_entropy_equivalence_skips_entries_when_the_oracle_errors() {
+        let library = [
+            make_spectrum(300.0, &[(100.0, 10.0), (100.15, 5.0)]),
+            make_spectrum(400.0, &[(200.0, 8.0), (200.15, 4.0)]),
+            make_spectrum(500.0, &[(300.0, 7.0), (300.15, 3.0)]),
+        ];
+        let query = make_spectrum(900.0, &[(800.0, 1.0)]);
+        let oracle = LinearEntropy::weighted(FIXED_TOLERANCE).expect("oracle should build");
+
+        assert_flash_entropy_equivalence(&[], &oracle, &library, &query, "flash/entropy/skip");
+    }
+
+    #[test]
+    fn arbitrary_fuzz_case_parsers_accept_large_zero_buffers() {
+        let bytes = [0_u8; 4096];
+        let mut cosine = Unstructured::new(&bytes);
+        let mut entropy = Unstructured::new(&bytes);
+        let mut flash_cosine = Unstructured::new(&bytes);
+        let mut flash_entropy = Unstructured::new(&bytes);
+        let mut clean = Unstructured::new(&bytes);
+
+        assert!(CosineFuzzCase::arbitrary(&mut cosine).is_ok());
+        assert!(EntropyFuzzCase::arbitrary(&mut entropy).is_ok());
+        assert!(FlashCosineFuzzCase::arbitrary(&mut flash_cosine).is_ok());
+        assert!(FlashEntropyFuzzCase::arbitrary(&mut flash_entropy).is_ok());
+        assert!(CleanSpectrumFuzzCase::arbitrary(&mut clean).is_ok());
+    }
+
+    #[test]
+    fn fuzz_harnesses_accept_large_zero_buffers() {
+        let bytes = [0_u8; 4096];
+        assert_eq!(
+            run_hungarian_cosine_case(&bytes),
+            HungarianCosineHarnessOutcome::Checked
+        );
+        assert_eq!(
+            run_modified_hungarian_cosine_case(&bytes),
+            ModifiedHungarianCosineHarnessOutcome::Checked
+        );
+        assert_eq!(
+            run_linear_entropy_case(&bytes),
+            LinearEntropyHarnessOutcome::Checked
+        );
+        assert_eq!(
+            run_modified_linear_entropy_case(&bytes),
+            ModifiedLinearEntropyHarnessOutcome::Checked
+        );
+        assert_eq!(
+            run_flash_cosine_case(&bytes),
+            FlashCosineHarnessOutcome::Checked
+        );
+        assert_eq!(
+            run_flash_entropy_case(&bytes),
+            FlashEntropyHarnessOutcome::Checked
+        );
+        assert_eq!(
+            run_ms_entropy_clean_spectrum_case(&bytes),
+            MsEntropyCleanSpectrumHarnessOutcome::Checked
+        );
+    }
+}
