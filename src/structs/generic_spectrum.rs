@@ -132,11 +132,14 @@ impl GenericSpectrum {
 
 impl<'a> ByteArbitrary<'a> for GenericSpectrum {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
-        let precursor_mz = f64::arbitrary(u)?;
+        let precursor_mz = <f64 as ByteArbitrary<'a>>::arbitrary(u)?;
         let peak_count = u.int_in_range(0..=64usize)?;
         let mut peaks = Vec::with_capacity(peak_count);
         for _ in 0..peak_count {
-            peaks.push((f64::arbitrary(u)?, f64::arbitrary(u)?));
+            peaks.push((
+                <f64 as ByteArbitrary<'a>>::arbitrary(u)?,
+                <f64 as ByteArbitrary<'a>>::arbitrary(u)?,
+            ));
         }
         Ok(Self::from_untrusted_parts(precursor_mz, peaks))
     }
@@ -232,14 +235,20 @@ impl ProptestArbitrary for GenericSpectrum {
     type Strategy = BoxedStrategy<Self>;
 
     fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
-        let precursor = f64::arbitrary().prop_map(|value| {
+        let precursor = <f64 as ProptestArbitrary>::arbitrary().prop_map(|value| {
             if value.is_finite() && value >= 0.0 {
                 value
             } else {
                 0.0
             }
         });
-        let peaks = collection::vec((f64::arbitrary(), f64::arbitrary()), 0..64);
+        let peaks = collection::vec(
+            (
+                <f64 as ProptestArbitrary>::arbitrary(),
+                <f64 as ProptestArbitrary>::arbitrary(),
+            ),
+            0..64,
+        );
 
         (precursor, peaks)
             .prop_map(|(precursor_mz, peaks)| {
