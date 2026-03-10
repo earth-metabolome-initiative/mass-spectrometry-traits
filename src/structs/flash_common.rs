@@ -302,7 +302,9 @@ impl<K: FlashKernel> FlashIndex<K> {
                 // Guard against FP inconsistency between window arithmetic
                 // (qmz ± tol) and the canonical |diff| ≤ tol check used by
                 // the linear oracle.
-                if (self.product_mz[idx] - qmz).abs() > self.tolerance {
+                if self.product_mz[idx] < qmz - self.tolerance
+                    || self.product_mz[idx] > qmz + self.tolerance
+                {
                     continue;
                 }
                 let score = K::pair_score(query_data[q_idx], self.product_data[idx]);
@@ -390,7 +392,9 @@ impl<K: FlashKernel> FlashIndex<K> {
                 if self.product_mz[idx] > hi {
                     break;
                 }
-                if (self.product_mz[idx] - qmz).abs() > self.tolerance {
+                if self.product_mz[idx] < qmz - self.tolerance
+                    || self.product_mz[idx] > qmz + self.tolerance
+                {
                     idx += 1;
                     continue;
                 }
@@ -414,7 +418,9 @@ impl<K: FlashKernel> FlashIndex<K> {
                 if self.nl_value[idx] > hi {
                     break;
                 }
-                if (self.nl_value[idx] - query_nl).abs() > self.tolerance {
+                if self.nl_value[idx] < query_nl - self.tolerance
+                    || self.nl_value[idx] > query_nl + self.tolerance
+                {
                     continue;
                 }
                 let product_idx = self.nl_to_product[idx] as usize;
