@@ -469,7 +469,10 @@ pub(crate) fn linear_cosine_sweep(
         while j < right_mz.len() && right_mz[j] < target - tolerance {
             j += 1;
         }
-        if j < right_mz.len() && (right_mz[j] - target).abs() <= tolerance {
+        if j < right_mz.len()
+            && right_mz[j] >= target - tolerance
+            && right_mz[j] <= target + tolerance
+        {
             let product = left_products[i] * right_products[j];
             if product != 0.0 {
                 score_sum += product;
@@ -503,7 +506,10 @@ pub(crate) fn collect_linear_matches(
         while j < right_mz.len() && right_mz[j] + shift < lmz - tolerance {
             j += 1;
         }
-        while j < right_mz.len() && (lmz - (right_mz[j] + shift)).abs() <= tolerance {
+        while j < right_mz.len()
+            && right_mz[j] + shift >= lmz - tolerance
+            && right_mz[j] + shift <= lmz + tolerance
+        {
             matches.push((i, j));
             j += 1;
         }
@@ -525,7 +531,9 @@ pub(crate) fn optimal_modified_linear_matches(
     benefit_fn: impl Fn(usize, usize) -> f64,
 ) -> Vec<(usize, usize)> {
     let direct = collect_linear_matches(left_mz, right_mz, tolerance, 0.0);
-    let candidates: Vec<(usize, usize)> = if (left_precursor - right_precursor).abs() <= tolerance {
+    let candidates: Vec<(usize, usize)> = if right_precursor >= left_precursor - tolerance
+        && right_precursor <= left_precursor + tolerance
+    {
         direct
     } else {
         let left_nl: Vec<f64> = left_mz.iter().map(|&mz| mz - left_precursor).collect();
