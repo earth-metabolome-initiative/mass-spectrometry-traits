@@ -61,6 +61,39 @@ fn modified_is_symmetric_on_tolerance_boundary_single_peak() {
 }
 
 #[test]
+fn hungarian_matches_at_exact_fp_tolerance_boundary() {
+    // Regression: 71.0605 - 71.0505 = 0.010000000000005116 in f64,
+    // which exceeds tolerance=0.01 under abs(diff) <= tol but should
+    // match (matchms reference accepts it via bound-based comparison).
+    let left = one_peak_spectrum(71.0605, 500.0);
+    let right = one_peak_spectrum(71.0505, 500.0);
+    let scorer = HungarianCosine::new(1.0, 1.0, 0.01).expect("valid scorer config");
+
+    let (_score, matches) = scorer
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+    assert_eq!(
+        matches, 1,
+        "peaks 0.01 Da apart in decimal must match at tolerance=0.01"
+    );
+}
+
+#[test]
+fn modified_matches_at_exact_fp_tolerance_boundary() {
+    let left = one_peak_spectrum(71.0605, 500.0);
+    let right = one_peak_spectrum(71.0505, 500.0);
+    let scorer = ModifiedHungarianCosine::new(1.0, 1.0, 0.01).expect("valid scorer config");
+
+    let (_score, matches) = scorer
+        .similarity(&left, &right)
+        .expect("similarity computation should succeed");
+    assert_eq!(
+        matches, 1,
+        "peaks 0.01 Da apart in decimal must match at tolerance=0.01"
+    );
+}
+
+#[test]
 fn modified_is_symmetric_on_shifted_boundary_single_peak() {
     let left = one_peak_spectrum(80.0, 500.0);
     let right = one_peak_spectrum(90.05, 510.0);

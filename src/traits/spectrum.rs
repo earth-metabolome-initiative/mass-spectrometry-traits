@@ -23,18 +23,10 @@ enum TolerancePosition {
 
 #[inline]
 fn tolerance_position_f64(target: f64, candidate: f64, tolerance: f64) -> TolerancePosition {
-    if candidate > target {
-        if candidate - target > tolerance {
-            TolerancePosition::Above
-        } else {
-            TolerancePosition::Within
-        }
-    } else if target > candidate {
-        if target - candidate > tolerance {
-            TolerancePosition::Below
-        } else {
-            TolerancePosition::Within
-        }
+    if candidate > target + tolerance {
+        TolerancePosition::Above
+    } else if candidate < target - tolerance {
+        TolerancePosition::Below
     } else {
         TolerancePosition::Within
     }
@@ -246,7 +238,8 @@ pub trait Spectrum {
         if mz_tolerance < 0.0 {
             return Err(SimilarityComputationError::NegativeTolerance);
         }
-        let use_shifted_window = (self_precursor - other_precursor).abs() > mz_tolerance;
+        let use_shifted_window = other_precursor < self_precursor - mz_tolerance
+            || other_precursor > self_precursor + mz_tolerance;
         let mut matching_peaks = allocate_matching_peaks::<BiRange<u32>>(self.len(), other.len())?;
         let mut lowest_direct = 0usize;
         let mut lowest_shifted = 0usize;
