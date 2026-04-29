@@ -47,3 +47,7 @@ harness = false
 [[bench]]
 name = "index_search"
 harness = false
+
+[[bench]]
+name = "pairwise_linear_cosine_graph"
+harness = false

@@ -94,6 +94,26 @@ fn sorted_results(mut results: Vec<FlashSearchResult>) -> Vec<FlashSearchResult>
     results
 }
 
+fn assert_results_close(
+    actual: Vec<FlashSearchResult>,
+    expected: Vec<FlashSearchResult>,
+    label: &str,
+) {
+    let actual = sorted_results(actual);
+    let expected = sorted_results(expected);
+    assert_eq!(actual.len(), expected.len(), "{label}: result count");
+    for (actual, expected) in actual.iter().zip(expected.iter()) {
+        assert_eq!(actual.spectrum_id, expected.spectrum_id, "{label}: id");
+        assert_eq!(actual.n_matches, expected.n_matches, "{label}: matches");
+        assert!(
+            (actual.score - expected.score).abs() <= 1.0e-12,
+            "{label}: score {} != {}",
+            actual.score,
+            expected.score
+        );
+    }
+}
+
 // ---------- self-similarity: flash score ~1.0 for each spectrum ----------
 
 #[test]
@@ -331,6 +351,70 @@ fn accessors_and_search_with_state_match_stateless_results() {
             .expect("reused stateful search should succeed"),
     );
     assert_eq!(repeated_a, stateless_a);
+}
+
+#[test]
+fn thresholded_search_matches_filtered_direct_search() {
+    let spectra = reference_spectra();
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
+
+    for threshold in [0.0_f64, 0.5_f64, 0.9_f64] {
+        let mut state = index.new_search_state();
+        for (_, query) in &spectra {
+            let expected: Vec<FlashSearchResult> = index
+                .search(query)
+                .expect("direct search should succeed")
+                .into_iter()
+                .filter(|result| result.score >= threshold)
+                .collect();
+            let thresholded = index
+                .search_threshold_with_state(query, threshold, &mut state)
+                .expect("thresholded search should succeed");
+            assert_results_close(thresholded, expected, &format!("threshold={threshold}"));
+        }
+    }
+}
+
+#[test]
+fn thresholded_emitter_reuses_state_and_validates_threshold() {
+    let spectra = reference_spectra();
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
+    let mut state = index.new_search_state();
+
+    let query_a = &spectra[0].1;
+    let query_b = &spectra[1].1;
+
+    let mut emitted_a = Vec::new();
+    index
+        .for_each_threshold_with_state(query_a, 0.9, &mut state, |result| {
+            emitted_a.push(result);
+        })
+        .expect("thresholded emitter should succeed");
+    let expected_a: Vec<FlashSearchResult> = index
+        .search(query_a)
+        .expect("direct search should succeed")
+        .into_iter()
+        .filter(|result| result.score >= 0.9)
+        .collect();
+    assert_results_close(emitted_a, expected_a, "emitted_a");
+
+    let mut emitted_b = Vec::new();
+    index
+        .for_each_threshold_with_state(query_b, 1.1, &mut state, |result| {
+            emitted_b.push(result);
+        })
+        .expect("threshold above one should still validate query and emit no results");
+    assert!(emitted_b.is_empty());
+
+    let error = index
+        .search_threshold(query_a, f64::NAN)
+        .expect_err("non-finite threshold should be rejected");
+    assert_eq!(
+        error,
+        SimilarityComputationError::NonFiniteValue("score_threshold")
+    );
 }
 
 #[test]

@@ -10,7 +10,9 @@ use super::cosine_common::{
     ensure_finite, normalized_peak_products, validate_non_negative_tolerance,
     validate_well_separated,
 };
-use super::flash_common::{FlashIndex, FlashKernel, FlashSearchResult, SearchState};
+use super::flash_common::{
+    DirectThresholdSearch, FlashIndex, FlashKernel, FlashSearchResult, SearchState,
+};
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::Spectrum;
 
@@ -206,6 +208,97 @@ impl FlashCosineIndex {
         Ok(self
             .inner
             .search_direct_with_state(&query_mz, &query_data, &query_meta, state))
+    }
+
+    /// Direct search that returns only results with `score >= score_threshold`.
+    ///
+    /// Unlike filtering [`Self::search`] afterward, this threads the threshold
+    /// into the index scan and prunes candidates whose best possible remaining
+    /// cosine score cannot reach the threshold.
+    ///
+    /// Thresholds less than or equal to zero are equivalent to [`Self::search`].
+    /// Thresholds greater than one return no results.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityComputationError`] if the query violates the
+    /// well-separated precondition, contains non-representable values, or if
+    /// `score_threshold` is not finite.
+    pub fn search_threshold<S>(
+        &self,
+        query: &S,
+        score_threshold: f64,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut state = self.new_search_state();
+        self.search_threshold_with_state(query, score_threshold, &mut state)
+    }
+
+    /// Thresholded direct search using a caller-provided [`SearchState`] to
+    /// avoid per-query allocation.
+    pub fn search_threshold_with_state<S>(
+        &self,
+        query: &S,
+        score_threshold: f64,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut results = Vec::new();
+        self.for_each_threshold_with_state(query, score_threshold, state, |result| {
+            results.push(result);
+        })?;
+        Ok(results)
+    }
+
+    /// Thresholded direct search that emits each result to `emit`.
+    ///
+    /// This is the lowest-allocation API for graph construction: callers can
+    /// reuse `state` across queries and write accepted edges directly into
+    /// their graph builder.
+    pub fn for_each_threshold_with_state<S, Emit>(
+        &self,
+        query: &S,
+        score_threshold: f64,
+        state: &mut SearchState,
+        mut emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        S: Spectrum,
+        Emit: FnMut(FlashSearchResult),
+    {
+        ensure_finite(score_threshold, "score_threshold")?;
+        if score_threshold <= 0.0 {
+            for result in self.search_with_state(query, state)? {
+                emit(result);
+            }
+            return Ok(());
+        }
+        if score_threshold > 1.0 {
+            let _ = self.prepare_query(query)?;
+            return Ok(());
+        }
+
+        let (query_mz, query_data) = self.prepare_query(query)?;
+        let query_meta = CosineKernel::spectrum_meta(&query_data);
+        let query_norm = query_meta.0;
+
+        self.inner.for_each_direct_threshold_with_state(
+            DirectThresholdSearch {
+                query_mz: &query_mz,
+                query_data: &query_data,
+                query_meta: &query_meta,
+                score_threshold,
+            },
+            state,
+            emit,
+            |lib_meta| score_threshold * query_norm * lib_meta.0,
+            |lib_meta| lib_meta.0,
+        );
+        Ok(())
     }
 
     /// Modified (direct + shifted) search against the library.
