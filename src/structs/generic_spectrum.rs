@@ -15,7 +15,7 @@ use crate::numeric_validation::{ELECTRON_MASS, MAX_MZ};
 use crate::traits::{Spectrum, SpectrumAlloc, SpectrumMut};
 
 /// A generic spectrum struct.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GenericSpectrum {
     mz: SortedVec<f64>,
     intensity: Vec<f64>,
