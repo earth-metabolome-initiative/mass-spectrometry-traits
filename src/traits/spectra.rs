@@ -6,10 +6,11 @@ use super::spectrum::Spectrum;
 pub trait Spectra {
     /// The type of the Spectrum.
     type Spectrum: Spectrum;
-    /// The type of the Spectrum iterator.
-    type SpectraIter<'a>: Iterator<Item = Self::Spectrum>
+    /// The type of the borrowed Spectrum iterator.
+    type SpectraIter<'a>: Iterator<Item = &'a Self::Spectrum>
     where
-        Self: 'a;
+        Self: 'a,
+        Self::Spectrum: 'a;
 
     /// Returns an iterator over the Spectra.
     fn spectra(&self) -> Self::SpectraIter<'_>;
@@ -30,7 +31,6 @@ mod tests {
     use super::*;
     use crate::traits::Spectrum;
 
-    #[derive(Clone)]
     struct TestSpectrum {
         precursor_mz: f64,
         peaks: alloc::vec::Vec<(f64, f64)>,
@@ -92,12 +92,13 @@ mod tests {
     impl Spectra for TestSpectra {
         type Spectrum = TestSpectrum;
         type SpectraIter<'a>
-            = alloc::vec::IntoIter<TestSpectrum>
+            = core::slice::Iter<'a, TestSpectrum>
         where
-            Self: 'a;
+            Self: 'a,
+            Self::Spectrum: 'a;
 
         fn spectra(&self) -> Self::SpectraIter<'_> {
-            self.0.clone().into_iter()
+            self.0.iter()
         }
 
         fn len(&self) -> usize {
