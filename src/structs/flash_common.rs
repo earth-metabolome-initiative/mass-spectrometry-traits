@@ -54,11 +54,147 @@ pub struct FlashSearchResult {
     pub n_matches: usize,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct DirectThresholdSearch<'a, K: FlashKernel> {
     pub(crate) query_mz: &'a [f64],
     pub(crate) query_data: &'a [f64],
     pub(crate) query_meta: &'a K::SpectrumMeta,
     pub(crate) score_threshold: f64,
+}
+
+/// Library-side prefix postings for threshold-specialized direct searches.
+///
+/// A threshold-aware wrapper chooses how each spectrum's prefix is computed,
+/// then this shared structure stores those prefix peaks in a sorted m/z index
+/// and in per-spectrum order for indexed-query graph construction.
+pub(crate) struct ThresholdPrefixPostings {
+    prefix_mz: Vec<f64>,
+    prefix_spec_id: Vec<u32>,
+    spectrum_prefix_offsets: Vec<u32>,
+    spectrum_prefix_mz: Vec<f64>,
+}
+
+impl ThresholdPrefixPostings {
+    pub(crate) fn build(
+        spectra: &[(f64, Vec<f64>, Vec<f64>)],
+        mut prefix_indices: impl FnMut(&[f64]) -> Vec<usize>,
+    ) -> Result<Self, SimilarityComputationError> {
+        let mut prefix_entries: Vec<(f64, u32)> = Vec::new();
+        let mut spectrum_prefix_offsets = Vec::with_capacity(spectra.len() + 1);
+        let mut spectrum_prefix_mz = Vec::new();
+        spectrum_prefix_offsets.push(0);
+
+        for (spec_id, (_, mz_vals, data_vals)) in spectra.iter().enumerate() {
+            let spec_id_u32 =
+                u32::try_from(spec_id).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+            for peak_index in prefix_indices(data_vals) {
+                let mz = mz_vals[peak_index];
+                prefix_entries.push((mz, spec_id_u32));
+                spectrum_prefix_mz.push(mz);
+            }
+            let offset = u32::try_from(spectrum_prefix_mz.len())
+                .map_err(|_| SimilarityComputationError::IndexOverflow)?;
+            spectrum_prefix_offsets.push(offset);
+        }
+
+        prefix_entries.sort_unstable_by(|left, right| {
+            left.0
+                .total_cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+        });
+
+        let mut prefix_mz = Vec::with_capacity(prefix_entries.len());
+        let mut prefix_spec_id = Vec::with_capacity(prefix_entries.len());
+        for (mz, spec_id) in prefix_entries {
+            prefix_mz.push(mz);
+            prefix_spec_id.push(spec_id);
+        }
+
+        Ok(Self {
+            prefix_mz,
+            prefix_spec_id,
+            spectrum_prefix_offsets,
+            spectrum_prefix_mz,
+        })
+    }
+
+    #[inline]
+    pub(crate) fn n_prefix_peaks(&self) -> usize {
+        self.prefix_mz.len()
+    }
+
+    pub(crate) fn spectrum_prefix_mz(&self, spec_id: u32) -> &[f64] {
+        let prefix_start = self.spectrum_prefix_offsets[spec_id as usize] as usize;
+        let prefix_end = self.spectrum_prefix_offsets[spec_id as usize + 1] as usize;
+        &self.spectrum_prefix_mz[prefix_start..prefix_end]
+    }
+
+    fn for_each_spectrum_in_window(&self, mz: f64, tolerance: f64, mut emit: impl FnMut(u32)) {
+        let lo = mz - tolerance;
+        let hi = mz + tolerance;
+        let start = self.prefix_mz.partition_point(|&value| value < lo);
+
+        for idx in start..self.prefix_mz.len() {
+            if self.prefix_mz[idx] > hi {
+                break;
+            }
+            if self.prefix_mz[idx] < mz - tolerance || self.prefix_mz[idx] > mz + tolerance {
+                continue;
+            }
+
+            emit(self.prefix_spec_id[idx]);
+        }
+    }
+}
+
+/// Prefix indices for score bounds that can be represented as an L2 suffix
+/// norm over per-peak weights.
+pub(crate) fn l2_threshold_prefix_indices(
+    peak_weights: &[f64],
+    score_threshold: f64,
+) -> Vec<usize> {
+    if peak_weights.is_empty() || score_threshold > 1.0 {
+        return Vec::new();
+    }
+
+    let mut order: Vec<usize> = (0..peak_weights.len()).collect();
+    order.sort_unstable_by(|&left, &right| {
+        peak_weights[right]
+            .abs()
+            .total_cmp(&peak_weights[left].abs())
+            .then_with(|| left.cmp(&right))
+    });
+
+    if score_threshold <= 0.0 {
+        return order;
+    }
+
+    let norm = peak_weights
+        .iter()
+        .map(|&value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    if norm == 0.0 {
+        return Vec::new();
+    }
+
+    let mut suffix_norm = alloc::vec![0.0_f64; order.len() + 1];
+    for order_index in (0..order.len()).rev() {
+        let peak_index = order[order_index];
+        suffix_norm[order_index] =
+            suffix_norm[order_index + 1] + peak_weights[peak_index] * peak_weights[peak_index];
+    }
+    for value in &mut suffix_norm {
+        *value = value.sqrt();
+    }
+
+    let target_norm = score_threshold * norm;
+    let prefix_len = suffix_norm
+        .iter()
+        .position(|&remaining_norm| remaining_norm < target_norm)
+        .unwrap_or(order.len());
+    order.truncate(prefix_len);
+    order
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +276,8 @@ pub struct SearchState {
     direct_scores: Vec<f64>,
     candidate_spectra: BitVec,
     candidate_touched: Vec<u32>,
+    secondary_candidate_spectra: BitVec,
+    secondary_candidate_touched: Vec<u32>,
     query_order: Vec<usize>,
     query_suffix_norm: Vec<f64>,
 }
@@ -154,18 +292,29 @@ impl SearchState {
             direct_scores: Vec::new(),
             candidate_spectra: BitVec::new(),
             candidate_touched: Vec::new(),
+            secondary_candidate_spectra: BitVec::new(),
+            secondary_candidate_touched: Vec::new(),
             query_order: Vec::new(),
             query_suffix_norm: Vec::new(),
         }
     }
 
-    fn ensure_candidate_capacity(&mut self, n_spectra: usize) {
+    pub(crate) fn ensure_candidate_capacity(&mut self, n_spectra: usize) {
         if self.candidate_spectra.len() == n_spectra {
             return;
         }
 
         self.candidate_spectra = bitvec![0; n_spectra];
         self.candidate_touched.clear();
+    }
+
+    pub(crate) fn ensure_secondary_candidate_capacity(&mut self, n_spectra: usize) {
+        if self.secondary_candidate_spectra.len() == n_spectra {
+            return;
+        }
+
+        self.secondary_candidate_spectra = bitvec![0; n_spectra];
+        self.secondary_candidate_touched.clear();
     }
 
     fn ensure_modified_capacity(&mut self, n_products: usize) {
@@ -178,7 +327,7 @@ impl SearchState {
         self.direct_scores.resize(n_products, 0.0);
     }
 
-    fn prepare_threshold_order(&mut self, query_data: &[f64]) {
+    pub(crate) fn prepare_threshold_order(&mut self, query_data: &[f64]) {
         self.query_order.clear();
         self.query_order.extend(0..query_data.len());
         self.query_order.sort_unstable_by(|&left, &right| {
@@ -200,8 +349,23 @@ impl SearchState {
         }
     }
 
+    pub(crate) fn threshold_prefix_len(&self, score_threshold: f64) -> usize {
+        let Some(&query_norm) = self.query_suffix_norm.first() else {
+            return 0;
+        };
+        let target_query_norm = query_norm * score_threshold;
+        self.query_suffix_norm
+            .iter()
+            .position(|&remaining_norm| remaining_norm < target_query_norm)
+            .unwrap_or(self.query_order.len())
+    }
+
+    pub(crate) fn query_order(&self) -> &[usize] {
+        &self.query_order
+    }
+
     #[inline]
-    fn mark_candidate(&mut self, spec_id: u32) {
+    pub(crate) fn mark_candidate(&mut self, spec_id: u32) {
         let idx = spec_id as usize;
         if !self.candidate_spectra[idx] {
             self.candidate_spectra.set(idx, true);
@@ -209,11 +373,41 @@ impl SearchState {
         }
     }
 
-    fn reset_candidates(&mut self) {
+    #[inline]
+    pub(crate) fn is_candidate(&self, spec_id: u32) -> bool {
+        self.candidate_spectra[spec_id as usize]
+    }
+
+    pub(crate) fn candidate_touched(&self) -> &[u32] {
+        &self.candidate_touched
+    }
+
+    pub(crate) fn reset_candidates(&mut self) {
         for &spec_id in &self.candidate_touched {
             self.candidate_spectra.set(spec_id as usize, false);
         }
         self.candidate_touched.clear();
+    }
+
+    #[inline]
+    pub(crate) fn mark_secondary_candidate(&mut self, spec_id: u32) {
+        let idx = spec_id as usize;
+        if !self.secondary_candidate_spectra[idx] {
+            self.secondary_candidate_spectra.set(idx, true);
+            self.secondary_candidate_touched.push(spec_id);
+        }
+    }
+
+    pub(crate) fn secondary_candidate_touched(&self) -> &[u32] {
+        &self.secondary_candidate_touched
+    }
+
+    pub(crate) fn reset_secondary_candidates(&mut self) {
+        for &spec_id in &self.secondary_candidate_touched {
+            self.secondary_candidate_spectra
+                .set(spec_id as usize, false);
+        }
+        self.secondary_candidate_touched.clear();
     }
 }
 
@@ -363,6 +557,80 @@ impl<K: FlashKernel> FlashIndex<K> {
         SearchState::new(self.n_spectra as usize, self.product_mz.len())
     }
 
+    pub(crate) fn spectrum_slices(&self, spec_id: u32) -> (&[f64], &[f64]) {
+        let offset_start = self.spectrum_offsets[spec_id as usize] as usize;
+        let offset_end = self.spectrum_offsets[spec_id as usize + 1] as usize;
+        (
+            &self.spectrum_mz[offset_start..offset_end],
+            &self.spectrum_data[offset_start..offset_end],
+        )
+    }
+
+    pub(crate) fn spectrum_meta(&self, spec_id: u32) -> &K::SpectrumMeta {
+        &self.spectrum_meta[spec_id as usize]
+    }
+
+    pub(crate) fn for_each_product_spectrum_in_window(&self, mz: f64, mut emit: impl FnMut(u32)) {
+        let lo = mz - self.tolerance;
+        let hi = mz + self.tolerance;
+        let start = self.product_mz.partition_point(|&v| v < lo);
+
+        for idx in start..self.product_mz.len() {
+            if self.product_mz[idx] > hi {
+                break;
+            }
+            if self.product_mz[idx] < mz - self.tolerance
+                || self.product_mz[idx] > mz + self.tolerance
+            {
+                continue;
+            }
+            emit(self.product_spec_id[idx]);
+        }
+    }
+
+    pub(crate) fn mark_candidates_from_query_prefix_indices(
+        &self,
+        query_mz: &[f64],
+        query_prefix_indices: &[usize],
+        state: &mut SearchState,
+    ) {
+        state.ensure_candidate_capacity(self.n_spectra as usize);
+        for &query_index in query_prefix_indices {
+            self.for_each_product_spectrum_in_window(query_mz[query_index], |spec_id| {
+                state.mark_candidate(spec_id);
+            });
+        }
+    }
+
+    pub(crate) fn mark_candidates_from_query_prefix_mz(
+        &self,
+        query_prefix_mz: &[f64],
+        state: &mut SearchState,
+    ) {
+        state.ensure_candidate_capacity(self.n_spectra as usize);
+        for &mz in query_prefix_mz {
+            self.for_each_product_spectrum_in_window(mz, |spec_id| {
+                state.mark_candidate(spec_id);
+            });
+        }
+    }
+
+    pub(crate) fn intersect_candidates_with_library_prefixes(
+        &self,
+        query_mz: &[f64],
+        library_prefixes: &ThresholdPrefixPostings,
+        state: &mut SearchState,
+    ) {
+        state.ensure_secondary_candidate_capacity(self.n_spectra as usize);
+        for &mz in query_mz {
+            library_prefixes.for_each_spectrum_in_window(mz, self.tolerance, |spec_id| {
+                if state.is_candidate(spec_id) {
+                    state.mark_secondary_candidate(spec_id);
+                }
+            });
+        }
+    }
+
     /// Direct (unshifted) search: for each query peak, binary-search the
     /// product index and accumulate scores.
     pub(crate) fn search_direct(
@@ -449,7 +717,7 @@ impl<K: FlashKernel> FlashIndex<K> {
         });
     }
 
-    fn direct_score_for_spectrum(
+    pub(crate) fn direct_score_for_spectrum(
         &self,
         query_mz: &[f64],
         query_data: &[f64],
@@ -484,6 +752,90 @@ impl<K: FlashKernel> FlashIndex<K> {
         }
 
         (raw, n_matches)
+    }
+
+    pub(crate) fn emit_exact_primary_candidates<Emit, TargetRaw, LibraryBound>(
+        &self,
+        search: DirectThresholdSearch<'_, K>,
+        state: &mut SearchState,
+        emit: &mut Emit,
+        target_raw_score: &mut TargetRaw,
+        library_bound: &mut LibraryBound,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+        TargetRaw: FnMut(&K::SpectrumMeta) -> f64,
+        LibraryBound: FnMut(&K::SpectrumMeta) -> f64,
+    {
+        for &spec_id in state.candidate_touched() {
+            self.emit_exact_threshold_candidate(
+                &search,
+                spec_id,
+                emit,
+                target_raw_score,
+                library_bound,
+            );
+        }
+
+        state.reset_candidates();
+    }
+
+    pub(crate) fn emit_exact_secondary_candidates<Emit, TargetRaw, LibraryBound>(
+        &self,
+        search: DirectThresholdSearch<'_, K>,
+        state: &mut SearchState,
+        emit: &mut Emit,
+        target_raw_score: &mut TargetRaw,
+        library_bound: &mut LibraryBound,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+        TargetRaw: FnMut(&K::SpectrumMeta) -> f64,
+        LibraryBound: FnMut(&K::SpectrumMeta) -> f64,
+    {
+        for &spec_id in state.secondary_candidate_touched() {
+            self.emit_exact_threshold_candidate(
+                &search,
+                spec_id,
+                emit,
+                target_raw_score,
+                library_bound,
+            );
+        }
+
+        state.reset_secondary_candidates();
+        state.reset_candidates();
+    }
+
+    fn emit_exact_threshold_candidate<Emit, TargetRaw, LibraryBound>(
+        &self,
+        search: &DirectThresholdSearch<'_, K>,
+        spec_id: u32,
+        emit: &mut Emit,
+        target_raw_score: &mut TargetRaw,
+        library_bound: &mut LibraryBound,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+        TargetRaw: FnMut(&K::SpectrumMeta) -> f64,
+        LibraryBound: FnMut(&K::SpectrumMeta) -> f64,
+    {
+        let lib_meta = &self.spectrum_meta[spec_id as usize];
+        if library_bound(lib_meta) == 0.0 {
+            return;
+        }
+
+        let (raw, count) =
+            self.direct_score_for_spectrum(search.query_mz, search.query_data, spec_id);
+        if raw < target_raw_score(lib_meta) {
+            return;
+        }
+
+        let score = K::finalize(raw, count, search.query_meta, lib_meta);
+        if score > 0.0 && score >= search.score_threshold {
+            emit(FlashSearchResult {
+                spectrum_id: spec_id,
+                score,
+                n_matches: count,
+            });
+        }
     }
 
     pub(crate) fn for_each_direct_threshold_with_state<Emit, TargetRaw, LibraryBound>(
@@ -540,55 +892,19 @@ impl<K: FlashKernel> FlashIndex<K> {
             return;
         }
 
-        state.ensure_candidate_capacity(self.n_spectra as usize);
-        for order_index in 0..prefix_len {
-            let q_idx = state.query_order[order_index];
-            let qmz = search.query_mz[q_idx];
-            let lo = qmz - self.tolerance;
-            let hi = qmz + self.tolerance;
-            let start = self.product_mz.partition_point(|&v| v < lo);
-
-            for idx in start..self.product_mz.len() {
-                if self.product_mz[idx] > hi {
-                    break;
-                }
-                if self.product_mz[idx] < qmz - self.tolerance
-                    || self.product_mz[idx] > qmz + self.tolerance
-                {
-                    continue;
-                }
-
-                let spec_id = self.product_spec_id[idx];
-                state.mark_candidate(spec_id);
-            }
-        }
-
-        for &spec_id in &state.candidate_touched {
-            let lib_meta = &self.spectrum_meta[spec_id as usize];
-            if library_bound(lib_meta) == 0.0 {
-                continue;
-            }
-            let (raw, count) =
-                self.direct_score_for_spectrum(search.query_mz, search.query_data, spec_id);
-            if raw < target_raw_score(lib_meta) {
-                continue;
-            }
-            let score = K::finalize(
-                raw,
-                count,
-                search.query_meta,
-                &self.spectrum_meta[spec_id as usize],
-            );
-            if score > 0.0 && score >= search.score_threshold {
-                emit(FlashSearchResult {
-                    spectrum_id: spec_id,
-                    score,
-                    n_matches: count,
-                });
-            }
-        }
-
-        state.reset_candidates();
+        let query_prefix_indices: Vec<usize> = state.query_order[..prefix_len].to_vec();
+        self.mark_candidates_from_query_prefix_indices(
+            search.query_mz,
+            &query_prefix_indices,
+            state,
+        );
+        self.emit_exact_primary_candidates(
+            search,
+            state,
+            &mut emit,
+            &mut target_raw_score,
+            &mut library_bound,
+        );
     }
 
     /// Modified (direct + shifted) search with anti-double-counting.
@@ -826,6 +1142,46 @@ mod tests {
         assert_eq!(modified_state.acc.scores.len(), 2);
         assert_eq!(modified_state.matched_products.len(), 3);
         assert_eq!(modified_state.direct_scores.len(), 3);
+    }
+
+    #[test]
+    fn l2_threshold_prefix_indices_stop_when_suffix_bound_is_below_threshold() {
+        let prefix = l2_threshold_prefix_indices(&[1.0, 4.0, 0.5], 0.9);
+        assert_eq!(prefix, vec![1]);
+
+        let all = l2_threshold_prefix_indices(&[1.0, 4.0, 0.5], 0.0);
+        assert_eq!(all, vec![1, 0, 2]);
+
+        let empty = l2_threshold_prefix_indices(&[1.0, 4.0, 0.5], 1.1);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn threshold_prefix_postings_support_candidate_intersection() {
+        let spectra = vec![
+            (200.0, vec![100.0, 150.0], vec![4.0, 1.0]),
+            (300.0, vec![100.05, 250.0], vec![1.0, 5.0]),
+        ];
+        let prefixes =
+            ThresholdPrefixPostings::build(&spectra, |data| l2_threshold_prefix_indices(data, 0.9))
+                .expect("prefix postings should build");
+        assert_eq!(prefixes.n_prefix_peaks(), 2);
+        assert_eq!(prefixes.spectrum_prefix_mz(0), &[100.0]);
+        assert_eq!(prefixes.spectrum_prefix_mz(1), &[250.0]);
+
+        let index = build_test_index(spectra, 0.1);
+        let mut state = index.new_search_state();
+        index.mark_candidates_from_query_prefix_mz(&[100.02], &mut state);
+        assert!(state.is_candidate(0));
+        assert!(state.is_candidate(1));
+
+        index.intersect_candidates_with_library_prefixes(&[100.02], &prefixes, &mut state);
+        assert_eq!(state.secondary_candidate_touched(), &[0]);
+
+        state.reset_secondary_candidates();
+        state.reset_candidates();
+        assert!(!state.is_candidate(0));
+        assert!(!state.is_candidate(1));
     }
 
     #[test]

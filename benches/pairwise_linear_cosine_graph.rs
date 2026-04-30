@@ -1,9 +1,10 @@
-//! Large thresholded graph benchmarks for linear cosine similarity.
+//! Large thresholded graph benchmarks for linear cosine and entropy similarity.
 //!
 //! The graph use case is an upper-triangular all-pairs similarity scan where
 //! only scores above a threshold become edges. For 24M nodes the full pair
 //! space is ~288T pairs, so this benchmark reports logical pair throughput and
-//! includes an indexed thresholded search path alongside all-pairs baselines.
+//! includes cosine indexed threshold search paths alongside all-pairs
+//! baselines.
 //!
 //! Environment knobs:
 //!
@@ -15,7 +16,8 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mass_spectrometry::prelude::{
-    FlashCosineIndex, GenericSpectrum, LinearCosine, ScalarSimilarity, Spectrum, SpectrumMut,
+    FlashCosineIndex, FlashCosineThresholdIndex, GenericSpectrum, LinearCosine, LinearEntropy,
+    ScalarSimilarity, Spectrum, SpectrumMut,
 };
 
 const DEFAULT_NODE_COUNTS: &[usize] = &[1_024, 4_096];
@@ -327,6 +329,30 @@ fn thresholded_public_api_all_pairs(
     stats
 }
 
+fn thresholded_entropy_public_api_all_pairs(
+    spectra: &[GenericSpectrum],
+    scorer: &LinearEntropy,
+    score_threshold: f64,
+) -> GraphStats {
+    let mut stats = GraphStats::default();
+
+    for left_index in 0..spectra.len() {
+        let left = &spectra[left_index];
+        for right in &spectra[(left_index + 1)..] {
+            let (score, matches) = scorer
+                .similarity(left, right)
+                .expect("benchmark spectra satisfy LinearEntropy preconditions");
+            if score >= score_threshold {
+                stats.edges += 1;
+                stats.matched_peaks += matches;
+                stats.score_sum += score;
+            }
+        }
+    }
+
+    stats
+}
+
 fn thresholded_flash_index_graph(
     spectra: &[GenericSpectrum],
     index: &FlashCosineIndex,
@@ -337,6 +363,26 @@ fn thresholded_flash_index_graph(
 
     for (query_id, query) in spectra.iter().enumerate() {
         index.for_each_threshold_with_state(query, score_threshold, &mut state, |result| {
+            if result.spectrum_id as usize > query_id {
+                stats.edges += 1;
+                stats.matched_peaks += result.n_matches;
+                stats.score_sum += result.score;
+            }
+        })?;
+    }
+
+    Ok(stats)
+}
+
+fn thresholded_flash_threshold_index_graph(
+    node_count: usize,
+    index: &FlashCosineThresholdIndex,
+) -> Result<GraphStats, mass_spectrometry::prelude::SimilarityComputationError> {
+    let mut stats = GraphStats::default();
+    let mut state = index.new_search_state();
+
+    for query_id in 0..node_count {
+        index.for_each_indexed_with_state(query_id as u32, &mut state, |result| {
             if result.spectrum_id as usize > query_id {
                 stats.edges += 1;
                 stats.matched_peaks += result.n_matches;
@@ -401,6 +447,32 @@ fn bench_pairwise_linear_cosine_graph(c: &mut Criterion) {
                     });
                 },
             );
+
+            let threshold_index = FlashCosineThresholdIndex::new(
+                MZ_POWER,
+                INTENSITY_POWER,
+                MZ_TOLERANCE,
+                score_threshold,
+                spectra.iter(),
+            )
+            .expect("benchmark spectra should build a threshold flash cosine index");
+            group.throughput(Throughput::Elements(logical_pairs));
+            group.bench_with_input(
+                BenchmarkId::new(
+                    format!("flash_threshold_index_by_id_{score_threshold:.2}"),
+                    node_count,
+                ),
+                &threshold_index,
+                |bench, threshold_index| {
+                    bench.iter(|| {
+                        thresholded_flash_threshold_index_graph(
+                            black_box(node_count),
+                            black_box(threshold_index),
+                        )
+                        .expect("benchmark spectra satisfy FlashCosineThresholdIndex preconditions")
+                    });
+                },
+            );
         }
     }
 
@@ -436,6 +508,38 @@ fn bench_pairwise_linear_cosine_graph(c: &mut Criterion) {
     }
 
     public_api_group.finish();
+
+    let entropy_scorer =
+        LinearEntropy::weighted(MZ_TOLERANCE).expect("benchmark entropy config should be valid");
+    let mut entropy_public_api_group =
+        c.benchmark_group("thresholded_pairwise_linear_entropy_public_api_baseline");
+    entropy_public_api_group.sample_size(10);
+
+    for node_count in parse_node_counts(
+        "PAIRWISE_LINEAR_COSINE_PUBLIC_API_NODES",
+        DEFAULT_PUBLIC_API_NODE_COUNTS,
+    ) {
+        let spectra = build_clustered_spectra(node_count);
+        for &score_threshold in &score_thresholds {
+            entropy_public_api_group
+                .throughput(Throughput::Elements(upper_triangle_pairs(node_count)));
+            entropy_public_api_group.bench_with_input(
+                BenchmarkId::new(format!("threshold_{score_threshold:.2}"), node_count),
+                &spectra,
+                |bench, spectra| {
+                    bench.iter(|| {
+                        thresholded_entropy_public_api_all_pairs(
+                            black_box(spectra),
+                            black_box(&entropy_scorer),
+                            black_box(score_threshold),
+                        )
+                    });
+                },
+            );
+        }
+    }
+
+    entropy_public_api_group.finish();
 }
 
 criterion_group!(benches, bench_pairwise_linear_cosine_graph);

@@ -4,10 +4,10 @@
 //! self-similarity, symmetry, empty/edge cases, and modified search.
 
 use mass_spectrometry::prelude::{
-    CocaineSpectrum, FlashCosineIndex, FlashCosineIndexError, FlashSearchResult, GenericSpectrum,
-    GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearCosine, PhenylalanineSpectrum,
-    SalicinSpectrum, ScalarSimilarity, SimilarityComputationError, SimilarityConfigError, Spectrum,
-    SpectrumAlloc, SpectrumMut,
+    CocaineSpectrum, FlashCosineIndex, FlashCosineIndexError, FlashCosineThresholdIndex,
+    FlashSearchResult, GenericSpectrum, GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearCosine,
+    PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, SimilarityComputationError,
+    SimilarityConfigError, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 
 fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
@@ -415,6 +415,95 @@ fn thresholded_emitter_reuses_state_and_validates_threshold() {
         error,
         SimilarityComputationError::NonFiniteValue("score_threshold")
     );
+}
+
+#[test]
+fn threshold_index_matches_filtered_direct_search() {
+    let spectra = reference_spectra();
+    let direct_index =
+        FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("direct index build should succeed");
+
+    for threshold in [0.5_f64, 0.7_f64, 0.9_f64] {
+        let threshold_index = FlashCosineThresholdIndex::new(
+            1.0_f64,
+            1.0_f64,
+            0.1_f64,
+            threshold,
+            spectra.iter().map(|(_, s)| s),
+        )
+        .expect("threshold index build should succeed");
+        assert_eq!(threshold_index.score_threshold(), threshold);
+        assert_eq!(threshold_index.n_spectra(), spectra.len() as u32);
+
+        let mut external_state = threshold_index.new_search_state();
+        let mut indexed_state = threshold_index.new_search_state();
+        for (query_id, (_, query)) in spectra.iter().enumerate() {
+            let expected: Vec<FlashSearchResult> = direct_index
+                .search(query)
+                .expect("direct search should succeed")
+                .into_iter()
+                .filter(|result| result.score >= threshold)
+                .collect();
+
+            let external = threshold_index
+                .search_with_state(query, &mut external_state)
+                .expect("threshold search should succeed");
+            assert_results_close(
+                external,
+                expected.clone(),
+                &format!("external threshold={threshold}"),
+            );
+
+            let mut indexed = Vec::new();
+            threshold_index
+                .for_each_indexed_with_state(query_id as u32, &mut indexed_state, |result| {
+                    indexed.push(result);
+                })
+                .expect("indexed threshold search should succeed");
+            assert_results_close(indexed, expected, &format!("indexed threshold={threshold}"));
+        }
+    }
+}
+
+#[test]
+fn threshold_index_validates_threshold_and_query_id() {
+    let spectra = reference_spectra();
+    let nan_threshold = FlashCosineThresholdIndex::new(
+        1.0_f64,
+        1.0_f64,
+        0.1_f64,
+        f64::NAN,
+        spectra.iter().map(|(_, s)| s),
+    );
+    assert!(matches!(
+        nan_threshold,
+        Err(FlashCosineIndexError::Computation(
+            SimilarityComputationError::NonFiniteValue("score_threshold")
+        ))
+    ));
+
+    let threshold_index = FlashCosineThresholdIndex::new(
+        1.0_f64,
+        1.0_f64,
+        0.1_f64,
+        1.1_f64,
+        spectra.iter().map(|(_, s)| s),
+    )
+    .expect("threshold above one should build");
+    assert_eq!(threshold_index.n_prefix_peaks(), 0);
+
+    let mut state = threshold_index.new_search_state();
+    let mut emitted = Vec::new();
+    threshold_index
+        .for_each_indexed_with_state(0, &mut state, |result| emitted.push(result))
+        .expect("threshold above one should emit no indexed results");
+    assert!(emitted.is_empty());
+
+    let out_of_bounds = threshold_index
+        .for_each_indexed_with_state(spectra.len() as u32, &mut state, |_| {})
+        .expect_err("out-of-bounds query id should fail");
+    assert_eq!(out_of_bounds, SimilarityComputationError::IndexOverflow);
 }
 
 #[test]

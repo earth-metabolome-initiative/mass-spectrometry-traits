@@ -12,9 +12,13 @@ use super::cosine_common::{
 };
 use super::flash_common::{
     DirectThresholdSearch, FlashIndex, FlashKernel, FlashSearchResult, SearchState,
+    ThresholdPrefixPostings, l2_threshold_prefix_indices,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::Spectrum;
+
+const THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD: f64 = 0.85;
+const THRESHOLD_INDEX_TWO_SIDED_MIN_THRESHOLD: f64 = 0.85;
 
 // ---------------------------------------------------------------------------
 // CosineKernel
@@ -54,6 +58,23 @@ impl FlashKernel for CosineKernel {
         let sim = raw / denom;
         if sim > 1.0 { 1.0 } else { sim }
     }
+}
+
+fn prepare_cosine_query<S>(
+    query: &S,
+    mz_power: f64,
+    intensity_power: f64,
+    tolerance: f64,
+) -> Result<(Vec<f64>, Vec<f64>), SimilarityComputationError>
+where
+    S: Spectrum,
+{
+    let mz_vals: Vec<f64> = query.mz().collect();
+    let data_vals = normalized_peak_products(query, mz_power, intensity_power)?;
+
+    validate_well_separated(&mz_vals, tolerance, "query spectrum")?;
+
+    Ok((mz_vals, data_vals))
 }
 
 // ---------------------------------------------------------------------------
@@ -356,12 +377,376 @@ impl FlashCosineIndex {
     where
         S: Spectrum,
     {
-        let mz_vals: Vec<f64> = query.mz().collect();
-        let data_vals = normalized_peak_products(query, self.mz_power, self.intensity_power)?;
+        prepare_cosine_query(
+            query,
+            self.mz_power,
+            self.intensity_power,
+            self.inner.tolerance,
+        )
+    }
+}
 
-        validate_well_separated(&mz_vals, self.inner.tolerance, "query spectrum")?;
+// ---------------------------------------------------------------------------
+// FlashCosineThresholdIndex
+// ---------------------------------------------------------------------------
 
-        Ok((mz_vals, data_vals))
+/// Threshold-specialized Flash index for direct cosine graph construction.
+///
+/// Unlike [`FlashCosineIndex::search_threshold`], this index fixes the score
+/// threshold at construction time and builds library-side prefix postings for
+/// that threshold. Search first intersects query-prefix and library-prefix
+/// candidate filters, then exactly re-scores only the surviving spectra.
+pub struct FlashCosineThresholdIndex {
+    inner: FlashIndex<CosineKernel>,
+    mz_power: f64,
+    intensity_power: f64,
+    score_threshold: f64,
+    prefix_postings: ThresholdPrefixPostings,
+}
+
+impl FlashCosineThresholdIndex {
+    /// Build a threshold-specialized cosine index from an iterator of spectra.
+    ///
+    /// The threshold is part of the index. Build one index per cutoff, or one
+    /// index at the lowest cutoff you need if you can accept less pruning for
+    /// higher cutoffs.
+    pub fn new<'a, S>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        score_threshold: f64,
+        spectra: impl IntoIterator<Item = &'a S>,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        S: Spectrum + 'a,
+    {
+        validate_non_negative_tolerance(mz_tolerance).map_err(FlashCosineIndexError::Config)?;
+        ensure_finite(mz_power, "mz_power").map_err(FlashCosineIndexError::Computation)?;
+        ensure_finite(intensity_power, "intensity_power")
+            .map_err(FlashCosineIndexError::Computation)?;
+        ensure_finite(score_threshold, "score_threshold")
+            .map_err(FlashCosineIndexError::Computation)?;
+
+        let tolerance = mz_tolerance;
+        let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
+
+        for spectrum in spectra {
+            let mz_vals: Vec<f64> = spectrum.mz().collect();
+            let data_vals = normalized_peak_products(spectrum, mz_power, intensity_power)
+                .map_err(FlashCosineIndexError::Computation)?;
+
+            validate_well_separated(&mz_vals, tolerance, "library spectrum")
+                .map_err(FlashCosineIndexError::Computation)?;
+
+            let precursor_f64 = ensure_finite(spectrum.precursor_mz(), "precursor_mz")
+                .map_err(FlashCosineIndexError::Computation)?;
+
+            prepared.push((precursor_f64, mz_vals, data_vals));
+        }
+
+        let prefix_postings = ThresholdPrefixPostings::build(&prepared, |data_vals| {
+            l2_threshold_prefix_indices(data_vals, score_threshold)
+        })
+        .map_err(FlashCosineIndexError::Computation)?;
+        let inner = FlashIndex::<CosineKernel>::build(tolerance, prepared)
+            .map_err(FlashCosineIndexError::Computation)?;
+
+        Ok(Self {
+            inner,
+            mz_power,
+            intensity_power,
+            score_threshold,
+            prefix_postings,
+        })
+    }
+
+    /// Returns the threshold this index was built for.
+    #[inline]
+    pub fn score_threshold(&self) -> f64 {
+        self.score_threshold
+    }
+
+    /// Returns the m/z power used for scoring.
+    #[inline]
+    pub fn mz_power(&self) -> f64 {
+        self.mz_power
+    }
+
+    /// Returns the intensity power used for scoring.
+    #[inline]
+    pub fn intensity_power(&self) -> f64 {
+        self.intensity_power
+    }
+
+    /// Returns the m/z tolerance used for matching.
+    #[inline]
+    pub fn tolerance(&self) -> f64 {
+        self.inner.tolerance
+    }
+
+    /// Returns the number of library spectra in the index.
+    #[inline]
+    pub fn n_spectra(&self) -> u32 {
+        self.inner.n_spectra
+    }
+
+    /// Returns the number of library prefix peaks stored by this threshold
+    /// index.
+    #[inline]
+    pub fn n_prefix_peaks(&self) -> usize {
+        self.prefix_postings.n_prefix_peaks()
+    }
+
+    /// Create a [`SearchState`] suitable for reuse across queries.
+    pub fn new_search_state(&self) -> SearchState {
+        self.inner.new_search_state()
+    }
+
+    /// Search an external query and return all results above the fixed
+    /// threshold.
+    pub fn search<S>(&self, query: &S) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut state = self.new_search_state();
+        self.search_with_state(query, &mut state)
+    }
+
+    /// Search an external query with caller-provided scratch state.
+    pub fn search_with_state<S>(
+        &self,
+        query: &S,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut results = Vec::new();
+        self.for_each_with_state(query, state, |result| results.push(result))?;
+        Ok(results)
+    }
+
+    /// Stream thresholded results for an external query.
+    pub fn for_each_with_state<S, Emit>(
+        &self,
+        query: &S,
+        state: &mut SearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        S: Spectrum,
+        Emit: FnMut(FlashSearchResult),
+    {
+        let (query_mz, query_data) = prepare_cosine_query(
+            query,
+            self.mz_power,
+            self.intensity_power,
+            self.inner.tolerance,
+        )?;
+        let query_meta = CosineKernel::spectrum_meta(&query_data);
+        self.for_each_prepared_with_state(&query_mz, &query_data, &query_meta, state, emit);
+        Ok(())
+    }
+
+    /// Stream thresholded results for a query spectrum that is already in this
+    /// index.
+    ///
+    /// This avoids per-query normalization and prefix sorting, which is the
+    /// intended path for all-pairs graph construction over the indexed library.
+    pub fn for_each_indexed_with_state<Emit>(
+        &self,
+        query_id: u32,
+        state: &mut SearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        Emit: FnMut(FlashSearchResult),
+    {
+        if query_id >= self.inner.n_spectra {
+            return Err(SimilarityComputationError::IndexOverflow);
+        }
+
+        let (query_mz, query_data) = self.inner.spectrum_slices(query_id);
+        let query_meta = *self.inner.spectrum_meta(query_id);
+        let query_prefix_mz = self.prefix_postings.spectrum_prefix_mz(query_id);
+
+        self.for_each_prepared_indexed_with_state(
+            query_mz,
+            query_data,
+            &query_meta,
+            query_prefix_mz,
+            state,
+            emit,
+        );
+        Ok(())
+    }
+
+    fn for_each_prepared_with_state<Emit>(
+        &self,
+        query_mz: &[f64],
+        query_data: &[f64],
+        query_meta: &CosineNorm,
+        state: &mut SearchState,
+        mut emit: Emit,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+    {
+        if self.score_threshold <= 0.0 {
+            self.inner
+                .for_each_direct_with_state(query_mz, query_data, query_meta, state, emit);
+            return;
+        }
+        if self.score_threshold > 1.0 || self.inner.n_spectra == 0 || query_mz.is_empty() {
+            return;
+        }
+        if self.score_threshold < THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD {
+            self.for_each_direct_threshold_prepared(query_mz, query_data, query_meta, state, emit);
+            return;
+        }
+
+        state.prepare_threshold_order(query_data);
+        let prefix_len = state.threshold_prefix_len(self.score_threshold);
+        let query_order: Vec<usize> = state.query_order()[..prefix_len].to_vec();
+
+        self.inner
+            .mark_candidates_from_query_prefix_indices(query_mz, &query_order, state);
+        if self.score_threshold < THRESHOLD_INDEX_TWO_SIDED_MIN_THRESHOLD {
+            self.emit_exact_query_prefix_candidates(
+                query_mz, query_data, query_meta, state, &mut emit,
+            );
+        } else {
+            self.inner.intersect_candidates_with_library_prefixes(
+                query_mz,
+                &self.prefix_postings,
+                state,
+            );
+            self.emit_exact_intersected_candidates(
+                query_mz, query_data, query_meta, state, &mut emit,
+            );
+        }
+    }
+
+    fn for_each_prepared_indexed_with_state<Emit>(
+        &self,
+        query_mz: &[f64],
+        query_data: &[f64],
+        query_meta: &CosineNorm,
+        query_prefix_mz: &[f64],
+        state: &mut SearchState,
+        mut emit: Emit,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+    {
+        if self.score_threshold <= 0.0 {
+            self.inner
+                .for_each_direct_with_state(query_mz, query_data, query_meta, state, emit);
+            return;
+        }
+        if self.score_threshold > 1.0 || self.inner.n_spectra == 0 || query_mz.is_empty() {
+            return;
+        }
+        if self.score_threshold < THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD {
+            self.for_each_direct_threshold_prepared(query_mz, query_data, query_meta, state, emit);
+            return;
+        }
+
+        self.inner
+            .mark_candidates_from_query_prefix_mz(query_prefix_mz, state);
+        if self.score_threshold < THRESHOLD_INDEX_TWO_SIDED_MIN_THRESHOLD {
+            self.emit_exact_query_prefix_candidates(
+                query_mz, query_data, query_meta, state, &mut emit,
+            );
+        } else {
+            self.inner.intersect_candidates_with_library_prefixes(
+                query_mz,
+                &self.prefix_postings,
+                state,
+            );
+            self.emit_exact_intersected_candidates(
+                query_mz, query_data, query_meta, state, &mut emit,
+            );
+        }
+    }
+
+    fn for_each_direct_threshold_prepared<Emit>(
+        &self,
+        query_mz: &[f64],
+        query_data: &[f64],
+        query_meta: &CosineNorm,
+        state: &mut SearchState,
+        emit: Emit,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+    {
+        let query_norm = query_meta.0;
+        self.inner.for_each_direct_threshold_with_state(
+            DirectThresholdSearch {
+                query_mz,
+                query_data,
+                query_meta,
+                score_threshold: self.score_threshold,
+            },
+            state,
+            emit,
+            |lib_meta| self.score_threshold * query_norm * lib_meta.0,
+            |lib_meta| lib_meta.0,
+        );
+    }
+
+    fn emit_exact_query_prefix_candidates<Emit>(
+        &self,
+        query_mz: &[f64],
+        query_data: &[f64],
+        query_meta: &CosineNorm,
+        state: &mut SearchState,
+        emit: &mut Emit,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+    {
+        let query_norm = query_meta.0;
+        let mut target_raw_score =
+            |lib_meta: &CosineNorm| self.score_threshold * query_norm * lib_meta.0;
+        let mut library_bound = |lib_meta: &CosineNorm| lib_meta.0;
+        self.inner.emit_exact_primary_candidates(
+            DirectThresholdSearch {
+                query_mz,
+                query_data,
+                query_meta,
+                score_threshold: self.score_threshold,
+            },
+            state,
+            emit,
+            &mut target_raw_score,
+            &mut library_bound,
+        );
+    }
+
+    fn emit_exact_intersected_candidates<Emit>(
+        &self,
+        query_mz: &[f64],
+        query_data: &[f64],
+        query_meta: &CosineNorm,
+        state: &mut SearchState,
+        emit: &mut Emit,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+    {
+        let query_norm = query_meta.0;
+        let mut target_raw_score =
+            |lib_meta: &CosineNorm| self.score_threshold * query_norm * lib_meta.0;
+        let mut library_bound = |lib_meta: &CosineNorm| lib_meta.0;
+        self.inner.emit_exact_secondary_candidates(
+            DirectThresholdSearch {
+                query_mz,
+                query_data,
+                query_meta,
+                score_threshold: self.score_threshold,
+            },
+            state,
+            emit,
+            &mut target_raw_score,
+            &mut library_bound,
+        );
     }
 }
 
