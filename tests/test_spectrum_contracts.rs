@@ -1,8 +1,8 @@
 use arbitrary::{Arbitrary, Unstructured};
 use half::f16;
 use mass_spectrometry::prelude::{
-    ELECTRON_MASS, GenericSpectrum, LinearCosine, MAX_MZ, ScalarSimilarity, Spectrum,
-    SpectrumAlloc, SpectrumMut,
+    ELECTRON_MASS, GenericSpectrum, LinearCosine, MAX_MZ, MsEntropyCleanSpectrum, ScalarSimilarity,
+    SiriusMergeClosePeaks, SpectralProcessor, Spectrum, SpectrumAlloc, SpectrumMut,
 };
 
 fn make_spectrum(precursor_mz: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
@@ -119,6 +119,34 @@ fn binned_intensities_use_spectrum_precision() {
         .logarithmic_binned_intensities(50.0, 100.0, 2)
         .expect("logarithmic binning should succeed");
     assert_eq!(logarithmic_bins, vec![1.25_f32, 6.5]);
+}
+
+#[test]
+fn built_in_processors_preserve_spectrum_precision() {
+    let mut spectrum: GenericSpectrum<f32> =
+        GenericSpectrum::try_with_capacity(250.0, 3).expect("f32 precursor should fit");
+    spectrum.add_peak(50.0, 1.0).expect("f32 peak should fit");
+    spectrum.add_peak(75.0, 2.0).expect("f32 peak should fit");
+    spectrum.add_peak(100.0, 4.0).expect("f32 peak should fit");
+
+    let cleaner = MsEntropyCleanSpectrum::<f32>::builder_with_precision()
+        .normalize_intensity(false)
+        .expect("normalization flag should be valid")
+        .build()
+        .expect("cleaner config should be valid");
+    let cleaned: GenericSpectrum<f32> = cleaner.process(&spectrum);
+    assert_eq!(
+        cleaned.peaks().collect::<Vec<_>>(),
+        vec![(50.0_f32, 1.0_f32), (75.0, 2.0), (100.0, 4.0)]
+    );
+
+    let merger = SiriusMergeClosePeaks::<f32>::new_with_precision(0.1)
+        .expect("merge tolerance should be valid");
+    let merged: GenericSpectrum<f32> = merger.process(&cleaned);
+    assert_eq!(
+        merged.peaks().collect::<Vec<_>>(),
+        vec![(50.0_f32, 1.0_f32), (75.0, 2.0), (100.0, 4.0)]
+    );
 }
 
 #[test]

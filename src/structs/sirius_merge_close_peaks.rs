@@ -6,11 +6,12 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
 use super::cosine_common::validate_non_negative_tolerance;
 use super::similarity_errors::SimilarityConfigError;
 use crate::structs::GenericSpectrum;
-use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
+use crate::traits::{SpectralProcessor, Spectrum, SpectrumFloat, SpectrumMut};
 
 /// Merges peaks that are closer than `2 * mz_tolerance` in m/z.
 ///
@@ -26,17 +27,12 @@ use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(flat))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
-pub struct SiriusMergeClosePeaks {
+pub struct SiriusMergeClosePeaks<P: SpectrumFloat = f64> {
     mz_tolerance: f64,
+    precision: PhantomData<P>,
 }
 
 impl SiriusMergeClosePeaks {
-    /// Returns the m/z tolerance used for merging.
-    #[inline]
-    pub fn mz_tolerance(&self) -> f64 {
-        self.mz_tolerance
-    }
-
     /// Creates a new `SiriusMergeClosePeaks` processor.
     ///
     /// # Errors
@@ -46,24 +42,54 @@ impl SiriusMergeClosePeaks {
     #[inline]
     pub fn new(mz_tolerance: f64) -> Result<Self, SimilarityConfigError> {
         validate_non_negative_tolerance(mz_tolerance)?;
-        Ok(Self { mz_tolerance })
+        Ok(Self {
+            mz_tolerance,
+            precision: PhantomData,
+        })
     }
 }
 
-impl SpectralProcessor for SiriusMergeClosePeaks {
-    type Spectrum = GenericSpectrum;
+impl<P: SpectrumFloat> SiriusMergeClosePeaks<P> {
+    /// Returns the m/z tolerance used for merging.
+    #[inline]
+    pub fn mz_tolerance(&self) -> f64 {
+        self.mz_tolerance
+    }
+
+    /// Creates a new `SiriusMergeClosePeaks` processor for this spectrum
+    /// precision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityConfigError`] if `mz_tolerance` is negative or
+    /// non-finite.
+    #[inline]
+    pub fn new_with_precision(mz_tolerance: f64) -> Result<Self, SimilarityConfigError> {
+        validate_non_negative_tolerance(mz_tolerance)?;
+        Ok(Self {
+            mz_tolerance,
+            precision: PhantomData,
+        })
+    }
+}
+
+impl<P: SpectrumFloat> SpectralProcessor for SiriusMergeClosePeaks<P> {
+    type Spectrum = GenericSpectrum<P>;
 
     fn process(&self, spectrum: &Self::Spectrum) -> Self::Spectrum {
         let n = spectrum.len();
         if n == 0 {
-            return GenericSpectrum::try_with_capacity(spectrum.precursor_mz(), 0)
+            return GenericSpectrum::<P>::try_with_capacity(spectrum.precursor_mz().to_f64(), 0)
                 .expect("precursor_mz from valid spectrum must be valid");
         }
 
         let merge_window = self.mz_tolerance + self.mz_tolerance;
 
         // Collect peaks into a working vec.
-        let peaks: Vec<(f64, f64)> = spectrum.peaks().collect();
+        let peaks: Vec<(f64, f64)> = spectrum
+            .peaks()
+            .map(|(mz, intensity)| (mz.to_f64(), intensity.to_f64()))
+            .collect();
 
         // Build indices sorted by descending intensity.
         let mut order: Vec<usize> = (0..n).collect();
@@ -121,9 +147,11 @@ impl SpectralProcessor for SiriusMergeClosePeaks {
         // Sort survivors by ascending m/z.
         survivors.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(core::cmp::Ordering::Equal));
 
-        let mut result =
-            GenericSpectrum::try_with_capacity(spectrum.precursor_mz(), survivors.len())
-                .expect("precursor_mz from valid spectrum must be valid");
+        let mut result = GenericSpectrum::<P>::try_with_capacity(
+            spectrum.precursor_mz().to_f64(),
+            survivors.len(),
+        )
+        .expect("precursor_mz from valid spectrum must be valid");
         for (mz, intensity) in survivors {
             result
                 .add_peak(mz, intensity)

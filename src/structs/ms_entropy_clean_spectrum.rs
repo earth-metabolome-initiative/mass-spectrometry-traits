@@ -10,17 +10,18 @@
 //! - `normalize_intensity`: `true`
 
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
 use super::cosine_common::validate_numeric_parameter;
 use super::similarity_errors::SimilarityConfigError;
 use crate::structs::GenericSpectrum;
-use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
+use crate::traits::{SpectralProcessor, Spectrum, SpectrumFloat, SpectrumMut};
 
 /// Spectral processor mirroring `ms_entropy.clean_spectrum` behavior.
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(flat))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
-pub struct MsEntropyCleanSpectrum {
+pub struct MsEntropyCleanSpectrum<P: SpectrumFloat = f64> {
     min_mz: Option<f64>,
     max_mz: Option<f64>,
     noise_threshold: Option<f64>,
@@ -28,12 +29,22 @@ pub struct MsEntropyCleanSpectrum {
     min_ms2_difference_in_ppm: Option<f64>,
     max_peak_num: Option<usize>,
     normalize_intensity: bool,
+    precision: PhantomData<P>,
 }
 
 impl MsEntropyCleanSpectrum {
     /// Returns a builder configured with `ms_entropy` defaults.
     #[inline]
     pub fn builder() -> MsEntropyCleanSpectrumBuilder {
+        MsEntropyCleanSpectrumBuilder::default()
+    }
+}
+
+impl<P: SpectrumFloat> MsEntropyCleanSpectrum<P> {
+    /// Returns a builder configured with `ms_entropy` defaults for this
+    /// spectrum precision.
+    #[inline]
+    pub fn builder_with_precision() -> MsEntropyCleanSpectrumBuilder<P> {
         MsEntropyCleanSpectrumBuilder::default()
     }
 
@@ -150,16 +161,22 @@ impl MsEntropyCleanSpectrum {
     }
 }
 
-impl SpectralProcessor for MsEntropyCleanSpectrum {
-    type Spectrum = GenericSpectrum;
+impl<P: SpectrumFloat> SpectralProcessor for MsEntropyCleanSpectrum<P> {
+    type Spectrum = GenericSpectrum<P>;
 
     fn process(&self, spectrum: &Self::Spectrum) -> Self::Spectrum {
-        let input_peaks: Vec<(f64, f64)> = spectrum.peaks().collect();
+        let input_peaks: Vec<(f64, f64)> = spectrum
+            .peaks()
+            .map(|(mz, intensity)| (mz.to_f64(), intensity.to_f64()))
+            .collect();
 
         let cleaned = self.clean_peaks(input_peaks);
 
-        let mut result = GenericSpectrum::try_with_capacity(spectrum.precursor_mz(), cleaned.len())
-            .expect("precursor_mz from valid spectrum must be valid");
+        let mut result = GenericSpectrum::<P>::try_with_capacity(
+            spectrum.precursor_mz().to_f64(),
+            cleaned.len(),
+        )
+        .expect("precursor_mz from valid spectrum must be valid");
 
         for (mz, intensity) in cleaned {
             result
@@ -175,7 +192,7 @@ impl SpectralProcessor for MsEntropyCleanSpectrum {
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(flat))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
-pub struct MsEntropyCleanSpectrumBuilder {
+pub struct MsEntropyCleanSpectrumBuilder<P: SpectrumFloat = f64> {
     min_mz: Option<f64>,
     max_mz: Option<f64>,
     noise_threshold: Option<f64>,
@@ -183,9 +200,10 @@ pub struct MsEntropyCleanSpectrumBuilder {
     min_ms2_difference_in_ppm: Option<f64>,
     max_peak_num: Option<usize>,
     normalize_intensity: bool,
+    precision: PhantomData<P>,
 }
 
-impl Default for MsEntropyCleanSpectrumBuilder {
+impl<P: SpectrumFloat> Default for MsEntropyCleanSpectrumBuilder<P> {
     fn default() -> Self {
         Self {
             min_mz: None,
@@ -195,11 +213,12 @@ impl Default for MsEntropyCleanSpectrumBuilder {
             min_ms2_difference_in_ppm: None,
             max_peak_num: None,
             normalize_intensity: true,
+            precision: PhantomData,
         }
     }
 }
 
-impl MsEntropyCleanSpectrumBuilder {
+impl<P: SpectrumFloat> MsEntropyCleanSpectrumBuilder<P> {
     /// Sets the minimum m/z filter.
     #[inline]
     pub fn min_mz(mut self, min_mz: Option<f64>) -> Result<Self, SimilarityConfigError> {
@@ -281,7 +300,7 @@ impl MsEntropyCleanSpectrumBuilder {
     }
 
     /// Builds the cleaner from validated builder fields.
-    pub fn build(self) -> Result<MsEntropyCleanSpectrum, SimilarityConfigError> {
+    pub fn build(self) -> Result<MsEntropyCleanSpectrum<P>, SimilarityConfigError> {
         let ppm_positive = self.min_ms2_difference_in_ppm.is_some_and(|ppm| ppm > 0.0);
         let da_positive = self.min_ms2_difference_in_da > 0.0;
         if !ppm_positive && !da_positive {
@@ -298,6 +317,7 @@ impl MsEntropyCleanSpectrumBuilder {
             min_ms2_difference_in_ppm: self.min_ms2_difference_in_ppm,
             max_peak_num: self.max_peak_num,
             normalize_intensity: self.normalize_intensity,
+            precision: PhantomData,
         })
     }
 }
