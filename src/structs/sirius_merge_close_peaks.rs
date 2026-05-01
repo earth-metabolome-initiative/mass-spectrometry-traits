@@ -11,7 +11,7 @@ use core::marker::PhantomData;
 use super::cosine_common::validate_non_negative_tolerance;
 use super::similarity_errors::SimilarityConfigError;
 use crate::structs::GenericSpectrum;
-use crate::traits::{SpectralProcessor, Spectrum, SpectrumFloat, SpectrumMut};
+use crate::traits::{SpectralProcessor, Spectrum, SpectrumFloat};
 
 /// Merges peaks that are closer than `2 * mz_tolerance` in m/z.
 ///
@@ -154,7 +154,7 @@ impl<P: SpectrumFloat> SpectralProcessor for SiriusMergeClosePeaks<P> {
         .expect("precursor_mz from valid spectrum must be valid");
         for (mz, intensity) in survivors {
             result
-                .add_peak(mz, intensity)
+                .try_push_peak_from_f64(mz, intensity)
                 .expect("merged peaks should be valid and in sorted order");
         }
         result

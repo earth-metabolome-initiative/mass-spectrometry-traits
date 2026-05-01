@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use super::Spectrum;
+use super::{Spectrum, SpectrumFloat};
 
 /// Parameters for generating a random spectrum with [`SpectrumAlloc::random`].
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
@@ -91,7 +91,25 @@ pub trait SpectrumMut: Spectrum {
     /// strictly increasing `mz` ordering (rejecting duplicates), reject
     /// non-positive intensity values, and validate mz within
     /// `[ELECTRON_MASS, MAX_MZ]`.
-    fn add_peak(&mut self, mz: f64, intensity: f64) -> Result<(), Self::MutationError>;
+    fn add_peak(
+        &mut self,
+        mz: Self::Precision,
+        intensity: Self::Precision,
+    ) -> Result<&mut Self, Self::MutationError>;
+
+    /// Add several peaks to the Spectrum.
+    ///
+    /// The peaks are added in iteration order, so implementations that require
+    /// sorted input keep the same invariant as [`Self::add_peak`].
+    fn add_peaks<I>(&mut self, peaks: I) -> Result<&mut Self, Self::MutationError>
+    where
+        I: IntoIterator<Item = (Self::Precision, Self::Precision)>,
+    {
+        for (mz, intensity) in peaks {
+            self.add_peak(mz, intensity)?;
+        }
+        Ok(self)
+    }
 }
 
 /// Trait for an allocable Spectrum.
@@ -174,6 +192,8 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
             } else {
                 intensity_min + (next_unit_f64(&mut state) * intensity_span)
             };
+            let mz = Self::Precision::from_f64_lossy(mz);
+            let intensity = Self::Precision::from_f64_lossy(intensity);
 
             spectrum
                 .add_peak(mz, intensity)

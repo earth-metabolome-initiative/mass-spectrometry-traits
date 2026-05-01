@@ -15,7 +15,7 @@ use core::marker::PhantomData;
 use super::cosine_common::validate_numeric_parameter;
 use super::similarity_errors::SimilarityConfigError;
 use crate::structs::GenericSpectrum;
-use crate::traits::{SpectralProcessor, Spectrum, SpectrumFloat, SpectrumMut};
+use crate::traits::{SpectralProcessor, Spectrum, SpectrumFloat};
 
 /// Spectral processor mirroring `ms_entropy.clean_spectrum` behavior.
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
@@ -180,7 +180,7 @@ impl<P: SpectrumFloat> SpectralProcessor for MsEntropyCleanSpectrum<P> {
 
         for (mz, intensity) in cleaned {
             result
-                .add_peak(mz, intensity)
+                .try_push_peak_from_f64(mz, intensity)
                 .expect("cleaned peaks should be valid and sorted by m/z");
         }
 

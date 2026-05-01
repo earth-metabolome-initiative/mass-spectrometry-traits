@@ -33,7 +33,9 @@ use crate::traits::{Spectrum, SpectrumAlloc, SpectrumFloat, SpectrumMut};
 ///
 /// let mut f16_spectrum: GenericSpectrum<f16> =
 ///     GenericSpectrum::try_with_capacity(250.0, 1).unwrap();
-/// f16_spectrum.add_peak(100.0, 2.0).unwrap();
+/// f16_spectrum
+///     .add_peak(f16::from_f64(100.0), f16::from_f64(2.0))
+///     .unwrap();
 /// assert_eq!(f16_spectrum.intensity_nth(0), f16::from_f64(2.0));
 /// ```
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
@@ -156,7 +158,7 @@ impl<P: SpectrumFloat> GenericSpectrum<P> {
         };
 
         for (mz, intensity) in sanitized {
-            if spectrum.add_peak(mz.to_f64(), intensity.to_f64()).is_err() {
+            if spectrum.add_peak(mz, intensity).is_err() {
                 continue;
             }
         }
@@ -249,33 +251,22 @@ impl<P: SpectrumFloat> Spectrum for GenericSpectrum<P> {
 impl<P: SpectrumFloat> SpectrumMut for GenericSpectrum<P> {
     type MutationError = GenericSpectrumMutationError;
 
-    fn add_peak(&mut self, mz: f64, intensity: f64) -> Result<(), Self::MutationError> {
-        if !mz.is_finite() {
+    fn add_peak(&mut self, mz: P, intensity: P) -> Result<&mut Self, Self::MutationError> {
+        let mz_f64 = mz.to_f64();
+        if !mz_f64.is_finite() {
             return Err(GenericSpectrumMutationError::NonFiniteMz);
         }
-        if mz < ELECTRON_MASS {
+        if mz_f64 < ELECTRON_MASS {
             return Err(GenericSpectrumMutationError::MzBelowMinimum);
         }
-        if mz > MAX_MZ {
+        if mz_f64 > MAX_MZ {
             return Err(GenericSpectrumMutationError::MzAboveMaximum);
         }
-        if !intensity.is_finite() {
+        let intensity_f64 = intensity.to_f64();
+        if !intensity_f64.is_finite() {
             return Err(GenericSpectrumMutationError::NonFiniteIntensity);
         }
-        if intensity <= 0.0 {
-            return Err(GenericSpectrumMutationError::NonPositiveIntensity);
-        }
-        let mz = P::from_f64(mz).ok_or(GenericSpectrumMutationError::NonFiniteMz)?;
-        let intensity =
-            P::from_f64(intensity).ok_or(GenericSpectrumMutationError::NonFiniteIntensity)?;
-        let stored_mz = mz.to_f64();
-        if stored_mz < ELECTRON_MASS {
-            return Err(GenericSpectrumMutationError::MzBelowMinimum);
-        }
-        if stored_mz > MAX_MZ {
-            return Err(GenericSpectrumMutationError::MzAboveMaximum);
-        }
-        if intensity.to_f64() <= 0.0 {
+        if intensity_f64 <= 0.0 {
             return Err(GenericSpectrumMutationError::NonPositiveIntensity);
         }
         // Tuple ordering would allow equal m/z with increasing intensity, so
@@ -291,7 +282,35 @@ impl<P: SpectrumFloat> SpectrumMut for GenericSpectrum<P> {
         self.peaks
             .push((mz, intensity))
             .map_err(|_| GenericSpectrumMutationError::UnsortedMz)?;
-        Ok(())
+        Ok(self)
+    }
+}
+
+impl<P: SpectrumFloat> GenericSpectrum<P> {
+    pub(crate) fn try_push_peak_from_f64(
+        &mut self,
+        mz: f64,
+        intensity: f64,
+    ) -> Result<&mut Self, GenericSpectrumMutationError> {
+        if !mz.is_finite() {
+            return Err(GenericSpectrumMutationError::NonFiniteMz);
+        }
+        if mz < ELECTRON_MASS {
+            return Err(GenericSpectrumMutationError::MzBelowMinimum);
+        }
+        if mz > MAX_MZ {
+            return Err(GenericSpectrumMutationError::MzAboveMaximum);
+        }
+        if !intensity.is_finite() {
+            return Err(GenericSpectrumMutationError::NonFiniteIntensity);
+        }
+        if intensity <= 0.0 {
+            return Err(GenericSpectrumMutationError::NonPositiveIntensity);
+        }
+
+        let mz = P::from_f64_lossy(mz);
+        let intensity = P::from_f64_lossy(intensity);
+        self.add_peak(mz, intensity)
     }
 }
 

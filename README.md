@@ -1,39 +1,92 @@
 # Mass Spectrometry
 
-A crate for traits and data structures for mass spectrometry.
+[![Crates.io](https://img.shields.io/crates/v/mass_spectrometry.svg)](https://crates.io/crates/mass_spectrometry)
+[![Documentation](https://docs.rs/mass_spectrometry/badge.svg)](https://docs.rs/mass_spectrometry)
+[![License](https://img.shields.io/crates/l/mass_spectrometry.svg)](https://github.com/earth-metabolome-initiative/mass-spectrometry-traits/blob/main/LICENSE)
+[![no_std](https://img.shields.io/badge/no__std-default-success.svg)](https://docs.rust-embedded.org/book/intro/no-std.html)
 
-## `no_std` support
+A `no_std` crate for mass spectra, spectral similarities, fast search indices,
+and SPLASH fingerprints. `GenericSpectrum<P>` stores sorted `(m/z, intensity)` peaks with `f64`, `f32`,
+or `half::f16` precision. The crate includes cosine and entropy similarities,
+fast search indices including cutoff-specialized cosine indices for direct graph
+construction, SPLASH generation, and built-in reference spectra for examples and
+regression tests.
 
-The library supports `#![no_std]` and requires `alloc`.
-Targets without an allocator are not supported.
+## Examples
 
-## Quality Gates
+### Spectral Similarities
 
-This repository uses [`prek`](https://prek.j178.dev/) for local pre-commit
-checks and for CI.
+```rust
+use mass_spectrometry::prelude::*;
 
-### Local setup
+let mut left: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+left.add_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
 
-1. Install `prek` (for example with `cargo install --locked prek`).
-2. Install hooks:
+let mut right: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
 
-```bash
-prek install --install-hooks
+let cosine = LinearCosine::new(0.0, 1.0, 0.1).unwrap();
+let (score, matches) = cosine.similarity(&left, &right).unwrap();
+
+assert_eq!(matches, 2);
+assert!(score > 0.99);
+
+let cocaine: GenericSpectrum = GenericSpectrum::cocaine().unwrap();
+let (_reference_score, reference_matches) = cosine.similarity(&cocaine, &cocaine).unwrap();
+assert!(reference_matches > 0);
 ```
 
-3. Run all hooks on demand:
+### SPLASH
 
-```bash
-prek run --all-files
+```rust
+use mass_spectrometry::prelude::*;
+
+let splash = splash_from_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
+assert_eq!(splash, "splash10-0udi-0490000000-4425acda10ed7d4709bd");
+
+let mut spectrum: GenericSpectrum = GenericSpectrum::try_with_capacity(250.0, 2).unwrap();
+spectrum.add_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
+
+assert_eq!(spectrum.splash().unwrap(), splash);
 ```
 
-### Enforced checks
+### Indices
 
-The pre-commit hook and CI both run the same strict checks:
+```rust
+use mass_spectrometry::prelude::*;
 
-1. `cargo fmt --all -- --check`
-2. `cargo clippy --all-targets --all-features -- -D warnings`
-3. `cargo test --all-targets --all-features --locked`
-4. `cargo doc --all-features --no-deps`
+let mut a: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+a.add_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
 
-`cargo test --all-targets` includes bench targets as test runs.
+let mut b: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+b.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
+
+let mut c: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+c.add_peaks([(300.0, 10.0), (400.0, 20.0)]).unwrap();
+
+let spectra = vec![a, b, c];
+
+let index = FlashCosineIndex::new(0.0, 1.0, 0.1, &spectra).unwrap();
+let hits = index.search_threshold(&spectra[0], 0.8).unwrap();
+assert!(hits.iter().any(|hit| hit.spectrum_id == 1));
+
+let threshold_index =
+    FlashCosineThresholdIndex::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
+let mut state = threshold_index.new_search_state();
+let mut edges = Vec::new();
+
+for query_id in 0..threshold_index.n_spectra() {
+    threshold_index
+        .for_each_indexed_with_state(query_id, &mut state, |hit| {
+            if hit.spectrum_id > query_id {
+                edges.push((query_id, hit.spectrum_id, hit.score));
+            }
+        })
+        .unwrap();
+}
+
+assert_eq!(edges.len(), 1);
+assert_eq!(edges[0].0, 0);
+assert_eq!(edges[0].1, 1);
+assert!(edges[0].2 > 0.99);
+```

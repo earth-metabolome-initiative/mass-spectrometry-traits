@@ -15,11 +15,22 @@ use crate::structs::SimilarityComputationError;
 /// algorithms may still promote values to `f64` internally when that is needed
 /// for numerical stability.
 pub trait SpectrumFloat: Copy + PartialOrd + core::fmt::Debug + 'static {
+    /// Converts an `f64` value into this precision using the native lossy cast.
+    ///
+    /// This may round finite values, underflow to zero, or overflow to a
+    /// non-finite value. Use [`Self::from_f64`] when non-finite conversion
+    /// results should be rejected immediately.
+    fn from_f64_lossy(value: f64) -> Self;
+
     /// Converts a finite `f64` value into this precision.
     ///
     /// Returns `None` when the value cannot be represented as a finite value
     /// in the target precision.
-    fn from_f64(value: f64) -> Option<Self>;
+    #[inline]
+    fn from_f64(value: f64) -> Option<Self> {
+        let value = Self::from_f64_lossy(value);
+        value.is_finite().then_some(value)
+    }
 
     /// Converts this value to `f64`.
     fn to_f64(self) -> f64;
@@ -33,8 +44,8 @@ pub trait SpectrumFloat: Copy + PartialOrd + core::fmt::Debug + 'static {
 
 impl SpectrumFloat for f64 {
     #[inline]
-    fn from_f64(value: f64) -> Option<Self> {
-        value.is_finite().then_some(value)
+    fn from_f64_lossy(value: f64) -> Self {
+        value
     }
 
     #[inline]
@@ -45,9 +56,8 @@ impl SpectrumFloat for f64 {
 
 impl SpectrumFloat for f32 {
     #[inline]
-    fn from_f64(value: f64) -> Option<Self> {
-        let value = value as f32;
-        value.is_finite().then_some(value)
+    fn from_f64_lossy(value: f64) -> Self {
+        value as f32
     }
 
     #[inline]
@@ -58,9 +68,8 @@ impl SpectrumFloat for f32 {
 
 impl SpectrumFloat for half::f16 {
     #[inline]
-    fn from_f64(value: f64) -> Option<Self> {
-        let value = half::f16::from_f64(value);
-        value.is_finite().then_some(value)
+    fn from_f64_lossy(value: f64) -> Self {
+        half::f16::from_f64(value)
     }
 
     #[inline]

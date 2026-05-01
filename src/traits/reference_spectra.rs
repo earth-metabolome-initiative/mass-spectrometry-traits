@@ -1,13 +1,24 @@
 //! Submodule providing reference spectra for common molecules.
 #![allow(clippy::excessive_precision)]
 
+#[inline]
+fn reference_value<P: crate::traits::SpectrumFloat>(value: f64) -> P {
+    P::from_f64_lossy(value)
+}
+
 macro_rules! impl_reference_spectrum {
     ($trait_name:ident, $method_name:ident, $precursor:ident, $mz:ident, $intensities:ident) => {
         impl<S: crate::traits::SpectrumAlloc> $trait_name for S {
             fn $method_name() -> Result<Self, <Self as crate::traits::SpectrumMut>::MutationError> {
                 let mut spectrum = Self::with_capacity(f64::from($precursor), $mz.len())?;
                 for (&mz, &intensity) in $mz.iter().zip($intensities.iter()) {
-                    spectrum.add_peak(f64::from(mz), f64::from(intensity))?;
+                    let mz = $crate::traits::reference_spectra::reference_value::<
+                        <S as crate::traits::Spectrum>::Precision,
+                    >(f64::from(mz));
+                    let intensity = $crate::traits::reference_spectra::reference_value::<
+                        <S as crate::traits::Spectrum>::Precision,
+                    >(f64::from(intensity));
+                    spectrum.add_peak(mz, intensity)?;
                 }
                 Ok(spectrum)
             }

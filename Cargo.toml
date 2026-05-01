@@ -2,6 +2,10 @@
 name = "mass_spectrometry"
 version = "0.1.0"
 edition = "2024"
+description = "Traits, spectra, similarity metrics, indices, and SPLASH fingerprints for mass spectrometry."
+license = "MIT"
+repository = "https://github.com/earth-metabolome-initiative/mass-spectrometry-traits"
+readme = "README.md"
 
 [workspace]
 members = ["fuzz"]

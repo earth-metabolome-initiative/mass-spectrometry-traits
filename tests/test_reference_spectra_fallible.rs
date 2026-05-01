@@ -1,7 +1,8 @@
 use core::fmt;
 
 use mass_spectrometry::prelude::{
-    AdenineSpectrum, GenericSpectrum, Spectrum, SpectrumAlloc, SpectrumMut,
+    AdenineSpectrum, GenericSpectrum, GenericSpectrumMutationError, Spectrum, SpectrumAlloc,
+    SpectrumMut,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -75,7 +76,7 @@ impl Spectrum for FailingSpectrum {
 impl SpectrumMut for FailingSpectrum {
     type MutationError = AlwaysErr;
 
-    fn add_peak(&mut self, _mz: f64, _intensity: f64) -> Result<(), Self::MutationError> {
+    fn add_peak(&mut self, _mz: f64, _intensity: f64) -> Result<&mut Self, Self::MutationError> {
         Err(AlwaysErr)
     }
 }
@@ -103,4 +104,11 @@ fn generic_spectrum_reference_constructor_returns_ok() {
     let spectrum: GenericSpectrum =
         GenericSpectrum::adenine().expect("reference spectrum should build");
     assert!(!spectrum.is_empty());
+}
+
+#[test]
+fn lower_precision_reference_constructor_returns_mutation_error_when_values_do_not_fit() {
+    let error = GenericSpectrum::<half::f16>::adenine()
+        .expect_err("large reference intensities should not fit f16");
+    assert_eq!(error, GenericSpectrumMutationError::NonFiniteIntensity);
 }

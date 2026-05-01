@@ -73,8 +73,9 @@ fn sorted_peak_additions_keep_accessors_consistent() {
 fn generic_spectrum_can_store_f32_precision() {
     let mut spectrum: GenericSpectrum<f32> =
         GenericSpectrum::try_with_capacity(250.125, 2).expect("f32 precursor should fit");
-    spectrum.add_peak(50.5, 1.25).expect("f32 peak should fit");
-    spectrum.add_peak(75.25, 2.5).expect("f32 peak should fit");
+    spectrum
+        .add_peaks([(50.5_f32, 1.25_f32), (75.25, 2.5)])
+        .expect("f32 peaks should fit");
 
     assert_eq!(spectrum.precursor_mz(), 250.125_f32);
     assert_eq!(spectrum.mz().collect::<Vec<_>>(), vec![50.5_f32, 75.25]);
@@ -89,8 +90,12 @@ fn generic_spectrum_can_store_f32_precision() {
 fn generic_spectrum_can_store_f16_precision_when_values_fit() {
     let mut spectrum: GenericSpectrum<f16> =
         GenericSpectrum::try_with_capacity(250.0, 2).expect("f16 precursor should fit");
-    spectrum.add_peak(50.0, 1.5).expect("f16 peak should fit");
-    spectrum.add_peak(75.0, 2.0).expect("f16 peak should fit");
+    spectrum
+        .add_peaks([
+            (f16::from_f64(50.0), f16::from_f64(1.5)),
+            (f16::from_f64(75.0), f16::from_f64(2.0)),
+        ])
+        .expect("f16 peaks should fit");
 
     assert_eq!(spectrum.precursor_mz(), f16::from_f64(250.0));
     assert_eq!(
@@ -99,6 +104,23 @@ fn generic_spectrum_can_store_f16_precision_when_values_fit() {
             (f16::from_f64(50.0), f16::from_f64(1.5)),
             (f16::from_f64(75.0), f16::from_f64(2.0)),
         ]
+    );
+}
+
+#[test]
+fn add_peak_and_add_peaks_are_fluent_and_precision_native() {
+    let mut spectrum: GenericSpectrum<f32> =
+        GenericSpectrum::try_with_capacity(250.0, 3).expect("f32 precursor should fit");
+
+    spectrum
+        .add_peak(50.0_f32, 1.25_f32)
+        .expect("first f32 peak should fit")
+        .add_peaks([(75.0_f32, 2.5_f32), (100.0_f32, 4.0_f32)])
+        .expect("remaining f32 peaks should fit");
+
+    assert_eq!(
+        spectrum.peaks().collect::<Vec<_>>(),
+        vec![(50.0_f32, 1.25_f32), (75.0, 2.5), (100.0, 4.0)]
     );
 }
 
@@ -161,7 +183,7 @@ fn generic_spectrum_rejects_values_that_do_not_fit_selected_precision() {
     let mut spectrum: GenericSpectrum<f16> =
         GenericSpectrum::try_with_capacity(100.0, 1).expect("f16 precursor should fit");
     let error = spectrum
-        .add_peak(70_000.0, 1.0)
+        .add_peak(f16::from_f64(70_000.0), f16::from_f64(1.0))
         .expect_err("f16 cannot represent this mz finitely");
     assert_eq!(
         error,
@@ -174,10 +196,10 @@ fn generic_spectrum_validates_after_precision_conversion() {
     let mut spectrum: GenericSpectrum<f16> =
         GenericSpectrum::try_with_capacity(2_000.0, 2).expect("f16 precursor should fit");
     spectrum
-        .add_peak(2_000.0, 1.0)
+        .add_peak(f16::from_f64(2_000.0), f16::from_f64(1.0))
         .expect("first f16 peak should fit");
     let error = spectrum
-        .add_peak(2_000.49, 1.0)
+        .add_peak(f16::from_f64(2_000.49), f16::from_f64(1.0))
         .expect_err("distinct inputs can collapse to the same f16 mz");
     assert_eq!(
         error,
@@ -187,7 +209,7 @@ fn generic_spectrum_validates_after_precision_conversion() {
     let mut spectrum: GenericSpectrum<f16> =
         GenericSpectrum::try_with_capacity(100.0, 1).expect("f16 precursor should fit");
     let error = spectrum
-        .add_peak(50.0, 1.0e-20)
+        .add_peak(f16::from_f64(50.0), f16::from_f64(1.0e-20))
         .expect_err("tiny positive intensity underflows to zero in f16");
     assert_eq!(
         error,
