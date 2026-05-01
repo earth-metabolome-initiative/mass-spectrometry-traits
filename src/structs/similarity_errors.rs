@@ -20,6 +20,9 @@ pub enum SimilarityComputationError {
     /// A numeric value required by the algorithm was not finite.
     #[error("value `{0}` must be finite")]
     NonFiniteValue(&'static str),
+    /// A computation parameter combination is invalid.
+    #[error("invalid value `{0}`")]
+    InvalidParameter(&'static str),
     /// Tolerance must be zero or positive.
     #[error("value `mz_tolerance` must be >= 0")]
     NegativeTolerance,

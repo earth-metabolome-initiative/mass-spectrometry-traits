@@ -26,6 +26,10 @@ fn similarity_computation_error_messages_are_stable() {
         "value `query_precursor_mz` must be finite"
     );
     assert_eq!(
+        SimilarityComputationError::InvalidParameter("number_of_bins").to_string(),
+        "invalid value `number_of_bins`"
+    );
+    assert_eq!(
         SimilarityComputationError::GraphConstructionFailed.to_string(),
         "failed while building peak matching graph"
     );

@@ -87,6 +87,79 @@ where
     Ok(new_lowest)
 }
 
+#[inline]
+fn validate_number_of_bins(number_of_bins: usize) -> Result<(), SimilarityComputationError> {
+    if number_of_bins == 0 {
+        return Err(SimilarityComputationError::InvalidParameter(
+            "number_of_bins",
+        ));
+    }
+    Ok(())
+}
+
+#[inline]
+fn validate_binning_range(
+    mz_min: f64,
+    mz_max: f64,
+    require_positive_min: bool,
+) -> Result<(), SimilarityComputationError> {
+    if !mz_min.is_finite() {
+        return Err(SimilarityComputationError::NonFiniteValue("mz_min"));
+    }
+    if !mz_max.is_finite() {
+        return Err(SimilarityComputationError::NonFiniteValue("mz_max"));
+    }
+    if require_positive_min && mz_min <= 0.0 {
+        return Err(SimilarityComputationError::InvalidParameter("mz_min"));
+    }
+    if mz_min >= mz_max {
+        return Err(SimilarityComputationError::InvalidParameter("mz_range"));
+    }
+    Ok(())
+}
+
+#[inline]
+fn bin_position_to_index(position: f64, number_of_bins: usize) -> usize {
+    let nearest_boundary = position.round();
+    let tolerance = f64::EPSILON * position.abs().max(1.0) * 8.0;
+    let position = if (position - nearest_boundary).abs() <= tolerance {
+        nearest_boundary
+    } else {
+        position
+    };
+    (position.floor() as usize).min(number_of_bins - 1)
+}
+
+fn collect_binned_intensities<S, F>(
+    spectrum: &S,
+    number_of_bins: usize,
+    mut bin_index: F,
+) -> Result<Vec<f64>, SimilarityComputationError>
+where
+    S: Spectrum + ?Sized,
+    F: FnMut(f64) -> Option<usize>,
+{
+    let mut binned = alloc::vec![0.0_f64; number_of_bins];
+    for (mz, intensity) in spectrum.peaks() {
+        if !mz.is_finite() {
+            return Err(SimilarityComputationError::NonFiniteValue("mz"));
+        }
+        if !intensity.is_finite() {
+            return Err(SimilarityComputationError::NonFiniteValue("intensity"));
+        }
+
+        if let Some(index) = bin_index(mz) {
+            binned[index] += intensity;
+            if !binned[index].is_finite() {
+                return Err(SimilarityComputationError::NonFiniteValue(
+                    "binned_intensity",
+                ));
+            }
+        }
+    }
+    Ok(binned)
+}
+
 /// Trait for a single Spectrum.
 pub trait Spectrum {
     /// Iterator over the intensities in the Spectrum, sorted by mass over
@@ -163,6 +236,105 @@ pub trait Spectrum {
 
     /// Returns the precursor mass over charge.
     fn precursor_mz(&self) -> f64;
+
+    /// Returns a dense vector of intensities binned linearly over m/z.
+    ///
+    /// The interval is `[mz_min, mz_max]`, with `number_of_bins` equal-width
+    /// bins. Values below `mz_min` or above `mz_max` are ignored. A peak exactly
+    /// at `mz_max` is assigned to the last bin.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityComputationError`] when the range parameters are
+    /// invalid, `number_of_bins` is zero, or a peak m/z/intensity is non-finite.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mass_spectrometry::prelude::*;
+    ///
+    /// let mut spectrum = GenericSpectrum::try_with_capacity(100.0, 3).unwrap();
+    /// spectrum.add_peak(1.0, 2.0).unwrap();
+    /// spectrum.add_peak(1.49, 3.0).unwrap();
+    /// spectrum.add_peak(2.0, 7.0).unwrap();
+    ///
+    /// let bins = spectrum.linear_binned_intensities(1.0, 2.0, 2).unwrap();
+    /// assert_eq!(bins, vec![5.0, 7.0]);
+    /// ```
+    fn linear_binned_intensities(
+        &self,
+        mz_min: f64,
+        mz_max: f64,
+        number_of_bins: usize,
+    ) -> Result<Vec<f64>, SimilarityComputationError> {
+        validate_number_of_bins(number_of_bins)?;
+        validate_binning_range(mz_min, mz_max, false)?;
+
+        let number_of_bins_f64 = number_of_bins as f64;
+        let scale = number_of_bins_f64 / (mz_max - mz_min);
+        collect_binned_intensities(self, number_of_bins, |mz| {
+            if mz < mz_min || mz > mz_max {
+                return None;
+            }
+            if mz == mz_max {
+                return Some(number_of_bins - 1);
+            }
+            Some(bin_position_to_index((mz - mz_min) * scale, number_of_bins))
+        })
+    }
+
+    /// Returns a dense vector of intensities binned logarithmically over m/z.
+    ///
+    /// The interval is `[mz_min, mz_max]`, split into equal-width bins in
+    /// natural-log m/z space. Values below `mz_min` or above `mz_max` are
+    /// ignored. A peak exactly at `mz_max` is assigned to the last bin.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SimilarityComputationError`] when the range parameters are
+    /// invalid, `mz_min <= 0`, `number_of_bins` is zero, or a peak
+    /// m/z/intensity is non-finite.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mass_spectrometry::prelude::*;
+    ///
+    /// let mut spectrum = GenericSpectrum::try_with_capacity(100.0, 3).unwrap();
+    /// spectrum.add_peak(1.0, 2.0).unwrap();
+    /// spectrum.add_peak(9.0, 3.0).unwrap();
+    /// spectrum.add_peak(100.0, 7.0).unwrap();
+    ///
+    /// let bins = spectrum
+    ///     .logarithmic_binned_intensities(1.0, 100.0, 2)
+    ///     .unwrap();
+    /// assert_eq!(bins, vec![5.0, 7.0]);
+    /// ```
+    fn logarithmic_binned_intensities(
+        &self,
+        mz_min: f64,
+        mz_max: f64,
+        number_of_bins: usize,
+    ) -> Result<Vec<f64>, SimilarityComputationError> {
+        validate_number_of_bins(number_of_bins)?;
+        validate_binning_range(mz_min, mz_max, true)?;
+
+        let log_min = mz_min.ln();
+        let log_max = mz_max.ln();
+        let scale = number_of_bins as f64 / (log_max - log_min);
+        collect_binned_intensities(self, number_of_bins, |mz| {
+            if mz < mz_min || mz > mz_max {
+                return None;
+            }
+            if mz == mz_max {
+                return Some(number_of_bins - 1);
+            }
+            Some(bin_position_to_index(
+                (mz.ln() - log_min) * scale,
+                number_of_bins,
+            ))
+        })
+    }
 
     /// Returns the matching peaks graph for the provided tolerance.
     ///
@@ -460,6 +632,106 @@ mod tests {
 
         assert_eq!(cols, alloc::vec![0, 1]);
         assert_eq!(graph.number_of_defined_values(), 2);
+    }
+
+    #[test]
+    fn linear_binned_intensities_accumulates_equal_width_bins() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![
+                (0.5, 10.0),
+                (1.0, 2.0),
+                (1.49, 3.0),
+                (1.5, 5.0),
+                (2.0, 7.0),
+                (2.1, 11.0),
+            ],
+        };
+
+        let bins = spectrum
+            .linear_binned_intensities(1.0, 2.0, 2)
+            .expect("valid linear binning config should succeed");
+
+        assert_eq!(bins, alloc::vec![5.0, 12.0]);
+    }
+
+    #[test]
+    fn logarithmic_binned_intensities_accumulates_log_width_bins() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![
+                (0.5, 10.0),
+                (1.0, 2.0),
+                (9.0, 3.0),
+                (10.0, 5.0),
+                (100.0, 7.0),
+                (101.0, 11.0),
+            ],
+        };
+
+        let bins = spectrum
+            .logarithmic_binned_intensities(1.0, 100.0, 2)
+            .expect("valid logarithmic binning config should succeed");
+
+        assert_eq!(bins, alloc::vec![5.0, 12.0]);
+    }
+
+    #[test]
+    fn binning_rejects_invalid_parameters() {
+        let spectrum = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(1.0, 1.0)],
+        };
+
+        assert_eq!(
+            spectrum
+                .linear_binned_intensities(1.0, 2.0, 0)
+                .expect_err("zero bins should be rejected"),
+            SimilarityComputationError::InvalidParameter("number_of_bins")
+        );
+        assert_eq!(
+            spectrum
+                .linear_binned_intensities(f64::NAN, 2.0, 2)
+                .expect_err("non-finite min should be rejected"),
+            SimilarityComputationError::NonFiniteValue("mz_min")
+        );
+        assert_eq!(
+            spectrum
+                .linear_binned_intensities(2.0, 2.0, 2)
+                .expect_err("empty range should be rejected"),
+            SimilarityComputationError::InvalidParameter("mz_range")
+        );
+        assert_eq!(
+            spectrum
+                .logarithmic_binned_intensities(0.0, 2.0, 2)
+                .expect_err("non-positive logarithmic minimum should be rejected"),
+            SimilarityComputationError::InvalidParameter("mz_min")
+        );
+    }
+
+    #[test]
+    fn binning_rejects_non_finite_peak_values() {
+        let non_finite_mz = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(f64::NAN, 1.0)],
+        };
+        assert_eq!(
+            non_finite_mz
+                .linear_binned_intensities(1.0, 2.0, 2)
+                .expect_err("non-finite peak mz should be rejected"),
+            SimilarityComputationError::NonFiniteValue("mz")
+        );
+
+        let non_finite_intensity = RawSpectrum {
+            precursor_mz: 100.0,
+            peaks: alloc::vec![(1.0, f64::INFINITY)],
+        };
+        assert_eq!(
+            non_finite_intensity
+                .logarithmic_binned_intensities(1.0, 2.0, 2)
+                .expect_err("non-finite intensity should be rejected"),
+            SimilarityComputationError::NonFiniteValue("intensity")
+        );
     }
 
     #[test]
