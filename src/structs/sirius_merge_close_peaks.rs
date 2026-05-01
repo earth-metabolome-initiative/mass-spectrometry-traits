@@ -23,6 +23,9 @@ use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
 /// intensities summed into the dominant peak, which keeps its original m/z.
 /// If the running sum overflows to a non-finite value, it is clamped to
 /// `f64::MAX`.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct SiriusMergeClosePeaks {
     mz_tolerance: f64,
 }

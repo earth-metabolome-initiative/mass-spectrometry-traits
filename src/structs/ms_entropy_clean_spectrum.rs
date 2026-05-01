@@ -17,6 +17,9 @@ use crate::structs::GenericSpectrum;
 use crate::traits::{SpectralProcessor, Spectrum, SpectrumMut};
 
 /// Spectral processor mirroring `ms_entropy.clean_spectrum` behavior.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct MsEntropyCleanSpectrum {
     min_mz: Option<f64>,
     max_mz: Option<f64>,
@@ -169,6 +172,9 @@ impl SpectralProcessor for MsEntropyCleanSpectrum {
 }
 
 /// Builder for [`MsEntropyCleanSpectrum`].
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct MsEntropyCleanSpectrumBuilder {
     min_mz: Option<f64>,
     max_mz: Option<f64>,

@@ -5,6 +5,9 @@ use alloc::vec::Vec;
 use super::Spectrum;
 
 /// Parameters for generating a random spectrum with [`SpectrumAlloc::random`].
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RandomSpectrumConfig {
     /// Precursor m/z for the generated spectrum.

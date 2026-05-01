@@ -4,12 +4,68 @@
 //! `flash_entropy_index`) expose only their public wrappers.
 
 use alloc::vec::Vec;
+use core::ops::{Deref, DerefMut};
 
 use bitvec::prelude::*;
 
 use super::similarity_errors::SimilarityComputationError;
 
 const PREFIX_PRUNING_MIN_THRESHOLD: f64 = 0.85;
+
+struct SearchBitVec(BitVec);
+
+impl SearchBitVec {
+    fn new() -> Self {
+        Self(BitVec::new())
+    }
+
+    fn zeros(len: usize) -> Self {
+        Self(bitvec![0; len])
+    }
+
+    #[cfg(feature = "mem_size")]
+    fn stored_bytes(&self, flags: mem_dbg::SizeFlags) -> usize {
+        let bits = if flags.contains(mem_dbg::SizeFlags::CAPACITY) {
+            self.0.capacity()
+        } else {
+            self.0.len()
+        };
+        bits.div_ceil(usize::BITS as usize) * core::mem::size_of::<usize>()
+    }
+}
+
+impl Deref for SearchBitVec {
+    type Target = BitVec;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SearchBitVec {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[cfg(feature = "mem_size")]
+impl mem_dbg::FlatType for SearchBitVec {
+    type Flat = mem_dbg::False;
+}
+
+#[cfg(feature = "mem_size")]
+impl mem_dbg::MemSize for SearchBitVec {
+    fn mem_size_rec(
+        &self,
+        flags: mem_dbg::SizeFlags,
+        _refs: &mut mem_dbg::HashMap<usize, usize>,
+    ) -> usize {
+        core::mem::size_of::<Self>() + self.stored_bytes(flags)
+    }
+}
+
+#[cfg(feature = "mem_dbg")]
+impl mem_dbg::MemDbgImpl for SearchBitVec {}
 
 // ---------------------------------------------------------------------------
 // FlashKernel — scoring kernel abstraction
@@ -44,6 +100,9 @@ pub(crate) trait FlashKernel {
 // ---------------------------------------------------------------------------
 
 /// A single search result from a Flash index query.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlashSearchResult {
     /// Index of the library spectrum (0-based, insertion order).
@@ -67,6 +126,9 @@ pub(crate) struct DirectThresholdSearch<'a, K: FlashKernel> {
 /// A threshold-aware wrapper chooses how each spectrum's prefix is computed,
 /// then this shared structure stores those prefix peaks in a sorted m/z index
 /// and in per-spectrum order for indexed-query graph construction.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub(crate) struct ThresholdPrefixPostings {
     prefix_mz: Vec<f64>,
     prefix_spec_id: Vec<u32>,
@@ -203,6 +265,9 @@ pub(crate) fn l2_threshold_prefix_indices(
 
 /// Per-query score accumulator. Uses dense arrays (one slot per library
 /// spectrum) with a `touched` list for efficient reset.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 struct DenseAccumulator {
     scores: Vec<f64>,
     counts: Vec<u32>,
@@ -270,13 +335,16 @@ impl DenseAccumulator {
 /// reuse scratch buffers. Large buffers are allocated lazily by the search mode
 /// that needs them, so direct threshold searches do not pay for modified-search
 /// scratch.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct SearchState {
     acc: DenseAccumulator,
-    matched_products: BitVec,
+    matched_products: SearchBitVec,
     direct_scores: Vec<f64>,
-    candidate_spectra: BitVec,
+    candidate_spectra: SearchBitVec,
     candidate_touched: Vec<u32>,
-    secondary_candidate_spectra: BitVec,
+    secondary_candidate_spectra: SearchBitVec,
     secondary_candidate_touched: Vec<u32>,
     query_order: Vec<usize>,
     query_suffix_norm: Vec<f64>,
@@ -288,11 +356,11 @@ impl SearchState {
         let _ = (n_spectra, n_products);
         Self {
             acc: DenseAccumulator::new(),
-            matched_products: BitVec::new(),
+            matched_products: SearchBitVec::new(),
             direct_scores: Vec::new(),
-            candidate_spectra: BitVec::new(),
+            candidate_spectra: SearchBitVec::new(),
             candidate_touched: Vec::new(),
-            secondary_candidate_spectra: BitVec::new(),
+            secondary_candidate_spectra: SearchBitVec::new(),
             secondary_candidate_touched: Vec::new(),
             query_order: Vec::new(),
             query_suffix_norm: Vec::new(),
@@ -304,7 +372,7 @@ impl SearchState {
             return;
         }
 
-        self.candidate_spectra = bitvec![0; n_spectra];
+        self.candidate_spectra = SearchBitVec::zeros(n_spectra);
         self.candidate_touched.clear();
     }
 
@@ -313,7 +381,7 @@ impl SearchState {
             return;
         }
 
-        self.secondary_candidate_spectra = bitvec![0; n_spectra];
+        self.secondary_candidate_spectra = SearchBitVec::zeros(n_spectra);
         self.secondary_candidate_touched.clear();
     }
 
@@ -322,7 +390,7 @@ impl SearchState {
             return;
         }
 
-        self.matched_products = bitvec![0; n_products];
+        self.matched_products = SearchBitVec::zeros(n_products);
         self.direct_scores.clear();
         self.direct_scores.resize(n_products, 0.0);
     }
@@ -416,6 +484,9 @@ impl SearchState {
 // ---------------------------------------------------------------------------
 
 /// Inverted m/z index shared by all Flash search variants.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub(crate) struct FlashIndex<K: FlashKernel> {
     // Product ion index (sorted by m/z).
     pub(crate) product_mz: Vec<f64>,

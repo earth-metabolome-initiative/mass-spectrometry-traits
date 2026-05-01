@@ -27,6 +27,9 @@ const THRESHOLD_INDEX_TWO_SIDED_MIN_THRESHOLD: f64 = 0.85;
 pub(crate) struct CosineKernel;
 
 /// Norm stored per library spectrum.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CosineNorm(f64);
 
@@ -103,6 +106,9 @@ where
 /// let results = index.search(&query).expect("search should succeed");
 /// assert!(results.iter().any(|r| r.spectrum_id == 0 && r.score > 0.99));
 /// ```
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct FlashCosineIndex {
     inner: FlashIndex<CosineKernel>,
     mz_power: f64,
@@ -396,6 +402,9 @@ impl FlashCosineIndex {
 /// threshold at construction time and builds library-side prefix postings for
 /// that threshold. Search first intersects query-prefix and library-prefix
 /// candidate filters, then exactly re-scores only the surviving spectra.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct FlashCosineThresholdIndex {
     inner: FlashIndex<CosineKernel>,
     mz_power: f64,

@@ -29,6 +29,9 @@ use crate::traits::{ScalarSpectralSimilarity, Spectrum};
 /// differ on near-zero edges due to f64 tie-breaking).
 /// Requires the same strict well-separated precondition as
 /// [`super::LinearCosine`] (consecutive peaks > `2 * mz_tolerance`).
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct ModifiedLinearCosine {
     config: CosineConfig,
 }

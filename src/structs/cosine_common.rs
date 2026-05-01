@@ -22,6 +22,9 @@ pub(crate) struct MatchingScoreInputs<'a, R: MultiRanged<Step = u32>> {
     pub(crate) right_norm: f64,
 }
 
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub(crate) struct CosineConfig {
     mz_power: f64,
     intensity_power: f64,

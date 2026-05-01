@@ -20,6 +20,9 @@ use crate::traits::Spectrum;
 /// two-pointer sweep is provably optimal.
 ///
 /// Returns an error when the strict peak-spacing precondition is violated.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct LinearEntropy {
     mz_power: f64,
     intensity_power: f64,

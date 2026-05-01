@@ -24,6 +24,9 @@ use crate::traits::Spectrum;
 /// optimal DP-based assignment. Requires the same strict well-separated
 /// precondition as [`super::LinearEntropy`]
 /// (consecutive peaks > `2 * mz_tolerance`).
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct ModifiedLinearEntropy {
     mz_power: f64,
     intensity_power: f64,

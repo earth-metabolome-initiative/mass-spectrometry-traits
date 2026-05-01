@@ -3,6 +3,9 @@
 use super::cosine_common::{impl_cosine_wrapper_config_api, impl_cosine_wrapper_similarity};
 
 /// Implementation of the Hungarian cosine similarity for mass spectra.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct HungarianCosine {
     config: super::cosine_common::CosineConfig,
 }

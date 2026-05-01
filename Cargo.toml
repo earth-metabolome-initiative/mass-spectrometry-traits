@@ -8,6 +8,9 @@ members = ["fuzz"]
 
 [features]
 default = []
+std = []
+mem_size = ["dep:mem_dbg_crate", "mem_dbg_crate/derive", "geometric-traits/mem_size"]
+mem_dbg = ["std", "mem_size", "mem_dbg_crate/std", "geometric-traits/mem_dbg"]
 proptest = ["dep:proptest"]
 
 [dependencies]
@@ -17,6 +20,7 @@ multi_ranged = { version = "0.1.1", default-features = false }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }
 arbitrary = { version = "1", default-features = false }
+mem_dbg_crate = { package = "mem_dbg", version = "0.4.1", default-features = false, optional = true }
 proptest = { version = "1.6", optional = true }
 
 [dev-dependencies]

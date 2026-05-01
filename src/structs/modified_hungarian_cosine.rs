@@ -15,6 +15,9 @@ use super::cosine_common::{impl_cosine_wrapper_config_api, impl_cosine_wrapper_s
 /// Extends [`super::HungarianCosine`] by also matching fragment peaks shifted
 /// by the precursor mass difference when that shift exceeds the configured
 /// tolerance, using optimal (Crouse LAPJV) assignment.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(flat))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct ModifiedHungarianCosine {
     config: super::cosine_common::CosineConfig,
 }

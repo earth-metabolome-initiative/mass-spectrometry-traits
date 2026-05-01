@@ -64,6 +64,9 @@ impl FlashKernel for EntropyKernel {
 /// let results = index.search(&query).expect("search should succeed");
 /// assert!(results.iter().any(|r| r.spectrum_id == 0 && r.score > 0.99));
 /// ```
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct FlashEntropyIndex {
     inner: FlashIndex<EntropyKernel>,
     weighted: bool,
