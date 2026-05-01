@@ -16,6 +16,7 @@ pub mod modified_linear_entropy;
 pub mod ms_entropy_clean_spectrum;
 pub mod similarity_errors;
 pub mod sirius_merge_close_peaks;
+pub mod splash;
 
 pub use flash_common::{FlashSearchResult, SearchState};
 pub use flash_cosine_index::{FlashCosineIndex, FlashCosineIndexError, FlashCosineThresholdIndex};
@@ -31,3 +32,7 @@ pub use modified_linear_entropy::ModifiedLinearEntropy;
 pub use ms_entropy_clean_spectrum::{MsEntropyCleanSpectrum, MsEntropyCleanSpectrumBuilder};
 pub use similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 pub use sirius_merge_close_peaks::SiriusMergeClosePeaks;
+pub use splash::{
+    IntoSplashPeak, SpectrumSplash, SplashError, SplashSpectrumType, splash_from_peaks,
+    splash_from_peaks_with_type,
+};
