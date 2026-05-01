@@ -13,7 +13,7 @@ use super::cosine_common::{
 use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
 use super::flash_common::{FlashIndex, FlashKernel, FlashSearchResult, SearchState};
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
-use crate::traits::Spectrum;
+use crate::traits::{Spectrum, SpectrumFloat};
 
 // ---------------------------------------------------------------------------
 // EntropyKernel
@@ -53,14 +53,14 @@ impl FlashKernel for EntropyKernel {
 /// ```
 /// use mass_spectrometry::prelude::*;
 ///
-/// let library = [
+/// let library: [GenericSpectrum; 2] = [
 ///     GenericSpectrum::cocaine().unwrap(),
 ///     GenericSpectrum::glucose().unwrap(),
 /// ];
 /// let index = FlashEntropyIndex::new(0.0, 1.0, 0.1, true, library.iter())
 ///     .expect("index build should succeed");
 ///
-/// let query = GenericSpectrum::cocaine().unwrap();
+/// let query: GenericSpectrum = GenericSpectrum::cocaine().unwrap();
 /// let results = index.search(&query).expect("search should succeed");
 /// assert!(results.iter().any(|r| r.spectrum_id == 0 && r.score > 0.99));
 /// ```
@@ -167,7 +167,7 @@ impl FlashEntropyIndex {
                     .map_err(FlashEntropyIndexError::Computation)?;
 
             if peaks.int.is_empty() {
-                let precursor_f64 = ensure_finite(spectrum.precursor_mz(), "precursor_mz")
+                let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
                     .map_err(FlashEntropyIndexError::Computation)?;
                 prepared.push((precursor_f64, Vec::new(), Vec::new()));
                 continue;
@@ -176,7 +176,7 @@ impl FlashEntropyIndex {
             validate_well_separated(&peaks.mz, tolerance, "library spectrum")
                 .map_err(FlashEntropyIndexError::Computation)?;
 
-            let precursor_f64 = ensure_finite(spectrum.precursor_mz(), "precursor_mz")
+            let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
                 .map_err(FlashEntropyIndexError::Computation)?;
 
             prepared.push((precursor_f64, peaks.mz, peaks.int));
@@ -232,7 +232,7 @@ impl FlashEntropyIndex {
         S: Spectrum,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
-        let precursor_f64 = ensure_finite(query.precursor_mz(), "query_precursor_mz")?;
+        let precursor_f64 = ensure_finite(query.precursor_mz().to_f64(), "query_precursor_mz")?;
         Ok(self
             .inner
             .search_modified(&query_mz, &query_data, &(), precursor_f64))
@@ -248,7 +248,7 @@ impl FlashEntropyIndex {
         S: Spectrum,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
-        let precursor_f64 = ensure_finite(query.precursor_mz(), "query_precursor_mz")?;
+        let precursor_f64 = ensure_finite(query.precursor_mz().to_f64(), "query_precursor_mz")?;
         Ok(self
             .inner
             .search_modified_with_state(&query_mz, &query_data, &(), precursor_f64, state))
@@ -309,6 +309,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

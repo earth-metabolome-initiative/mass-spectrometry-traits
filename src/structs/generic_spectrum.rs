@@ -12,17 +12,37 @@ use proptest::{
 };
 
 use crate::numeric_validation::{ELECTRON_MASS, MAX_MZ};
-use crate::traits::{Spectrum, SpectrumAlloc, SpectrumMut};
+use crate::traits::{Spectrum, SpectrumAlloc, SpectrumFloat, SpectrumMut};
 
 /// A generic spectrum struct.
+///
+/// The storage precision defaults to `f64`. Use `GenericSpectrum<f32>` or
+/// `GenericSpectrum<half::f16>` when lower memory use is more important than
+/// stored peak precision.
+///
+/// # Example
+///
+/// ```
+/// use half::f16;
+/// use mass_spectrometry::prelude::*;
+///
+/// let mut f32_spectrum: GenericSpectrum<f32> =
+///     GenericSpectrum::try_with_capacity(250.0, 1).unwrap();
+/// f32_spectrum.add_peak(100.0, 2.0).unwrap();
+/// assert_eq!(f32_spectrum.mz_nth(0), 100.0_f32);
+///
+/// let mut f16_spectrum: GenericSpectrum<f16> =
+///     GenericSpectrum::try_with_capacity(250.0, 1).unwrap();
+/// f16_spectrum.add_peak(100.0, 2.0).unwrap();
+/// assert_eq!(f16_spectrum.intensity_nth(0), f16::from_f64(2.0));
+/// ```
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(rec))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 #[derive(Debug, Clone, PartialEq)]
-pub struct GenericSpectrum {
-    mz: SortedVec<f64>,
-    intensity: Vec<f64>,
-    precursor_mz: f64,
+pub struct GenericSpectrum<P: SpectrumFloat = f64> {
+    peaks: SortedVec<(P, P)>,
+    precursor_mz: P,
 }
 
 /// Error returned when mutating a [`GenericSpectrum`].
@@ -60,13 +80,14 @@ pub enum GenericSpectrumMutationError {
     NonPositiveIntensity,
 }
 
-impl GenericSpectrum {
+impl<P: SpectrumFloat> GenericSpectrum<P> {
     /// Creates a new `GenericSpectrum` with a given capacity.
     ///
     /// # Errors
     ///
     /// Returns an error if `precursor_mz` is non-finite or outside the valid
-    /// range `[ELECTRON_MASS, MAX_MZ]`.
+    /// range `[ELECTRON_MASS, MAX_MZ]`, or if it cannot be represented as a
+    /// finite value in the selected precision.
     pub fn try_with_capacity(
         precursor_mz: f64,
         capacity: usize,
@@ -80,9 +101,17 @@ impl GenericSpectrum {
         if precursor_mz > MAX_MZ {
             return Err(GenericSpectrumMutationError::PrecursorMzAboveMaximum);
         }
+        let precursor_mz =
+            P::from_f64(precursor_mz).ok_or(GenericSpectrumMutationError::NonFinitePrecursorMz)?;
+        let stored_precursor_mz = precursor_mz.to_f64();
+        if stored_precursor_mz < ELECTRON_MASS {
+            return Err(GenericSpectrumMutationError::PrecursorMzBelowMinimum);
+        }
+        if stored_precursor_mz > MAX_MZ {
+            return Err(GenericSpectrumMutationError::PrecursorMzAboveMaximum);
+        }
         Ok(Self {
-            mz: SortedVec::with_capacity(capacity),
-            intensity: Vec::with_capacity(capacity),
+            peaks: SortedVec::with_capacity(capacity),
             precursor_mz,
         })
     }
@@ -90,12 +119,14 @@ impl GenericSpectrum {
     fn from_untrusted_parts(precursor_mz: f64, peaks: Vec<(f64, f64)>) -> Self {
         let precursor_mz =
             if precursor_mz.is_finite() && (ELECTRON_MASS..=MAX_MZ).contains(&precursor_mz) {
-                precursor_mz
+                P::from_f64(precursor_mz).unwrap_or_else(|| {
+                    P::from_f64(1.0).expect("1.0 must be representable as spectrum precision")
+                })
             } else {
-                1.0
+                P::from_f64(1.0).expect("1.0 must be representable as spectrum precision")
             };
 
-        let mut sanitized: Vec<(f64, f64)> = peaks
+        let mut sanitized: Vec<(P, P)> = peaks
             .into_iter()
             .filter_map(|(mz, intensity)| {
                 if !mz.is_finite() {
@@ -107,6 +138,8 @@ impl GenericSpectrum {
                 if !intensity.is_finite() || intensity <= 0.0 {
                     return None;
                 }
+                let mz = P::from_f64(mz)?;
+                let intensity = P::from_f64(intensity)?;
                 Some((mz, intensity))
             })
             .collect();
@@ -118,13 +151,12 @@ impl GenericSpectrum {
         });
 
         let mut spectrum = GenericSpectrum {
-            mz: SortedVec::with_capacity(sanitized.len()),
-            intensity: Vec::with_capacity(sanitized.len()),
+            peaks: SortedVec::with_capacity(sanitized.len()),
             precursor_mz,
         };
 
         for (mz, intensity) in sanitized {
-            if spectrum.add_peak(mz, intensity).is_err() {
+            if spectrum.add_peak(mz.to_f64(), intensity.to_f64()).is_err() {
                 continue;
             }
         }
@@ -133,7 +165,17 @@ impl GenericSpectrum {
     }
 }
 
-impl<'a> ByteArbitrary<'a> for GenericSpectrum {
+#[inline]
+fn peak_mz<P: SpectrumFloat>(peak: &(P, P)) -> P {
+    peak.0
+}
+
+#[inline]
+fn peak_intensity<P: SpectrumFloat>(peak: &(P, P)) -> P {
+    peak.1
+}
+
+impl<'a> ByteArbitrary<'a> for GenericSpectrum<f64> {
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         let precursor_mz = <f64 as ByteArbitrary<'a>>::arbitrary(u)?;
         let peak_count = u.int_in_range(0..=64usize)?;
@@ -148,50 +190,63 @@ impl<'a> ByteArbitrary<'a> for GenericSpectrum {
     }
 }
 
-impl Spectrum for GenericSpectrum {
-    type SortedIntensitiesIter<'a> = core::iter::Copied<core::slice::Iter<'a, f64>>;
-    type SortedMzIter<'a> = core::iter::Copied<core::slice::Iter<'a, f64>>;
-    type SortedPeaksIter<'a> =
-        core::iter::Zip<Self::SortedMzIter<'a>, Self::SortedIntensitiesIter<'a>>;
+impl<P: SpectrumFloat> Spectrum for GenericSpectrum<P> {
+    type Precision = P;
+    type SortedIntensitiesIter<'a>
+        = core::iter::Map<core::slice::Iter<'a, (P, P)>, fn(&(P, P)) -> P>
+    where
+        Self: 'a;
+    type SortedMzIter<'a>
+        = core::iter::Map<core::slice::Iter<'a, (P, P)>, fn(&(P, P)) -> P>
+    where
+        Self: 'a;
+    type SortedPeaksIter<'a>
+        = core::iter::Copied<core::slice::Iter<'a, (P, P)>>
+    where
+        Self: 'a;
 
     fn len(&self) -> usize {
-        self.mz.len()
+        self.peaks.len()
     }
 
     fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
-        self.intensity.iter().copied()
+        self.peaks
+            .iter()
+            .map(peak_intensity::<P> as fn(&(P, P)) -> P)
     }
 
     fn mz(&self) -> Self::SortedMzIter<'_> {
-        self.mz.iter().copied()
+        self.peaks.iter().map(peak_mz::<P> as fn(&(P, P)) -> P)
     }
 
     fn peaks(&self) -> Self::SortedPeaksIter<'_> {
-        self.mz().zip(self.intensities())
+        self.peaks.iter().copied()
     }
 
-    fn precursor_mz(&self) -> f64 {
+    fn precursor_mz(&self) -> Self::Precision {
         self.precursor_mz
     }
 
-    fn intensity_nth(&self, n: usize) -> f64 {
-        self.intensity[n]
+    fn intensity_nth(&self, n: usize) -> Self::Precision {
+        self.peaks[n].1
     }
 
-    fn mz_nth(&self, n: usize) -> f64 {
-        self.mz[n]
+    fn mz_nth(&self, n: usize) -> Self::Precision {
+        self.peaks[n].0
     }
 
-    fn peak_nth(&self, n: usize) -> (f64, f64) {
-        (self.mz_nth(n), self.intensity_nth(n))
+    fn peak_nth(&self, n: usize) -> (Self::Precision, Self::Precision) {
+        self.peaks[n]
     }
 
     fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
-        self.mz[index..].iter().copied()
+        self.peaks[index..]
+            .iter()
+            .map(peak_mz::<P> as fn(&(P, P)) -> P)
     }
 }
 
-impl SpectrumMut for GenericSpectrum {
+impl<P: SpectrumFloat> SpectrumMut for GenericSpectrum<P> {
     type MutationError = GenericSpectrumMutationError;
 
     fn add_peak(&mut self, mz: f64, intensity: f64) -> Result<(), Self::MutationError> {
@@ -210,30 +265,44 @@ impl SpectrumMut for GenericSpectrum {
         if intensity <= 0.0 {
             return Err(GenericSpectrumMutationError::NonPositiveIntensity);
         }
-        if let Some(last_mz) = self.mz.last() {
-            if mz == *last_mz {
+        let mz = P::from_f64(mz).ok_or(GenericSpectrumMutationError::NonFiniteMz)?;
+        let intensity =
+            P::from_f64(intensity).ok_or(GenericSpectrumMutationError::NonFiniteIntensity)?;
+        let stored_mz = mz.to_f64();
+        if stored_mz < ELECTRON_MASS {
+            return Err(GenericSpectrumMutationError::MzBelowMinimum);
+        }
+        if stored_mz > MAX_MZ {
+            return Err(GenericSpectrumMutationError::MzAboveMaximum);
+        }
+        if intensity.to_f64() <= 0.0 {
+            return Err(GenericSpectrumMutationError::NonPositiveIntensity);
+        }
+        // Tuple ordering would allow equal m/z with increasing intensity, so
+        // keep the stricter spectrum invariant explicit.
+        if let Some(&(last_mz, _)) = self.peaks.last() {
+            if mz == last_mz {
                 return Err(GenericSpectrumMutationError::DuplicateMz);
             }
-            if mz < *last_mz {
+            if mz < last_mz {
                 return Err(GenericSpectrumMutationError::UnsortedMz);
             }
         }
-        self.mz
-            .push(mz)
+        self.peaks
+            .push((mz, intensity))
             .map_err(|_| GenericSpectrumMutationError::UnsortedMz)?;
-        self.intensity.push(intensity);
         Ok(())
     }
 }
 
-impl SpectrumAlloc for GenericSpectrum {
+impl<P: SpectrumFloat> SpectrumAlloc for GenericSpectrum<P> {
     fn with_capacity(precursor_mz: f64, capacity: usize) -> Result<Self, Self::MutationError> {
         Self::try_with_capacity(precursor_mz, capacity)
     }
 }
 
 #[cfg(feature = "proptest")]
-impl ProptestArbitrary for GenericSpectrum {
+impl ProptestArbitrary for GenericSpectrum<f64> {
     type Parameters = ();
     type Strategy = BoxedStrategy<Self>;
 

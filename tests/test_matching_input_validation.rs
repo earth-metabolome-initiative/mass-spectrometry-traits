@@ -13,6 +13,8 @@ struct RawSpectrum {
 }
 
 impl Spectrum for RawSpectrum {
+    type Precision = f64;
+
     type SortedIntensitiesIter<'a>
         = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
     where
@@ -248,7 +250,8 @@ fn modified_matching_peaks_reports_shifted_non_finite_right_value() {
 
 #[test]
 fn generic_spectrum_rejects_negative_intensity() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     let error = spectrum
         .add_peak(100.0, -1.0)
         .expect_err("negative intensity should be rejected");
@@ -257,7 +260,8 @@ fn generic_spectrum_rejects_negative_intensity() {
 
 #[test]
 fn generic_spectrum_rejects_non_finite_intensity() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     let error = spectrum
         .add_peak(100.0, f64::NAN)
         .expect_err("non-finite intensity should be rejected");
@@ -266,7 +270,8 @@ fn generic_spectrum_rejects_non_finite_intensity() {
 
 #[test]
 fn generic_spectrum_rejects_non_finite_mz() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     let error = spectrum
         .add_peak(f64::INFINITY, 1.0)
         .expect_err("non-finite mz should be rejected");
@@ -275,7 +280,8 @@ fn generic_spectrum_rejects_non_finite_mz() {
 
 #[test]
 fn generic_spectrum_rejects_duplicate_mz() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     spectrum
         .add_peak(10.0, 1.0)
         .expect("first peak should be accepted");
@@ -287,7 +293,8 @@ fn generic_spectrum_rejects_duplicate_mz() {
 
 #[test]
 fn generic_spectrum_rejects_descending_mz() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     spectrum
         .add_peak(10.0, 1.0)
         .expect("first peak should be accepted");
@@ -299,7 +306,8 @@ fn generic_spectrum_rejects_descending_mz() {
 
 #[test]
 fn generic_spectrum_rejects_negative_mz() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     let error = spectrum
         .add_peak(-1.0, 1.0)
         .expect_err("negative mz should be rejected");
@@ -308,7 +316,7 @@ fn generic_spectrum_rejects_negative_mz() {
 
 #[test]
 fn generic_spectrum_try_with_capacity_rejects_non_finite_precursor_mz() {
-    let error = match GenericSpectrum::try_with_capacity(f64::INFINITY, 1) {
+    let error = match GenericSpectrum::<f64>::try_with_capacity(f64::INFINITY, 1) {
         Err(error) => error,
         Ok(_) => panic!("non-finite precursor_mz should be rejected"),
     };
@@ -317,7 +325,7 @@ fn generic_spectrum_try_with_capacity_rejects_non_finite_precursor_mz() {
 
 #[test]
 fn generic_spectrum_with_capacity_rejects_negative_precursor_mz() {
-    let error = match GenericSpectrum::with_capacity(-1.0, 1) {
+    let error = match GenericSpectrum::<f64>::with_capacity(-1.0, 1) {
         Err(error) => error,
         Ok(_) => panic!("negative precursor_mz should be rejected"),
     };
@@ -326,7 +334,8 @@ fn generic_spectrum_with_capacity_rejects_negative_precursor_mz() {
 
 #[test]
 fn add_peak_rejects_mz_below_electron_mass() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     let error = spectrum
         .add_peak(0.0, 1.0)
         .expect_err("mz below electron mass should be rejected");
@@ -335,7 +344,8 @@ fn add_peak_rejects_mz_below_electron_mass() {
 
 #[test]
 fn add_peak_rejects_mz_above_max() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     let error = spectrum
         .add_peak(3_000_000.0, 1.0)
         .expect_err("mz above MAX_MZ should be rejected");
@@ -344,7 +354,8 @@ fn add_peak_rejects_mz_above_max() {
 
 #[test]
 fn add_peak_rejects_zero_intensity() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     let error = spectrum
         .add_peak(100.0, 0.0)
         .expect_err("zero intensity should be rejected");
@@ -353,7 +364,8 @@ fn add_peak_rejects_zero_intensity() {
 
 #[test]
 fn add_peak_accepts_mz_at_electron_mass_boundary() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     spectrum
         .add_peak(ELECTRON_MASS, 1.0)
         .expect("mz at ELECTRON_MASS boundary should be accepted");
@@ -361,7 +373,8 @@ fn add_peak_accepts_mz_at_electron_mass_boundary() {
 
 #[test]
 fn add_peak_accepts_mz_at_max_mz_boundary() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     spectrum
         .add_peak(2_000_000.0, 1.0)
         .expect("mz at MAX_MZ boundary should be accepted");
@@ -369,7 +382,8 @@ fn add_peak_accepts_mz_at_max_mz_boundary() {
 
 #[test]
 fn add_peak_accepts_min_positive_intensity() {
-    let mut spectrum = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut spectrum: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     spectrum
         .add_peak(100.0, f64::MIN_POSITIVE)
         .expect("f64::MIN_POSITIVE intensity should be accepted");
@@ -377,7 +391,7 @@ fn add_peak_accepts_min_positive_intensity() {
 
 #[test]
 fn try_with_capacity_rejects_precursor_below_electron_mass() {
-    let error = match GenericSpectrum::try_with_capacity(0.0, 1) {
+    let error = match GenericSpectrum::<f64>::try_with_capacity(0.0, 1) {
         Err(error) => error,
         Ok(_) => panic!("precursor below ELECTRON_MASS should be rejected"),
     };
@@ -386,7 +400,7 @@ fn try_with_capacity_rejects_precursor_below_electron_mass() {
 
 #[test]
 fn try_with_capacity_rejects_precursor_above_max_mz() {
-    let error = match GenericSpectrum::try_with_capacity(3_000_000.0, 1) {
+    let error = match GenericSpectrum::<f64>::try_with_capacity(3_000_000.0, 1) {
         Err(error) => error,
         Ok(_) => panic!("precursor above MAX_MZ should be rejected"),
     };

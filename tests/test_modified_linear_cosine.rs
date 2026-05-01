@@ -100,20 +100,25 @@ fn assert_shift0_equivalence(name: &str, left: &GenericSpectrum, right: &Generic
 
 #[test]
 fn shift0_equivalence_self() {
-    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let cocaine: GenericSpectrum =
+        GenericSpectrum::cocaine().expect("reference spectrum should build");
     assert_shift0_equivalence("cocaine_self", &cocaine, &cocaine);
 
-    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let glucose: GenericSpectrum =
+        GenericSpectrum::glucose().expect("reference spectrum should build");
     assert_shift0_equivalence("glucose_self", &glucose, &glucose);
 
-    let salicin = GenericSpectrum::salicin().expect("reference spectrum should build");
+    let salicin: GenericSpectrum =
+        GenericSpectrum::salicin().expect("reference spectrum should build");
     assert_shift0_equivalence("salicin_self", &salicin, &salicin);
 }
 
 #[test]
 fn shift0_equivalence_cross() {
-    let cocaine = GenericSpectrum::cocaine().expect("reference spectrum should build");
-    let glucose = GenericSpectrum::glucose().expect("reference spectrum should build");
+    let cocaine: GenericSpectrum =
+        GenericSpectrum::cocaine().expect("reference spectrum should build");
+    let glucose: GenericSpectrum =
+        GenericSpectrum::glucose().expect("reference spectrum should build");
     assert_shift0_equivalence("cocaine_vs_glucose", &cocaine, &glucose);
 }
 
@@ -201,11 +206,13 @@ fn symmetry_hydroxy_cholesterol_phenylalanine() {
 
 #[test]
 fn synthetic_shifted_match() {
-    let mut a = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
+    let mut a: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     a.add_peak(50.0, 1000.0).unwrap();
     a.add_peak(80.0, 500.0).unwrap();
 
-    let mut b = GenericSpectrum::with_capacity(110.0, 2).expect("valid spectrum allocation");
+    let mut b: GenericSpectrum =
+        GenericSpectrum::with_capacity(110.0, 2).expect("valid spectrum allocation");
     b.add_peak(50.0, 1000.0).unwrap();
     b.add_peak(90.0, 500.0).unwrap();
 
@@ -239,11 +246,13 @@ fn synthetic_shifted_match() {
 
 #[test]
 fn overlapping_direct_and_shifted_windows_do_not_double_count() {
-    let mut left = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
+    let mut left: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     left.add_peak(50.0, 1000.0).unwrap();
     left.add_peak(80.0, 500.0).unwrap();
 
-    let mut right = GenericSpectrum::with_capacity(100.05, 2).expect("valid spectrum allocation");
+    let mut right: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.05, 2).expect("valid spectrum allocation");
     right.add_peak(50.03, 1000.0).unwrap();
     right.add_peak(80.03, 500.0).unwrap();
 
@@ -271,10 +280,12 @@ fn overlapping_direct_and_shifted_windows_do_not_double_count() {
 
 #[test]
 fn synthetic_no_matches() {
-    let mut a = GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
+    let mut a: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 1).expect("valid spectrum allocation");
     a.add_peak(50.0, 1000.0).unwrap();
 
-    let mut b = GenericSpectrum::with_capacity(200.0, 1).expect("valid spectrum allocation");
+    let mut b: GenericSpectrum =
+        GenericSpectrum::with_capacity(200.0, 1).expect("valid spectrum allocation");
     b.add_peak(300.0, 1000.0).unwrap();
 
     let modified = ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid scorer config");
@@ -291,11 +302,13 @@ fn synthetic_no_matches() {
 
 #[test]
 fn boundary_gap_equal_2x_tolerance_returns_error() {
-    let mut left = GenericSpectrum::with_capacity(200.0, 2).expect("valid spectrum allocation");
+    let mut left: GenericSpectrum =
+        GenericSpectrum::with_capacity(200.0, 2).expect("valid spectrum allocation");
     left.add_peak(100.0, 10.0).unwrap();
     left.add_peak(100.25, 8.0).unwrap();
 
-    let mut right = GenericSpectrum::with_capacity(200.0, 2).expect("valid spectrum allocation");
+    let mut right: GenericSpectrum =
+        GenericSpectrum::with_capacity(200.0, 2).expect("valid spectrum allocation");
     right.add_peak(100.0, 10.0).unwrap();
     right.add_peak(100.25, 8.0).unwrap();
 
@@ -314,14 +327,16 @@ fn boundary_gap_equal_2x_tolerance_returns_error() {
 fn equivalence_within_precursor_tolerance() {
     let tolerance = 0.1;
 
-    let mut left = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
+    let mut left: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     left.add_peak(50.0, 1000.0).unwrap();
     left.add_peak(80.0, 500.0).unwrap();
 
     // precursor shift = 100.0 - 99.91 = 0.09, within tolerance.
     // The peak at 79.85 would only match via shifted matching; this verifies
     // modified behaves like non-modified inside the precursor-tolerance window.
-    let mut right = GenericSpectrum::with_capacity(99.91, 2).expect("valid spectrum allocation");
+    let mut right: GenericSpectrum =
+        GenericSpectrum::with_capacity(99.91, 2).expect("valid spectrum allocation");
     right.add_peak(50.0, 900.0).unwrap();
     right.add_peak(79.85, 600.0).unwrap();
 
@@ -352,12 +367,14 @@ fn equivalence_within_precursor_tolerance() {
 fn equivalence_at_precursor_tolerance_boundary() {
     let tolerance = 0.125;
 
-    let mut left = GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
+    let mut left: GenericSpectrum =
+        GenericSpectrum::with_capacity(100.0, 2).expect("valid spectrum allocation");
     left.add_peak(50.0, 1000.0).unwrap();
     left.add_peak(80.0, 500.0).unwrap();
 
     // precursor shift = 100.0 - 99.875 = 0.125, exactly tolerance.
-    let mut right = GenericSpectrum::with_capacity(99.875, 2).expect("valid spectrum allocation");
+    let mut right: GenericSpectrum =
+        GenericSpectrum::with_capacity(99.875, 2).expect("valid spectrum allocation");
     right.add_peak(50.0, 900.0).unwrap();
     right.add_peak(79.8, 600.0).unwrap();
 
@@ -403,11 +420,13 @@ fn dp_beats_greedy_on_contested_shifted_match() {
     //
     // Greedy: picks (1,0) = 1_100_000, 1 match.
     // Optimal: picks (0,0)+(1,1) = 1_968_000, 2 matches.
-    let mut left = GenericSpectrum::with_capacity(150.0, 2).expect("valid spectrum allocation");
+    let mut left: GenericSpectrum =
+        GenericSpectrum::with_capacity(150.0, 2).expect("valid spectrum allocation");
     left.add_peak(100.0, 10.0).unwrap();
     left.add_peak(110.0, 10.0).unwrap();
 
-    let mut right = GenericSpectrum::with_capacity(140.0, 2).expect("valid spectrum allocation");
+    let mut right: GenericSpectrum =
+        GenericSpectrum::with_capacity(140.0, 2).expect("valid spectrum allocation");
     right.add_peak(100.0, 10.0).unwrap();
     right.add_peak(110.0, 8.0).unwrap();
 

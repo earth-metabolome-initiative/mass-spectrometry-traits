@@ -9,6 +9,66 @@ use super::spectrum_annotation::Annotation;
 
 use crate::structs::SimilarityComputationError;
 
+/// Floating-point storage precision used by a [`Spectrum`].
+///
+/// The crate currently supports `f64`, `f32`, and [`half::f16`]. Similarity
+/// algorithms may still promote values to `f64` internally when that is needed
+/// for numerical stability.
+pub trait SpectrumFloat: Copy + PartialOrd + core::fmt::Debug + 'static {
+    /// Converts a finite `f64` value into this precision.
+    ///
+    /// Returns `None` when the value cannot be represented as a finite value
+    /// in the target precision.
+    fn from_f64(value: f64) -> Option<Self>;
+
+    /// Converts this value to `f64`.
+    fn to_f64(self) -> f64;
+
+    /// Returns whether this value is finite.
+    #[inline]
+    fn is_finite(self) -> bool {
+        self.to_f64().is_finite()
+    }
+}
+
+impl SpectrumFloat for f64 {
+    #[inline]
+    fn from_f64(value: f64) -> Option<Self> {
+        value.is_finite().then_some(value)
+    }
+
+    #[inline]
+    fn to_f64(self) -> f64 {
+        self
+    }
+}
+
+impl SpectrumFloat for f32 {
+    #[inline]
+    fn from_f64(value: f64) -> Option<Self> {
+        let value = value as f32;
+        value.is_finite().then_some(value)
+    }
+
+    #[inline]
+    fn to_f64(self) -> f64 {
+        f64::from(self)
+    }
+}
+
+impl SpectrumFloat for half::f16 {
+    #[inline]
+    fn from_f64(value: f64) -> Option<Self> {
+        let value = half::f16::from_f64(value);
+        value.is_finite().then_some(value)
+    }
+
+    #[inline]
+    fn to_f64(self) -> f64 {
+        half::f16::to_f64(self)
+    }
+}
+
 #[inline]
 fn to_matrix_index(index: usize) -> Result<u32, SimilarityComputationError> {
     u32::try_from(index).map_err(|_| SimilarityComputationError::IndexOverflow)
@@ -65,7 +125,7 @@ where
     for (j, other_mz) in other
         .mz_from(lowest_other_index)
         .enumerate()
-        .map(|(j, mz)| (j + lowest_other_index, mz))
+        .map(|(j, mz)| (j + lowest_other_index, mz.to_f64()))
     {
         let shifted_other_mz = other_mz + mz_shift_f64;
         if !shifted_other_mz.is_finite() {
@@ -134,13 +194,15 @@ fn collect_binned_intensities<S, F>(
     spectrum: &S,
     number_of_bins: usize,
     mut bin_index: F,
-) -> Result<Vec<f64>, SimilarityComputationError>
+) -> Result<Vec<S::Precision>, SimilarityComputationError>
 where
     S: Spectrum + ?Sized,
     F: FnMut(f64) -> Option<usize>,
 {
     let mut binned = alloc::vec![0.0_f64; number_of_bins];
     for (mz, intensity) in spectrum.peaks() {
+        let mz = mz.to_f64();
+        let intensity = intensity.to_f64();
         if !mz.is_finite() {
             return Err(SimilarityComputationError::NonFiniteValue("mz"));
         }
@@ -157,22 +219,32 @@ where
             }
         }
     }
-    Ok(binned)
+    binned
+        .into_iter()
+        .map(|value| {
+            S::Precision::from_f64(value).ok_or(SimilarityComputationError::NonFiniteValue(
+                "binned_intensity",
+            ))
+        })
+        .collect()
 }
 
 /// Trait for a single Spectrum.
 pub trait Spectrum {
+    /// Floating-point precision used for stored m/z and intensity values.
+    type Precision: SpectrumFloat;
+
     /// Iterator over the intensities in the Spectrum, sorted by mass over
     /// charge.
-    type SortedIntensitiesIter<'a>: Iterator<Item = f64>
+    type SortedIntensitiesIter<'a>: Iterator<Item = Self::Precision>
     where
         Self: 'a;
     /// Iterator over the sorted mass over charge values in the Spectrum.
-    type SortedMzIter<'a>: Iterator<Item = f64>
+    type SortedMzIter<'a>: Iterator<Item = Self::Precision>
     where
         Self: 'a;
     /// Iterator over the peaks in the Spectrum, sorted by mass over charge
-    type SortedPeaksIter<'a>: Iterator<Item = (f64, f64)>
+    type SortedPeaksIter<'a>: Iterator<Item = (Self::Precision, Self::Precision)>
     where
         Self: 'a;
 
@@ -198,7 +270,7 @@ pub trait Spectrum {
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
-    fn intensity_nth(&self, n: usize) -> f64;
+    fn intensity_nth(&self, n: usize) -> Self::Precision;
 
     /// Returns an iterator over the SORTED mass over charge values in the
     /// Spectrum.
@@ -217,7 +289,7 @@ pub trait Spectrum {
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
-    fn mz_nth(&self, n: usize) -> f64;
+    fn mz_nth(&self, n: usize) -> Self::Precision;
 
     /// Returns an iterator over the peaks in the Spectrum, SORTED by mass over
     /// charge.
@@ -232,12 +304,15 @@ pub trait Spectrum {
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
-    fn peak_nth(&self, n: usize) -> (f64, f64);
+    fn peak_nth(&self, n: usize) -> (Self::Precision, Self::Precision);
 
     /// Returns the precursor mass over charge.
-    fn precursor_mz(&self) -> f64;
+    fn precursor_mz(&self) -> Self::Precision;
 
     /// Returns a dense vector of intensities binned linearly over m/z.
+    ///
+    /// Intensities are accumulated in `f64` and converted back to the
+    /// spectrum's storage precision before return.
     ///
     /// The interval is `[mz_min, mz_max]`, with `number_of_bins` equal-width
     /// bins. Values below `mz_min` or above `mz_max` are ignored. A peak exactly
@@ -253,7 +328,7 @@ pub trait Spectrum {
     /// ```
     /// use mass_spectrometry::prelude::*;
     ///
-    /// let mut spectrum = GenericSpectrum::try_with_capacity(100.0, 3).unwrap();
+    /// let mut spectrum: GenericSpectrum = GenericSpectrum::try_with_capacity(100.0, 3).unwrap();
     /// spectrum.add_peak(1.0, 2.0).unwrap();
     /// spectrum.add_peak(1.49, 3.0).unwrap();
     /// spectrum.add_peak(2.0, 7.0).unwrap();
@@ -266,7 +341,7 @@ pub trait Spectrum {
         mz_min: f64,
         mz_max: f64,
         number_of_bins: usize,
-    ) -> Result<Vec<f64>, SimilarityComputationError> {
+    ) -> Result<Vec<Self::Precision>, SimilarityComputationError> {
         validate_number_of_bins(number_of_bins)?;
         validate_binning_range(mz_min, mz_max, false)?;
 
@@ -285,6 +360,9 @@ pub trait Spectrum {
 
     /// Returns a dense vector of intensities binned logarithmically over m/z.
     ///
+    /// Intensities are accumulated in `f64` and converted back to the
+    /// spectrum's storage precision before return.
+    ///
     /// The interval is `[mz_min, mz_max]`, split into equal-width bins in
     /// natural-log m/z space. Values below `mz_min` or above `mz_max` are
     /// ignored. A peak exactly at `mz_max` is assigned to the last bin.
@@ -300,7 +378,7 @@ pub trait Spectrum {
     /// ```
     /// use mass_spectrometry::prelude::*;
     ///
-    /// let mut spectrum = GenericSpectrum::try_with_capacity(100.0, 3).unwrap();
+    /// let mut spectrum: GenericSpectrum = GenericSpectrum::try_with_capacity(100.0, 3).unwrap();
     /// spectrum.add_peak(1.0, 2.0).unwrap();
     /// spectrum.add_peak(9.0, 3.0).unwrap();
     /// spectrum.add_peak(100.0, 7.0).unwrap();
@@ -315,7 +393,7 @@ pub trait Spectrum {
         mz_min: f64,
         mz_max: f64,
         number_of_bins: usize,
-    ) -> Result<Vec<f64>, SimilarityComputationError> {
+    ) -> Result<Vec<Self::Precision>, SimilarityComputationError> {
         validate_number_of_bins(number_of_bins)?;
         validate_binning_range(mz_min, mz_max, true)?;
 
@@ -358,6 +436,7 @@ pub trait Spectrum {
         let mut lowest_other_index = 0usize;
         let mut row_matches: Vec<u32> = Vec::new();
         for (i, mz) in self.mz().enumerate() {
+            let mz = mz.to_f64();
             if !mz.is_finite() {
                 return Err(SimilarityComputationError::NonFiniteValue("left_mz"));
             }
@@ -418,6 +497,7 @@ pub trait Spectrum {
         let mut row_matches: Vec<u32> = Vec::new();
 
         for (i, mz) in self.mz().enumerate() {
+            let mz = mz.to_f64();
             if !mz.is_finite() {
                 return Err(SimilarityComputationError::NonFiniteValue("left_mz"));
             }
@@ -484,6 +564,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

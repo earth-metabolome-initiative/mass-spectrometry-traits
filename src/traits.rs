@@ -38,7 +38,7 @@ pub use spectral_pipeline::SpectralPipeline;
 pub use spectral_pipeline_builder::SpectralPipelineBuilder;
 pub use spectral_processor::SpectralProcessor;
 pub use spectral_similarity::ScalarSpectralSimilarity;
-pub use spectrum::Spectrum;
+pub use spectrum::{Spectrum, SpectrumFloat};
 pub use spectrum_annotation::Annotation;
 pub use spectrum_mut::{
     RandomSpectrumConfig, RandomSpectrumGenerationError, SpectrumAlloc, SpectrumMut,

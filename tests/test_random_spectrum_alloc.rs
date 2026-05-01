@@ -30,8 +30,10 @@ fn assert_identical(left: &GenericSpectrum, right: &GenericSpectrum) {
 fn random_spectrum_reproducible_for_same_seed() {
     let config = base_config();
 
-    let left = GenericSpectrum::random(config, 42).expect("random spectrum should build");
-    let right = GenericSpectrum::random(config, 42).expect("random spectrum should build");
+    let left: GenericSpectrum =
+        GenericSpectrum::random(config, 42).expect("random spectrum should build");
+    let right: GenericSpectrum =
+        GenericSpectrum::random(config, 42).expect("random spectrum should build");
 
     assert_identical(&left, &right);
 }
@@ -48,7 +50,8 @@ fn random_spectrum_respects_gap_and_ranges() {
         intensity_max: 25.0,
     };
 
-    let spectrum = GenericSpectrum::random(config, 7).expect("random spectrum should build");
+    let spectrum: GenericSpectrum =
+        GenericSpectrum::random(config, 7).expect("random spectrum should build");
     assert_eq!(spectrum.len(), config.n_peaks);
 
     for i in 0..spectrum.len() {
@@ -81,7 +84,7 @@ fn random_spectrum_rejects_invalid_config() {
         intensity_max: 2.0,
     };
 
-    let error = match GenericSpectrum::random(config, 13) {
+    let error = match GenericSpectrum::<f64>::random(config, 13) {
         Ok(_) => panic!("invalid config must return an error"),
         Err(error) => error,
     };
@@ -96,7 +99,8 @@ fn random_spectrum_allows_zero_peaks() {
     let mut config = base_config();
     config.n_peaks = 0;
 
-    let spectrum = GenericSpectrum::random(config, 42).expect("zero-peak spectrum should build");
+    let spectrum: GenericSpectrum =
+        GenericSpectrum::random(config, 42).expect("zero-peak spectrum should build");
 
     assert_eq!(spectrum.len(), 0);
     assert_eq!(spectrum.precursor_mz(), config.precursor_mz);
@@ -106,10 +110,12 @@ fn random_spectrum_allows_zero_peaks() {
 fn random_spectrum_zero_seed_uses_deterministic_fallback() {
     let config = base_config();
 
-    let zero_seed = GenericSpectrum::random(config, 0).expect("zero seed should build");
-    let normalized =
+    let zero_seed: GenericSpectrum =
+        GenericSpectrum::random(config, 0).expect("zero seed should build");
+    let normalized: GenericSpectrum =
         GenericSpectrum::random(config, ZERO_SEED_FALLBACK).expect("fallback seed should build");
-    let different = GenericSpectrum::random(config, 1).expect("different seed should build");
+    let different: GenericSpectrum =
+        GenericSpectrum::random(config, 1).expect("different seed should build");
 
     assert_identical(&zero_seed, &normalized);
     assert!(
@@ -125,7 +131,7 @@ fn random_spectrum_uses_constant_intensity_when_span_is_zero() {
     config.intensity_min = 3.5;
     config.intensity_max = 3.5;
 
-    let spectrum =
+    let spectrum: GenericSpectrum =
         GenericSpectrum::random(config, 99).expect("constant-intensity spectrum should build");
 
     assert_eq!(spectrum.len(), config.n_peaks);
@@ -175,7 +181,8 @@ fn random_spectrum_rejects_non_finite_config_fields() {
     ];
 
     for (label, config) in cases {
-        let error = GenericSpectrum::random(config, 7).expect_err("non-finite field must fail");
+        let error =
+            GenericSpectrum::<f64>::random(config, 7).expect_err("non-finite field must fail");
         assert!(
             matches!(error, RandomSpectrumGenerationError::NonFiniteValue(name) if name == label),
             "expected NonFiniteValue({label}), got {error:?}"
@@ -190,7 +197,7 @@ fn random_spectrum_rejects_non_positive_min_peak_gap() {
         ..base_config()
     };
 
-    let error = GenericSpectrum::random(config, 7).expect_err("zero gap must fail");
+    let error = GenericSpectrum::<f64>::random(config, 7).expect_err("zero gap must fail");
     assert!(matches!(
         error,
         RandomSpectrumGenerationError::InvalidConfig("min_peak_gap must be > 0")
@@ -207,7 +214,7 @@ fn random_spectrum_rejects_span_exhaustion() {
         ..base_config()
     };
 
-    let error = GenericSpectrum::random(config, 7).expect_err("span exhaustion must fail");
+    let error = GenericSpectrum::<f64>::random(config, 7).expect_err("span exhaustion must fail");
     assert!(matches!(
         error,
         RandomSpectrumGenerationError::InvalidConfig(
@@ -223,8 +230,8 @@ fn random_spectrum_propagates_constructor_failures_as_mutation_errors() {
         ..base_config()
     };
 
-    let error =
-        GenericSpectrum::random(config, 7).expect_err("invalid precursor must propagate as error");
+    let error = GenericSpectrum::<f64>::random(config, 7)
+        .expect_err("invalid precursor must propagate as error");
     assert!(matches!(
         error,
         RandomSpectrumGenerationError::Mutation(GenericSpectrumMutationError::NonFinitePrecursorMz)

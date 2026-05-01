@@ -12,6 +12,8 @@ struct RawSpectrum {
 }
 
 impl Spectrum for RawSpectrum {
+    type Precision = f64;
+
     type SortedIntensitiesIter<'a>
         = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
     where
@@ -123,9 +125,9 @@ fn includes_exact_tolerance_boundary() {
 #[test]
 fn long_nonmatching_sequence_completes() {
     let n = 200_000usize;
-    let mut left =
+    let mut left: GenericSpectrum =
         GenericSpectrum::with_capacity(1_000_000.0, n).expect("valid spectrum allocation");
-    let mut right =
+    let mut right: GenericSpectrum =
         GenericSpectrum::with_capacity(2_000_000.0, n).expect("valid spectrum allocation");
 
     for i in 0..n {

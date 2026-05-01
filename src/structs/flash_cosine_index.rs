@@ -15,7 +15,7 @@ use super::flash_common::{
     ThresholdPrefixPostings, l2_threshold_prefix_indices,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
-use crate::traits::Spectrum;
+use crate::traits::{Spectrum, SpectrumFloat};
 
 const THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD: f64 = 0.85;
 const THRESHOLD_INDEX_TWO_SIDED_MIN_THRESHOLD: f64 = 0.85;
@@ -72,7 +72,7 @@ fn prepare_cosine_query<S>(
 where
     S: Spectrum,
 {
-    let mz_vals: Vec<f64> = query.mz().collect();
+    let mz_vals: Vec<f64> = query.mz().map(SpectrumFloat::to_f64).collect();
     let data_vals = normalized_peak_products(query, mz_power, intensity_power)?;
 
     validate_well_separated(&mz_vals, tolerance, "query spectrum")?;
@@ -171,14 +171,14 @@ impl FlashCosineIndex {
         let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
 
         for spectrum in spectra {
-            let mz_vals: Vec<f64> = spectrum.mz().collect();
+            let mz_vals: Vec<f64> = spectrum.mz().map(SpectrumFloat::to_f64).collect();
             let data_vals = normalized_peak_products(spectrum, mz_power, intensity_power)
                 .map_err(FlashCosineIndexError::Computation)?;
 
             validate_well_separated(&mz_vals, tolerance, "library spectrum")
                 .map_err(FlashCosineIndexError::Computation)?;
 
-            let precursor_f64 = ensure_finite(spectrum.precursor_mz(), "precursor_mz")
+            let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
                 .map_err(FlashCosineIndexError::Computation)?;
 
             prepared.push((precursor_f64, mz_vals, data_vals));
@@ -347,7 +347,7 @@ impl FlashCosineIndex {
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
-        let precursor_f64 = ensure_finite(query.precursor_mz(), "query_precursor_mz")?;
+        let precursor_f64 = ensure_finite(query.precursor_mz().to_f64(), "query_precursor_mz")?;
         Ok(self
             .inner
             .search_modified(&query_mz, &query_data, &query_meta, precursor_f64))
@@ -365,7 +365,7 @@ impl FlashCosineIndex {
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
-        let precursor_f64 = ensure_finite(query.precursor_mz(), "query_precursor_mz")?;
+        let precursor_f64 = ensure_finite(query.precursor_mz().to_f64(), "query_precursor_mz")?;
         Ok(self.inner.search_modified_with_state(
             &query_mz,
             &query_data,
@@ -440,14 +440,14 @@ impl FlashCosineThresholdIndex {
         let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
 
         for spectrum in spectra {
-            let mz_vals: Vec<f64> = spectrum.mz().collect();
+            let mz_vals: Vec<f64> = spectrum.mz().map(SpectrumFloat::to_f64).collect();
             let data_vals = normalized_peak_products(spectrum, mz_power, intensity_power)
                 .map_err(FlashCosineIndexError::Computation)?;
 
             validate_well_separated(&mz_vals, tolerance, "library spectrum")
                 .map_err(FlashCosineIndexError::Computation)?;
 
-            let precursor_f64 = ensure_finite(spectrum.precursor_mz(), "precursor_mz")
+            let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
                 .map_err(FlashCosineIndexError::Computation)?;
 
             prepared.push((precursor_f64, mz_vals, data_vals));
@@ -789,6 +789,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

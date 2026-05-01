@@ -20,6 +20,8 @@ struct FailingSpectrum {
 }
 
 impl Spectrum for FailingSpectrum {
+    type Precision = f64;
+
     type SortedIntensitiesIter<'a>
         = <GenericSpectrum as Spectrum>::SortedIntensitiesIter<'a>
     where
@@ -98,6 +100,7 @@ fn reference_constructor_returns_err_for_failing_spectrum_mutation() {
 
 #[test]
 fn generic_spectrum_reference_constructor_returns_ok() {
-    let spectrum = GenericSpectrum::adenine().expect("reference spectrum should build");
+    let spectrum: GenericSpectrum =
+        GenericSpectrum::adenine().expect("reference spectrum should build");
     assert!(!spectrum.is_empty());
 }

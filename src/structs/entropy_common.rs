@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use super::cosine_common::ensure_finite;
 use super::similarity_errors::SimilarityComputationError;
-use crate::traits::Spectrum;
+use crate::traits::{Spectrum, SpectrumFloat};
 
 // ---------------------------------------------------------------------------
 // Shannon entropy helpers
@@ -179,6 +179,8 @@ pub(crate) fn prepare_entropy_peaks<S: Spectrum>(
     let mut int = Vec::with_capacity(spectrum.len());
 
     for (m, i) in spectrum.peaks() {
+        let m = m.to_f64();
+        let i = i.to_f64();
         ensure_finite(i, "intensity")?;
         mz.push(m);
 
@@ -278,6 +280,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

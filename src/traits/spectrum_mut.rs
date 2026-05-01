@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn random_rejects_invalid_config_ranges() {
-        let error = GenericSpectrum::random(
+        let error = GenericSpectrum::<f64>::random(
             RandomSpectrumConfig {
                 mz_max: 99.0,
                 ..base_config()
@@ -222,7 +222,7 @@ mod tests {
             RandomSpectrumGenerationError::InvalidConfig("mz_max must be >= mz_min")
         ));
 
-        let error = GenericSpectrum::random(
+        let error = GenericSpectrum::<f64>::random(
             RandomSpectrumConfig {
                 intensity_max: 0.5,
                 ..base_config()
@@ -235,7 +235,7 @@ mod tests {
             RandomSpectrumGenerationError::InvalidConfig("intensity_max must be >= intensity_min")
         ));
 
-        let error = GenericSpectrum::random(
+        let error = GenericSpectrum::<f64>::random(
             RandomSpectrumConfig {
                 min_peak_gap: 0.0,
                 ..base_config()
@@ -248,7 +248,7 @@ mod tests {
             RandomSpectrumGenerationError::InvalidConfig("min_peak_gap must be > 0")
         ));
 
-        let error = GenericSpectrum::random(
+        let error = GenericSpectrum::<f64>::random(
             RandomSpectrumConfig {
                 mz_max: 102.0,
                 min_peak_gap: 2.0,
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn random_zero_peaks_and_constant_intensity_paths_work() {
-        let empty = GenericSpectrum::random(
+        let empty: GenericSpectrum = GenericSpectrum::random(
             RandomSpectrumConfig {
                 n_peaks: 0,
                 ..base_config()
@@ -277,7 +277,7 @@ mod tests {
         .expect("zero-peak spectrum should build");
         assert!(empty.is_empty());
 
-        let constant = GenericSpectrum::random(
+        let constant: GenericSpectrum = GenericSpectrum::random(
             RandomSpectrumConfig {
                 intensity_max: 2.5,
                 intensity_min: 2.5,

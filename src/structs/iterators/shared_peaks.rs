@@ -2,7 +2,7 @@
 
 use core::iter::Peekable;
 
-use crate::prelude::Spectrum;
+use crate::prelude::{Spectrum, SpectrumFloat};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Attribute for the [`GreedySharedPeaks`] iterator.
@@ -59,7 +59,10 @@ where
     LeftSpectrum: Spectrum,
     RightSpectrum: Spectrum,
 {
-    type Item = ((f64, f64), (f64, f64));
+    type Item = (
+        (LeftSpectrum::Precision, LeftSpectrum::Precision),
+        (RightSpectrum::Precision, RightSpectrum::Precision),
+    );
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -68,10 +71,11 @@ where
                 return None;
             };
 
-            let shifted_right_mz = right_mz + self.right_shift_f64;
+            let left_mz_f64 = left_mz.to_f64();
+            let shifted_right_mz = right_mz.to_f64() + self.right_shift_f64;
 
-            if shifted_right_mz <= left_mz + self.tolerance_f64
-                && left_mz <= shifted_right_mz + self.tolerance_f64
+            if shifted_right_mz <= left_mz_f64 + self.tolerance_f64
+                && left_mz_f64 <= shifted_right_mz + self.tolerance_f64
             {
                 let (Some(left), Some(right)) = (self.left.next(), self.right.next()) else {
                     return None;
@@ -79,7 +83,7 @@ where
                 return Some((left, right));
             }
 
-            if shifted_right_mz < left_mz {
+            if shifted_right_mz < left_mz_f64 {
                 self.right.next();
             } else {
                 self.left.next();
@@ -190,7 +194,7 @@ where
             if !mz.is_finite() {
                 return Err(GreedySharedPeaksBuilderError::NonFiniteValue("right_mz"));
             }
-            let shifted = mz + right_shift_f64;
+            let shifted = mz.to_f64() + right_shift_f64;
             if !shifted.is_finite() {
                 return Err(GreedySharedPeaksBuilderError::NonFiniteValue(
                     "shifted_right_mz",
@@ -220,6 +224,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

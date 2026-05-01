@@ -39,6 +39,8 @@ struct RawSpectrum {
 }
 
 impl Spectrum for RawSpectrum {
+    type Precision = f64;
+
     type SortedIntensitiesIter<'a>
         = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
     where

@@ -12,7 +12,7 @@ use super::cosine_common::{
     linear_cosine_sweep, prepare_peak_products, validate_well_separated,
 };
 use super::similarity_errors::SimilarityComputationError;
-use crate::traits::{ScalarSpectralSimilarity, Spectrum};
+use crate::traits::{ScalarSpectralSimilarity, Spectrum, SpectrumFloat};
 
 /// Linear-time cosine similarity for mass spectra.
 ///
@@ -55,8 +55,8 @@ where
         let tolerance = ensure_finite(self.config.mz_tolerance(), "mz_tolerance")?;
 
         // Collect mz as f64.
-        let left_mz: alloc::vec::Vec<f64> = left.mz().collect();
-        let right_mz: alloc::vec::Vec<f64> = right.mz().collect();
+        let left_mz: alloc::vec::Vec<f64> = left.mz().map(SpectrumFloat::to_f64).collect();
+        let right_mz: alloc::vec::Vec<f64> = right.mz().map(SpectrumFloat::to_f64).collect();
 
         validate_well_separated(&left_mz, tolerance, "left spectrum")?;
         validate_well_separated(&right_mz, tolerance, "right spectrum")?;
@@ -96,6 +96,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

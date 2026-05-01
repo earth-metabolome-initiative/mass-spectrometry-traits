@@ -17,7 +17,7 @@ use super::cosine_common::{
     optimal_modified_linear_matches, prepare_peak_products, validate_well_separated,
 };
 use super::similarity_errors::SimilarityComputationError;
-use crate::traits::{ScalarSpectralSimilarity, Spectrum};
+use crate::traits::{ScalarSpectralSimilarity, Spectrum, SpectrumFloat};
 
 /// Modified linear-time cosine similarity for mass spectra.
 ///
@@ -62,14 +62,14 @@ where
         let tolerance = ensure_finite(self.config.mz_tolerance(), "mz_tolerance")?;
 
         // Collect mz as f64.
-        let left_mz: Vec<f64> = left.mz().collect();
-        let right_mz: Vec<f64> = right.mz().collect();
+        let left_mz: Vec<f64> = left.mz().map(SpectrumFloat::to_f64).collect();
+        let right_mz: Vec<f64> = right.mz().map(SpectrumFloat::to_f64).collect();
 
         validate_well_separated(&left_mz, tolerance, "left spectrum")?;
         validate_well_separated(&right_mz, tolerance, "right spectrum")?;
 
-        let left_prec = ensure_finite(left.precursor_mz(), "left_precursor_mz")?;
-        let right_prec = ensure_finite(right.precursor_mz(), "right_precursor_mz")?;
+        let left_prec = ensure_finite(left.precursor_mz().to_f64(), "left_precursor_mz")?;
+        let right_prec = ensure_finite(right.precursor_mz().to_f64(), "right_precursor_mz")?;
 
         let max_left = left_peaks.max;
         let max_right = right_peaks.max;
@@ -125,6 +125,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

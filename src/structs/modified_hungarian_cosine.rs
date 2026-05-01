@@ -38,14 +38,14 @@ impl_cosine_wrapper_similarity!(
         row,
         col,
         mz_tolerance,
-        crate::traits::Spectrum::precursor_mz(row),
-        crate::traits::Spectrum::precursor_mz(col)
+        crate::traits::SpectrumFloat::to_f64(crate::traits::Spectrum::precursor_mz(row)),
+        crate::traits::SpectrumFloat::to_f64(crate::traits::Spectrum::precursor_mz(col))
     ),
     crate::traits::Spectrum::modified_matching_peaks(
         row,
         col,
         mz_tolerance,
-        crate::traits::Spectrum::precursor_mz(row),
-        crate::traits::Spectrum::precursor_mz(col)
+        crate::traits::SpectrumFloat::to_f64(crate::traits::Spectrum::precursor_mz(row)),
+        crate::traits::SpectrumFloat::to_f64(crate::traits::Spectrum::precursor_mz(col))
     )
 );

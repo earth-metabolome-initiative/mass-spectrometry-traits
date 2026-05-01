@@ -9,13 +9,14 @@ members = ["fuzz"]
 [features]
 default = []
 std = []
-mem_size = ["dep:mem_dbg_crate", "mem_dbg_crate/derive", "geometric-traits/mem_size"]
+mem_size = ["dep:mem_dbg_crate", "mem_dbg_crate/derive", "mem_dbg_crate/half", "geometric-traits/mem_size"]
 mem_dbg = ["std", "mem_size", "mem_dbg_crate/std", "geometric-traits/mem_dbg"]
 proptest = ["dep:proptest"]
 
 [dependencies]
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", default-features = false, features = ["alloc"] }
 num-traits = { version = "0.2", default-features = false }
+half = { version = "2.7.1", default-features = false, features = ["num-traits"] }
 multi_ranged = { version = "0.1.1", default-features = false }
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }

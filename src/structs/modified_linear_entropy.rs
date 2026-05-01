@@ -15,7 +15,7 @@ use super::entropy_common::{
     impl_entropy_spectral_similarity, prepare_entropy_peaks,
 };
 use super::similarity_errors::SimilarityComputationError;
-use crate::traits::Spectrum;
+use crate::traits::{Spectrum, SpectrumFloat};
 
 /// Modified linear-time spectral entropy similarity.
 ///
@@ -59,8 +59,8 @@ where
         validate_well_separated(&left_peaks.mz, tolerance, "left spectrum")?;
         validate_well_separated(&right_peaks.mz, tolerance, "right spectrum")?;
 
-        let left_prec = ensure_finite(left.precursor_mz(), "left_precursor_mz")?;
-        let right_prec = ensure_finite(right.precursor_mz(), "right_precursor_mz")?;
+        let left_prec = ensure_finite(left.precursor_mz().to_f64(), "left_precursor_mz")?;
+        let right_prec = ensure_finite(right.precursor_mz().to_f64(), "right_precursor_mz")?;
 
         let selected = optimal_modified_linear_matches(
             &left_peaks.mz,
@@ -93,6 +93,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

@@ -4,7 +4,7 @@ use geometric_traits::prelude::{Crouse, GenericImplicitValuedMatrix2D, RangedCSR
 use multi_ranged::MultiRanged;
 
 use crate::structs::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
-use crate::traits::Spectrum;
+use crate::traits::{Spectrum, SpectrumFloat};
 
 pub(crate) struct PreparedPeaks {
     pub(crate) products: Vec<f64>,
@@ -193,6 +193,8 @@ pub(crate) fn normalized_peak_products<S: Spectrum>(
     let mut int_comps = Vec::with_capacity(n);
 
     for (mz, intensity) in spectrum.peaks() {
+        let mz = mz.to_f64();
+        let intensity = intensity.to_f64();
         let mc = mz.powf(mz_power);
         let ic = intensity.powf(intensity_power);
         ensure_finite(mc, "peak_product")?;
@@ -710,6 +712,8 @@ mod tests {
     }
 
     impl Spectrum for RawSpectrum {
+        type Precision = f64;
+
         type SortedIntensitiesIter<'a>
             = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
         where

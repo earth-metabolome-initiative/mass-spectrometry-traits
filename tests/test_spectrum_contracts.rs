@@ -1,6 +1,8 @@
 use arbitrary::{Arbitrary, Unstructured};
+use half::f16;
 use mass_spectrometry::prelude::{
-    ELECTRON_MASS, GenericSpectrum, MAX_MZ, Spectrum, SpectrumAlloc, SpectrumMut,
+    ELECTRON_MASS, GenericSpectrum, LinearCosine, MAX_MZ, ScalarSimilarity, Spectrum,
+    SpectrumAlloc, SpectrumMut,
 };
 
 fn make_spectrum(precursor_mz: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
@@ -16,7 +18,7 @@ fn make_spectrum(precursor_mz: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
 
 #[test]
 fn try_with_capacity_accepts_valid_precursor_and_starts_empty() {
-    let spectrum =
+    let spectrum: GenericSpectrum =
         GenericSpectrum::try_with_capacity(512.25, 4).expect("valid precursor should build");
 
     assert_eq!(spectrum.len(), 0);
@@ -30,9 +32,9 @@ fn try_with_capacity_accepts_valid_precursor_and_starts_empty() {
 
 #[test]
 fn with_capacity_accepts_precursor_boundaries() {
-    let at_min = GenericSpectrum::with_capacity(ELECTRON_MASS, 0)
+    let at_min: GenericSpectrum = GenericSpectrum::with_capacity(ELECTRON_MASS, 0)
         .expect("ELECTRON_MASS precursor boundary should be accepted");
-    let at_max =
+    let at_max: GenericSpectrum =
         GenericSpectrum::with_capacity(MAX_MZ, 0).expect("MAX_MZ precursor boundary should work");
 
     assert_eq!(at_min.precursor_mz(), ELECTRON_MASS);
@@ -68,6 +70,125 @@ fn sorted_peak_additions_keep_accessors_consistent() {
 }
 
 #[test]
+fn generic_spectrum_can_store_f32_precision() {
+    let mut spectrum: GenericSpectrum<f32> =
+        GenericSpectrum::try_with_capacity(250.125, 2).expect("f32 precursor should fit");
+    spectrum.add_peak(50.5, 1.25).expect("f32 peak should fit");
+    spectrum.add_peak(75.25, 2.5).expect("f32 peak should fit");
+
+    assert_eq!(spectrum.precursor_mz(), 250.125_f32);
+    assert_eq!(spectrum.mz().collect::<Vec<_>>(), vec![50.5_f32, 75.25]);
+    assert_eq!(
+        spectrum.intensities().collect::<Vec<_>>(),
+        vec![1.25_f32, 2.5]
+    );
+    assert_eq!(spectrum.peak_nth(0), (50.5_f32, 1.25_f32));
+}
+
+#[test]
+fn generic_spectrum_can_store_f16_precision_when_values_fit() {
+    let mut spectrum: GenericSpectrum<f16> =
+        GenericSpectrum::try_with_capacity(250.0, 2).expect("f16 precursor should fit");
+    spectrum.add_peak(50.0, 1.5).expect("f16 peak should fit");
+    spectrum.add_peak(75.0, 2.0).expect("f16 peak should fit");
+
+    assert_eq!(spectrum.precursor_mz(), f16::from_f64(250.0));
+    assert_eq!(
+        spectrum.peaks().collect::<Vec<_>>(),
+        vec![
+            (f16::from_f64(50.0), f16::from_f64(1.5)),
+            (f16::from_f64(75.0), f16::from_f64(2.0)),
+        ]
+    );
+}
+
+#[test]
+fn binned_intensities_use_spectrum_precision() {
+    let mut spectrum: GenericSpectrum<f32> =
+        GenericSpectrum::try_with_capacity(250.0, 3).expect("f32 precursor should fit");
+    spectrum.add_peak(50.0, 1.25).expect("f32 peak should fit");
+    spectrum.add_peak(75.0, 2.5).expect("f32 peak should fit");
+    spectrum.add_peak(100.0, 4.0).expect("f32 peak should fit");
+
+    let linear_bins: Vec<f32> = spectrum
+        .linear_binned_intensities(50.0, 100.0, 2)
+        .expect("linear binning should succeed");
+    assert_eq!(linear_bins, vec![1.25_f32, 6.5]);
+
+    let logarithmic_bins: Vec<f32> = spectrum
+        .logarithmic_binned_intensities(50.0, 100.0, 2)
+        .expect("logarithmic binning should succeed");
+    assert_eq!(logarithmic_bins, vec![1.25_f32, 6.5]);
+}
+
+#[test]
+fn generic_spectrum_rejects_values_that_do_not_fit_selected_precision() {
+    let error = GenericSpectrum::<f16>::try_with_capacity(70_000.0, 0)
+        .expect_err("f16 cannot represent this precursor finitely");
+    assert_eq!(
+        error,
+        mass_spectrometry::prelude::GenericSpectrumMutationError::NonFinitePrecursorMz
+    );
+
+    let mut spectrum: GenericSpectrum<f16> =
+        GenericSpectrum::try_with_capacity(100.0, 1).expect("f16 precursor should fit");
+    let error = spectrum
+        .add_peak(70_000.0, 1.0)
+        .expect_err("f16 cannot represent this mz finitely");
+    assert_eq!(
+        error,
+        mass_spectrometry::prelude::GenericSpectrumMutationError::NonFiniteMz
+    );
+}
+
+#[test]
+fn generic_spectrum_validates_after_precision_conversion() {
+    let mut spectrum: GenericSpectrum<f16> =
+        GenericSpectrum::try_with_capacity(2_000.0, 2).expect("f16 precursor should fit");
+    spectrum
+        .add_peak(2_000.0, 1.0)
+        .expect("first f16 peak should fit");
+    let error = spectrum
+        .add_peak(2_000.49, 1.0)
+        .expect_err("distinct inputs can collapse to the same f16 mz");
+    assert_eq!(
+        error,
+        mass_spectrometry::prelude::GenericSpectrumMutationError::DuplicateMz
+    );
+
+    let mut spectrum: GenericSpectrum<f16> =
+        GenericSpectrum::try_with_capacity(100.0, 1).expect("f16 precursor should fit");
+    let error = spectrum
+        .add_peak(50.0, 1.0e-20)
+        .expect_err("tiny positive intensity underflows to zero in f16");
+    assert_eq!(
+        error,
+        mass_spectrometry::prelude::GenericSpectrumMutationError::NonPositiveIntensity
+    );
+}
+
+#[test]
+fn f64_similarity_kernels_accept_lower_precision_spectra() {
+    let mut left: GenericSpectrum<f32> =
+        GenericSpectrum::try_with_capacity(300.0, 2).expect("valid precursor");
+    left.add_peak(100.0, 10.0).expect("valid peak");
+    left.add_peak(200.0, 20.0).expect("valid peak");
+
+    let mut right: GenericSpectrum<f32> =
+        GenericSpectrum::try_with_capacity(300.0, 2).expect("valid precursor");
+    right.add_peak(100.0, 10.0).expect("valid peak");
+    right.add_peak(200.0, 20.0).expect("valid peak");
+
+    let cosine = LinearCosine::new(0.0, 1.0, 0.1).expect("valid cosine config");
+    let (score, matches) = cosine
+        .similarity(&left, &right)
+        .expect("generic f32 spectra should score");
+
+    assert_eq!(matches, 2);
+    assert!((score - 1.0).abs() <= f64::EPSILON);
+}
+
+#[test]
 fn arbitrary_generated_spectra_are_sanitized_and_sorted() {
     let buffers = [
         vec![0_u8; 2048],
@@ -80,7 +201,7 @@ fn arbitrary_generated_spectra_are_sanitized_and_sorted() {
 
     for bytes in &buffers {
         let mut input = Unstructured::new(bytes);
-        let spectrum =
+        let spectrum: GenericSpectrum =
             GenericSpectrum::arbitrary(&mut input).expect("fixed buffer should be large enough");
 
         assert!(spectrum.precursor_mz().is_finite());
