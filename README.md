@@ -41,13 +41,13 @@ assert!(reference_matches > 0);
 ```rust
 use mass_spectrometry::prelude::*;
 
-let splash = splash_from_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
-assert_eq!(splash, "splash10-0udi-0490000000-4425acda10ed7d4709bd");
-
 let mut spectrum: GenericSpectrum = GenericSpectrum::try_with_capacity(250.0, 2).unwrap();
 spectrum.add_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
 
-assert_eq!(spectrum.splash().unwrap(), splash);
+assert_eq!(
+    spectrum.splash().unwrap(),
+    "splash10-0udi-0490000000-4425acda10ed7d4709bd"
+);
 ```
 
 ### Indices

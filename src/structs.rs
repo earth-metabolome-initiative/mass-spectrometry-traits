@@ -32,7 +32,4 @@ pub use modified_linear_entropy::ModifiedLinearEntropy;
 pub use ms_entropy_clean_spectrum::{MsEntropyCleanSpectrum, MsEntropyCleanSpectrumBuilder};
 pub use similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 pub use sirius_merge_close_peaks::SiriusMergeClosePeaks;
-pub use splash::{
-    IntoSplashPeak, SpectrumSplash, SplashError, SplashSpectrumType, splash_from_peaks,
-    splash_from_peaks_with_type,
-};
+pub use splash::{SpectrumSplash, SplashError, SplashSpectrumType};

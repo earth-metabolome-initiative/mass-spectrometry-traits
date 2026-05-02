@@ -100,11 +100,7 @@ impl SplashSpectrumType {
 }
 
 /// Converts values into a raw peak accepted by SPLASH generation.
-///
-/// This trait is implemented for `(P, P)` and `&(P, P)` where `P` is one of
-/// the crate-supported spectrum floating-point precisions.
-pub trait IntoSplashPeak {
-    /// Returns `(m/z, intensity)` as `f64`.
+trait IntoSplashPeak {
     fn into_splash_peak(self) -> (f64, f64);
 }
 
@@ -155,7 +151,7 @@ pub trait SpectrumSplash: Spectrum {
     /// );
     /// ```
     fn splash(&self) -> Result<String, SplashError> {
-        self.splash_with_type(SplashSpectrumType::MassSpectrum)
+        splash_from_peaks(self.peaks())
     }
 
     /// Returns a SPLASH code for this spectrum with the requested spectrum
@@ -172,26 +168,7 @@ pub trait SpectrumSplash: Spectrum {
 
 impl<S: Spectrum + ?Sized> SpectrumSplash for S {}
 
-/// Returns the default mass-spectrum SPLASH code for the provided peaks.
-///
-/// Unlike [`GenericSpectrum`](crate::structs::GenericSpectrum), the SPLASH raw
-/// API accepts duplicate m/z values and zero-intensity peaks, matching the
-/// reference implementations.
-///
-/// # Errors
-///
-/// Returns [`SplashError`] when the peak list is empty, all intensities are
-/// zero, or any peak value is invalid for SPLASH.
-///
-/// # Example
-///
-/// ```
-/// use mass_spectrometry::prelude::splash_from_peaks;
-///
-/// let splash = splash_from_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
-/// assert_eq!(splash, "splash10-0udi-0490000000-4425acda10ed7d4709bd");
-/// ```
-pub fn splash_from_peaks<I>(peaks: I) -> Result<String, SplashError>
+fn splash_from_peaks<I>(peaks: I) -> Result<String, SplashError>
 where
     I: IntoIterator,
     I::Item: IntoSplashPeak,
@@ -199,13 +176,7 @@ where
     splash_from_peaks_with_type(peaks, SplashSpectrumType::MassSpectrum)
 }
 
-/// Returns a SPLASH code for the provided peaks and spectrum type.
-///
-/// # Errors
-///
-/// Returns [`SplashError`] when the peak list is empty, all intensities are
-/// zero, or any peak value is invalid for SPLASH.
-pub fn splash_from_peaks_with_type<I>(
+fn splash_from_peaks_with_type<I>(
     peaks: I,
     spectrum_type: SplashSpectrumType,
 ) -> Result<String, SplashError>

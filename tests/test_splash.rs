@@ -1,8 +1,79 @@
 use std::io::{BufRead, BufReader};
 
 use mass_spectrometry::prelude::{
-    GenericSpectrum, SpectrumMut, SpectrumSplash, SplashError, splash_from_peaks,
+    GenericSpectrum, Spectrum, SpectrumMut, SpectrumSplash, SplashError,
 };
+
+struct RawSpectrum {
+    peaks: Vec<(f64, f64)>,
+}
+
+impl Spectrum for RawSpectrum {
+    type Precision = f64;
+
+    type SortedIntensitiesIter<'a>
+        = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+    where
+        Self: 'a;
+    type SortedMzIter<'a>
+        = core::iter::Map<core::slice::Iter<'a, (f64, f64)>, fn(&(f64, f64)) -> f64>
+    where
+        Self: 'a;
+    type SortedPeaksIter<'a>
+        = core::iter::Copied<core::slice::Iter<'a, (f64, f64)>>
+    where
+        Self: 'a;
+
+    fn len(&self) -> usize {
+        self.peaks.len()
+    }
+
+    fn intensities(&self) -> Self::SortedIntensitiesIter<'_> {
+        self.peaks.iter().map(|peak| peak.1)
+    }
+
+    fn intensity_nth(&self, n: usize) -> f64 {
+        self.peaks[n].1
+    }
+
+    fn mz(&self) -> Self::SortedMzIter<'_> {
+        self.peaks.iter().map(|peak| peak.0)
+    }
+
+    fn mz_from(&self, index: usize) -> Self::SortedMzIter<'_> {
+        self.peaks[index..].iter().map(|peak| peak.0)
+    }
+
+    fn mz_nth(&self, n: usize) -> f64 {
+        self.peaks[n].0
+    }
+
+    fn peaks(&self) -> Self::SortedPeaksIter<'_> {
+        self.peaks.iter().copied()
+    }
+
+    fn peak_nth(&self, n: usize) -> (f64, f64) {
+        self.peaks[n]
+    }
+
+    fn precursor_mz(&self) -> f64 {
+        1.0
+    }
+}
+
+fn raw_splash(peaks: impl IntoIterator<Item = (f64, f64)>) -> Result<String, SplashError> {
+    RawSpectrum {
+        peaks: peaks.into_iter().collect(),
+    }
+    .splash()
+}
+
+fn raw_splash_slice(peaks: &[(f64, f64)]) -> Result<String, SplashError> {
+    RawSpectrum {
+        peaks: peaks.to_vec(),
+    }
+    .splash()
+}
 
 fn parse_spectrum(spectrum: &str) -> Vec<(f64, f64)> {
     spectrum
@@ -34,7 +105,7 @@ fn splash_matches_committed_java_reference_fixture() {
         let origin = &record[1];
         let spectrum = parse_spectrum(&record[2]);
 
-        let observed = splash_from_peaks(&spectrum)
+        let observed = raw_splash_slice(&spectrum)
             .unwrap_or_else(|error| panic!("{origin} should produce a SPLASH code, got {error:?}"));
         assert_eq!(observed, expected, "{origin}");
         checked += 1;
@@ -56,11 +127,11 @@ fn spectrum_extension_trait_generates_splash_for_strict_spectra() {
 }
 
 #[test]
-fn raw_splash_api_allows_zero_intensity_and_duplicate_mz_values() {
+fn spectrum_splash_allows_raw_zero_intensity_and_duplicate_mz_values() {
     let peaks = [(100.0, 0.0), (100.0, 10.0), (101.0, 10.0)];
 
     assert_eq!(
-        splash_from_peaks(peaks).unwrap(),
+        raw_splash(peaks).unwrap(),
         "splash10-0udi-0900000000-eac7ecd274bda6320aeb"
     );
 }
@@ -68,27 +139,27 @@ fn raw_splash_api_allows_zero_intensity_and_duplicate_mz_values() {
 #[test]
 fn splash_rejects_invalid_peak_sets() {
     assert_eq!(
-        splash_from_peaks(Vec::<(f64, f64)>::new()).unwrap_err(),
+        raw_splash(Vec::<(f64, f64)>::new()).unwrap_err(),
         SplashError::EmptySpectrum
     );
     assert_eq!(
-        splash_from_peaks([(100.0, 0.0)]).unwrap_err(),
+        raw_splash([(100.0, 0.0)]).unwrap_err(),
         SplashError::AllZeroIntensities
     );
     assert_eq!(
-        splash_from_peaks([(f64::NAN, 1.0)]).unwrap_err(),
+        raw_splash([(f64::NAN, 1.0)]).unwrap_err(),
         SplashError::NonFiniteMz
     );
     assert_eq!(
-        splash_from_peaks([(100.0, f64::INFINITY)]).unwrap_err(),
+        raw_splash([(100.0, f64::INFINITY)]).unwrap_err(),
         SplashError::NonFiniteIntensity
     );
     assert_eq!(
-        splash_from_peaks([(-1.0, 1.0)]).unwrap_err(),
+        raw_splash([(-1.0, 1.0)]).unwrap_err(),
         SplashError::NegativeMz
     );
     assert_eq!(
-        splash_from_peaks([(100.0, -1.0)]).unwrap_err(),
+        raw_splash([(100.0, -1.0)]).unwrap_err(),
         SplashError::NegativeIntensity
     );
 }
@@ -127,7 +198,7 @@ fn full_gnps_splash_oracle_matches_java_reference() {
         );
 
         let peaks = parse_spectrum(spectrum);
-        let observed = splash_from_peaks(&peaks).unwrap_or_else(|error| {
+        let observed = raw_splash_slice(&peaks).unwrap_or_else(|error| {
             panic!("{origin} should produce SPLASH at line {line_number}, got {error:?}")
         });
         assert_eq!(
