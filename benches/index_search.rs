@@ -318,6 +318,9 @@ fn bench_index_search(c: &mut Criterion) {
         top_k_library.iter(),
     )
     .expect("top-k flash cosine index should build");
+    let flash_entropy_top_k =
+        FlashEntropyIndex::new(0.0_f64, 1.0_f64, mz_tolerance, true, top_k_library.iter())
+            .expect("top-k flash entropy index should build");
 
     let mut top_k_group = c.benchmark_group("library_search_cosine_top_k");
     top_k_group.sample_size(10);
@@ -442,6 +445,66 @@ fn bench_index_search(c: &mut Criterion) {
         );
     }
     top_k_group.finish();
+
+    let mut entropy_top_k_group = c.benchmark_group("library_search_entropy_top_k");
+    entropy_top_k_group.sample_size(10);
+    for top_k_threshold in [0.5_f64, 0.7_f64, 0.9_f64] {
+        let threshold_label = format!("{top_k_threshold:.1}");
+
+        let mut state = flash_entropy_top_k.new_search_state();
+        let mut top_k_state = TopKSearchState::new();
+        entropy_top_k_group.bench_function(
+            BenchmarkId::new("direct_top_k_threshold", &threshold_label),
+            |b| {
+                b.iter(|| {
+                    let mut total_score = 0.0;
+                    let mut total_matches = 0usize;
+                    for query in top_k_library.iter().take(TOP_K_QUERY_COUNT) {
+                        flash_entropy_top_k
+                            .for_each_top_k_threshold_with_state(
+                                black_box(query),
+                                black_box(top_k),
+                                black_box(top_k_threshold),
+                                &mut state,
+                                &mut top_k_state,
+                                |result| {
+                                    total_score += result.score;
+                                    total_matches += result.n_matches;
+                                },
+                            )
+                            .expect("top-k entropy threshold search should succeed");
+                    }
+                    black_box((total_score, total_matches))
+                })
+            },
+        );
+
+        let mut state = flash_entropy_top_k.new_search_state();
+        entropy_top_k_group.bench_function(
+            BenchmarkId::new("threshold_then_sort", &threshold_label),
+            |b| {
+                b.iter(|| {
+                    let mut total_score = 0.0;
+                    let mut total_matches = 0usize;
+                    for query in top_k_library.iter().take(TOP_K_QUERY_COUNT) {
+                        let results = flash_entropy_top_k
+                            .search_threshold_with_state(
+                                black_box(query),
+                                top_k_threshold,
+                                &mut state,
+                            )
+                            .expect("entropy threshold search should succeed");
+                        let results = ranked_top_k(results, top_k);
+                        let (score, matches) = summarize_results(&results);
+                        total_score += score;
+                        total_matches += matches;
+                    }
+                    black_box((total_score, total_matches))
+                })
+            },
+        );
+    }
+    entropy_top_k_group.finish();
 
     let mut modified_group = c.benchmark_group("library_search_modified_cosine");
     modified_group.bench_function("with_index_flash_modified", |b| {

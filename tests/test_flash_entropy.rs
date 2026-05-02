@@ -108,6 +108,35 @@ fn top_k_expected(mut results: Vec<FlashSearchResult>, k: usize) -> Vec<FlashSea
     results
 }
 
+fn top_k_threshold_expected(
+    mut results: Vec<FlashSearchResult>,
+    k: usize,
+    score_threshold: f64,
+) -> Vec<FlashSearchResult> {
+    results.retain(|result| result.score >= score_threshold);
+    top_k_expected(results, k)
+}
+
+fn assert_results_close(
+    actual: Vec<FlashSearchResult>,
+    expected: Vec<FlashSearchResult>,
+    label: &str,
+) {
+    let actual = sorted_results(actual);
+    let expected = sorted_results(expected);
+    assert_eq!(actual.len(), expected.len(), "{label}: result count");
+    for (actual, expected) in actual.iter().zip(expected.iter()) {
+        assert_eq!(actual.spectrum_id, expected.spectrum_id, "{label}: id");
+        assert_eq!(actual.n_matches, expected.n_matches, "{label}: matches");
+        assert!(
+            (actual.score - expected.score).abs() <= 1.0e-12,
+            "{label}: score {} != {}",
+            actual.score,
+            expected.score
+        );
+    }
+}
+
 // ---------- self-similarity (weighted) ----------
 
 #[test]
@@ -397,6 +426,43 @@ fn search_with_state_matches_stateless_results_and_state_reuse_is_stable() {
 }
 
 #[test]
+fn thresholded_search_matches_filtered_direct_search() {
+    let spectra = reference_spectra();
+    let index = FlashEntropyIndex::new(
+        0.0_f64,
+        1.0_f64,
+        0.1_f64,
+        true,
+        spectra.iter().map(|(_, s)| s),
+    )
+    .expect("index build should succeed");
+
+    for threshold in [0.0_f64, 0.5_f64, 0.7_f64, 0.9_f64, 1.1_f64] {
+        let mut state = index.new_search_state();
+        for (_, query) in &spectra {
+            let expected: Vec<FlashSearchResult> = index
+                .search(query)
+                .expect("direct search should succeed")
+                .into_iter()
+                .filter(|result| result.score >= threshold)
+                .collect();
+            let actual = index
+                .search_threshold_with_state(query, threshold, &mut state)
+                .expect("thresholded search should succeed");
+            assert_results_close(actual, expected, &format!("threshold={threshold}"));
+        }
+    }
+
+    let error = index
+        .search_threshold(&spectra[0].1, f64::NAN)
+        .expect_err("non-finite threshold should be rejected");
+    assert_eq!(
+        error,
+        SimilarityComputationError::NonFiniteValue("score_threshold")
+    );
+}
+
+#[test]
 fn top_k_matches_sorted_direct_search_and_reuses_state() {
     let spectra = reference_spectra();
     let index = FlashEntropyIndex::new(
@@ -439,6 +505,32 @@ fn top_k_matches_sorted_direct_search_and_reuses_state() {
             .expect("zero-k search should succeed")
             .is_empty()
     );
+}
+
+#[test]
+fn thresholded_top_k_matches_filtered_direct_search() {
+    let spectra = reference_spectra();
+    let index = FlashEntropyIndex::new(
+        0.0_f64,
+        1.0_f64,
+        0.1_f64,
+        true,
+        spectra.iter().map(|(_, s)| s),
+    )
+    .expect("index build should succeed");
+    let query = &spectra[0].1;
+
+    for threshold in [0.0_f64, 0.5_f64, 0.9_f64, 1.1_f64] {
+        let expected = top_k_threshold_expected(
+            index.search(query).expect("search should succeed"),
+            3,
+            threshold,
+        );
+        let actual = index
+            .search_top_k_threshold(query, 3, threshold)
+            .expect("thresholded top-k should succeed");
+        assert_results_close(actual, expected, "thresholded entropy top-k");
+    }
 }
 
 #[test]

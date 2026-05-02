@@ -52,7 +52,7 @@ assert_eq!(spectrum.splash().unwrap(), splash);
 
 ### Indices
 
-The regular cosine index accepts a cutoff at query time, while `FlashCosineThresholdIndex` bakes one cutoff into the index and is the intended path for thresholded indexed self-similarity. Entropy indices expose the same direct-search and top-k style APIs, but not a cutoff-specialized index, because the current entropy implementation does not have the same threshold-pruning architecture as cosine.
+The regular cosine and entropy indices accept a cutoff at query time. `FlashCosineThresholdIndex` bakes one cutoff into the cosine index and is the intended path for thresholded indexed self-similarity; entropy keeps query-time thresholding only. `FlashCosineIndex`, `FlashCosineThresholdIndex`, and `FlashEntropyIndex` implement `SpectraIndex` for external-query search and top-k search with reusable scratch state.
 
 ```rust
 use mass_spectrometry::prelude::*;
@@ -108,7 +108,7 @@ assert_eq!(edges[0].1, 1);
 assert!(edges[0].2 > 0.99);
 
 let entropy_index = FlashEntropyIndex::weighted(0.1, &spectra).unwrap();
-let entropy_best = entropy_index.search_top_k(&spectra[0], 2).unwrap();
+let entropy_best = entropy_index.search_top_k_threshold(&spectra[0], 2, 0.8).unwrap();
 assert_eq!(entropy_best[0].spectrum_id, 0);
 assert!(entropy_best.iter().any(|hit| hit.spectrum_id == 1));
 ```

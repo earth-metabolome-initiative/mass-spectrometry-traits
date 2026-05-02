@@ -265,7 +265,7 @@ pub(crate) struct DirectThresholdSearch<'a, K: FlashKernel> {
 
 /// Library-side prefix postings for threshold-specialized direct searches.
 ///
-/// A threshold-aware wrapper chooses how each spectrum's prefix is computed,
+/// A fixed-threshold index chooses how each spectrum's prefix is computed,
 /// then this shared structure stores those prefix peaks in a sorted m/z index
 /// and in per-spectrum order for indexed-query graph construction.
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
@@ -489,7 +489,7 @@ pub struct SearchState {
     secondary_candidate_spectra: SearchBitVec,
     secondary_candidate_touched: Vec<u32>,
     query_order: Vec<usize>,
-    query_suffix_norm: Vec<f64>,
+    query_suffix_bound: Vec<f64>,
 }
 
 impl SearchState {
@@ -505,7 +505,7 @@ impl SearchState {
             secondary_candidate_spectra: SearchBitVec::new(),
             secondary_candidate_touched: Vec::new(),
             query_order: Vec::new(),
-            query_suffix_norm: Vec::new(),
+            query_suffix_bound: Vec::new(),
         }
     }
 
@@ -547,26 +547,55 @@ impl SearchState {
                 .then_with(|| left.cmp(&right))
         });
 
-        self.query_suffix_norm.clear();
-        self.query_suffix_norm.resize(query_data.len() + 1, 0.0);
+        self.query_suffix_bound.clear();
+        self.query_suffix_bound.resize(query_data.len() + 1, 0.0);
         for order_index in (0..self.query_order.len()).rev() {
             let query_index = self.query_order[order_index];
-            self.query_suffix_norm[order_index] = self.query_suffix_norm[order_index + 1]
+            self.query_suffix_bound[order_index] = self.query_suffix_bound[order_index + 1]
                 + query_data[query_index] * query_data[query_index];
         }
-        for value in &mut self.query_suffix_norm {
+        for value in &mut self.query_suffix_bound {
             *value = value.sqrt();
         }
     }
 
+    pub(crate) fn prepare_additive_threshold_order(
+        &mut self,
+        query_data: &[f64],
+        mut upper_bound: impl FnMut(f64) -> f64,
+    ) {
+        self.query_order.clear();
+        self.query_order.extend(0..query_data.len());
+        self.query_order.sort_unstable_by(|&left, &right| {
+            upper_bound(query_data[right])
+                .total_cmp(&upper_bound(query_data[left]))
+                .then_with(|| left.cmp(&right))
+        });
+
+        self.query_suffix_bound.clear();
+        self.query_suffix_bound.resize(query_data.len() + 1, 0.0);
+        for order_index in (0..self.query_order.len()).rev() {
+            let query_index = self.query_order[order_index];
+            self.query_suffix_bound[order_index] =
+                self.query_suffix_bound[order_index + 1] + upper_bound(query_data[query_index]);
+        }
+    }
+
     pub(crate) fn threshold_prefix_len(&self, score_threshold: f64) -> usize {
-        let Some(&query_norm) = self.query_suffix_norm.first() else {
+        let Some(&query_norm) = self.query_suffix_bound.first() else {
             return 0;
         };
         let target_query_norm = query_norm * score_threshold;
-        self.query_suffix_norm
+        self.query_suffix_bound
             .iter()
             .position(|&remaining_norm| remaining_norm < target_query_norm)
+            .unwrap_or(self.query_order.len())
+    }
+
+    pub(crate) fn threshold_prefix_len_by_target(&self, target: f64) -> usize {
+        self.query_suffix_bound
+            .iter()
+            .position(|&remaining_bound| remaining_bound < target)
             .unwrap_or(self.query_order.len())
     }
 
@@ -574,8 +603,8 @@ impl SearchState {
         &self.query_order
     }
 
-    pub(crate) fn query_suffix_norm_at(&self, index: usize) -> f64 {
-        self.query_suffix_norm[index]
+    pub(crate) fn query_suffix_bound_at(&self, index: usize) -> f64 {
+        self.query_suffix_bound[index]
     }
 
     #[inline]
@@ -1087,9 +1116,9 @@ impl<K: FlashKernel> FlashIndex<K> {
         }
 
         state.prepare_threshold_order(search.query_data);
-        let target_query_norm = state.query_suffix_norm[0] * search.score_threshold;
+        let target_query_norm = state.query_suffix_bound[0] * search.score_threshold;
         let prefix_len = state
-            .query_suffix_norm
+            .query_suffix_bound
             .iter()
             .position(|&remaining_norm| remaining_norm < target_query_norm)
             .unwrap_or(state.query_order.len());
