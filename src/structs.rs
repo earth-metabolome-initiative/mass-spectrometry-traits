@@ -18,7 +18,7 @@ pub mod similarity_errors;
 pub mod sirius_merge_close_peaks;
 pub mod splash;
 
-pub use flash_common::{FlashSearchResult, SearchState};
+pub use flash_common::{FlashSearchResult, SearchState, TopKSearchState};
 pub use flash_cosine_index::{FlashCosineIndex, FlashCosineIndexError, FlashCosineThresholdIndex};
 pub use flash_entropy_index::{FlashEntropyIndex, FlashEntropyIndexError};
 pub use generic_spectrum::{GenericSpectrum, GenericSpectrumMutationError};

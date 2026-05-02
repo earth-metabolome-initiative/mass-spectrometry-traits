@@ -4,6 +4,7 @@
 //! `flash_entropy_index`) expose only their public wrappers.
 
 use alloc::vec::Vec;
+use core::cmp::Ordering;
 use core::ops::{Deref, DerefMut};
 
 use bitvec::prelude::*;
@@ -111,6 +112,147 @@ pub struct FlashSearchResult {
     pub score: f64,
     /// Number of matched peak pairs.
     pub n_matches: usize,
+}
+
+pub(crate) fn compare_search_results_by_rank(
+    left: &FlashSearchResult,
+    right: &FlashSearchResult,
+) -> Ordering {
+    right
+        .score
+        .total_cmp(&left.score)
+        .then_with(|| right.n_matches.cmp(&left.n_matches))
+        .then_with(|| left.spectrum_id.cmp(&right.spectrum_id))
+}
+
+/// Reusable scratch space for top-k Flash index searches.
+///
+/// Use one `TopKSearchState` per worker together with [`SearchState`] when
+/// running many top-k queries, so the bounded candidate buffer can be reused
+/// instead of allocated for every query.
+///
+/// # Example
+///
+/// ```
+/// use mass_spectrometry::prelude::*;
+///
+/// let mut left: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+/// left.add_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
+/// let mut right: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+/// right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
+///
+/// let spectra = vec![left, right];
+/// let index = FlashCosineIndex::new(0.0, 1.0, 0.1, &spectra).unwrap();
+/// let mut search_state = index.new_search_state();
+/// let mut top_k_state = TopKSearchState::new();
+/// let mut hits = Vec::new();
+///
+/// index
+///     .for_each_top_k_threshold_with_state(
+///         &spectra[0],
+///         2,
+///         0.8,
+///         &mut search_state,
+///         &mut top_k_state,
+///         |hit| hits.push(hit),
+///     )
+///     .unwrap();
+///
+/// assert_eq!(hits[0].spectrum_id, 0);
+/// assert!(hits.iter().any(|hit| hit.spectrum_id == 1));
+/// ```
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
+#[derive(Debug, Default)]
+pub struct TopKSearchState {
+    results: Vec<FlashSearchResult>,
+}
+
+impl TopKSearchState {
+    /// Create an empty top-k scratch state.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+pub(crate) struct TopKSearchResults<'a> {
+    k: usize,
+    min_score: f64,
+    results: &'a mut Vec<FlashSearchResult>,
+}
+
+impl<'a> TopKSearchResults<'a> {
+    /// Prepare the bounded result buffer for one query.
+    pub(crate) fn new(k: usize, min_score: f64, state: &'a mut TopKSearchState) -> Self {
+        state.results.clear();
+        if state.results.capacity() < k {
+            state.results.reserve(k - state.results.capacity());
+        }
+        Self {
+            k,
+            min_score,
+            results: &mut state.results,
+        }
+    }
+
+    /// Insert a result if it is good enough for the current top-k set.
+    #[inline]
+    pub(crate) fn push(&mut self, result: FlashSearchResult) {
+        if self.k == 0 || result.score < self.min_score {
+            return;
+        }
+        if self.results.len() < self.k {
+            self.results.push(result);
+            return;
+        }
+
+        let Some((worst_index, worst_result)) = self
+            .results
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| compare_search_results_by_rank(left, right))
+        else {
+            return;
+        };
+
+        if compare_search_results_by_rank(&result, worst_result).is_lt() {
+            self.results[worst_index] = result;
+        }
+    }
+
+    /// Return the score that a future candidate must reach to matter.
+    pub(crate) fn pruning_score(&self) -> f64 {
+        if self.results.len() < self.k {
+            return self.min_score;
+        }
+
+        let Some(worst_result) = self
+            .results
+            .iter()
+            .max_by(|left, right| compare_search_results_by_rank(left, right))
+        else {
+            return self.min_score;
+        };
+        worst_result.score.max(self.min_score)
+    }
+
+    /// Sort selected results into the public deterministic rank order.
+    fn finish(&mut self) {
+        self.results.sort_by(compare_search_results_by_rank);
+    }
+
+    /// Emit selected results after final ranking.
+    pub(crate) fn emit<Emit>(mut self, mut emit: Emit)
+    where
+        Emit: FnMut(FlashSearchResult),
+    {
+        self.finish();
+        for &result in self.results.iter() {
+            emit(result);
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -430,6 +572,10 @@ impl SearchState {
 
     pub(crate) fn query_order(&self) -> &[usize] {
         &self.query_order
+    }
+
+    pub(crate) fn query_suffix_norm_at(&self, index: usize) -> f64 {
+        self.query_suffix_norm[index]
     }
 
     #[inline]

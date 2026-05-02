@@ -11,7 +11,9 @@ use super::cosine_common::{
     validate_well_separated,
 };
 use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
-use super::flash_common::{FlashIndex, FlashKernel, FlashSearchResult, SearchState};
+use super::flash_common::{
+    FlashIndex, FlashKernel, FlashSearchResult, SearchState, TopKSearchState,
+};
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{Spectrum, SpectrumFloat};
 
@@ -221,6 +223,85 @@ impl FlashEntropyIndex {
         Ok(self
             .inner
             .search_direct_with_state(&query_mz, &query_data, &(), state))
+    }
+
+    /// Direct search that returns the best `k` results by descending score.
+    ///
+    /// This is an exact output-reduction API over the direct entropy index; it
+    /// does not claim threshold-specialized entropy pruning.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mass_spectrometry::prelude::*;
+    ///
+    /// let mut left: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+    /// left.add_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
+    /// let mut right: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+    /// right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
+    ///
+    /// let spectra = vec![left, right];
+    /// let index = FlashEntropyIndex::weighted(0.1, &spectra).unwrap();
+    /// let hits = index.search_top_k(&spectra[0], 1).unwrap();
+    ///
+    /// assert_eq!(hits.len(), 1);
+    /// assert_eq!(hits[0].spectrum_id, 0);
+    /// ```
+    pub fn search_top_k<S>(
+        &self,
+        query: &S,
+        k: usize,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut state = self.new_search_state();
+        self.search_top_k_with_state(query, k, &mut state)
+    }
+
+    /// Top-k direct search using caller-provided scratch state.
+    pub fn search_top_k_with_state<S>(
+        &self,
+        query: &S,
+        k: usize,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut top_k_state = TopKSearchState::new();
+        let mut results = Vec::new();
+        self.for_each_top_k_with_state(query, k, state, &mut top_k_state, |result| {
+            results.push(result);
+        })?;
+        Ok(results)
+    }
+
+    /// Stream the best `k` direct entropy results using caller-provided
+    /// scratch state.
+    pub fn for_each_top_k_with_state<S, Emit>(
+        &self,
+        query: &S,
+        k: usize,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        S: Spectrum,
+        Emit: FnMut(FlashSearchResult),
+    {
+        let (query_mz, query_data) = self.prepare_query(query)?;
+        if k == 0 {
+            return Ok(());
+        }
+        let mut top_k = super::flash_common::TopKSearchResults::new(k, 0.0, top_k_state);
+        self.inner
+            .for_each_direct_with_state(&query_mz, &query_data, &(), state, |result| {
+                top_k.push(result);
+            });
+        top_k.emit(emit);
+        Ok(())
     }
 
     /// Modified (direct + shifted) search against the library.

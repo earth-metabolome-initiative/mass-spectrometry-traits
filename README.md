@@ -8,9 +8,9 @@
 A `no_std` crate for mass spectra, spectral similarities, fast search indices,
 and SPLASH fingerprints. `GenericSpectrum<P>` stores sorted `(m/z, intensity)` peaks with `f64`, `f32`,
 or `half::f16` precision. The crate includes cosine and entropy similarities,
-fast search indices including cutoff-specialized cosine indices for direct graph
-construction, SPLASH generation, and built-in reference spectra for examples and
-regression tests.
+fast search indices including cutoff-specialized cosine indices and exact top-k
+queries for direct graph construction, SPLASH generation, and built-in reference
+spectra for examples and regression tests.
 
 ## Examples
 
@@ -52,6 +52,8 @@ assert_eq!(spectrum.splash().unwrap(), splash);
 
 ### Indices
 
+The regular cosine index accepts a cutoff at query time, while `FlashCosineThresholdIndex` bakes one cutoff into the index and is the intended path for thresholded indexed self-similarity. Entropy indices expose the same direct-search and top-k style APIs, but not a cutoff-specialized index, because the current entropy implementation does not have the same threshold-pruning architecture as cosine.
+
 ```rust
 use mass_spectrometry::prelude::*;
 
@@ -70,18 +72,33 @@ let index = FlashCosineIndex::new(0.0, 1.0, 0.1, &spectra).unwrap();
 let hits = index.search_threshold(&spectra[0], 0.8).unwrap();
 assert!(hits.iter().any(|hit| hit.spectrum_id == 1));
 
+let best = index.search_top_k_threshold(&spectra[0], 2, 0.8).unwrap();
+assert_eq!(best[0].spectrum_id, 0);
+assert!(best.iter().any(|hit| hit.spectrum_id == 1));
+
 let threshold_index =
     FlashCosineThresholdIndex::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
+let indexed_best = threshold_index.search_top_k_indexed(0, 2).unwrap();
+assert_eq!(indexed_best[0].spectrum_id, 0);
+assert!(indexed_best.iter().any(|hit| hit.spectrum_id == 1));
+
 let mut state = threshold_index.new_search_state();
+let mut top_k_state = TopKSearchState::new();
 let mut edges = Vec::new();
 
 for query_id in 0..threshold_index.n_spectra() {
     threshold_index
-        .for_each_indexed_with_state(query_id, &mut state, |hit| {
-            if hit.spectrum_id > query_id {
-                edges.push((query_id, hit.spectrum_id, hit.score));
-            }
-        })
+        .for_each_top_k_indexed_with_state(
+            query_id,
+            2,
+            &mut state,
+            &mut top_k_state,
+            |hit| {
+                if hit.spectrum_id > query_id {
+                    edges.push((query_id, hit.spectrum_id, hit.score));
+                }
+            },
+        )
         .unwrap();
 }
 
@@ -89,4 +106,9 @@ assert_eq!(edges.len(), 1);
 assert_eq!(edges[0].0, 0);
 assert_eq!(edges[0].1, 1);
 assert!(edges[0].2 > 0.99);
+
+let entropy_index = FlashEntropyIndex::weighted(0.1, &spectra).unwrap();
+let entropy_best = entropy_index.search_top_k(&spectra[0], 2).unwrap();
+assert_eq!(entropy_best[0].spectrum_id, 0);
+assert!(entropy_best.iter().any(|hit| hit.spectrum_id == 1));
 ```

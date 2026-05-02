@@ -12,7 +12,7 @@ use super::cosine_common::{
 };
 use super::flash_common::{
     DirectThresholdSearch, FlashIndex, FlashKernel, FlashSearchResult, SearchState,
-    ThresholdPrefixPostings, l2_threshold_prefix_indices,
+    ThresholdPrefixPostings, TopKSearchResults, TopKSearchState, l2_threshold_prefix_indices,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{Spectrum, SpectrumFloat};
@@ -78,6 +78,82 @@ where
     validate_well_separated(&mz_vals, tolerance, "query spectrum")?;
 
     Ok((mz_vals, data_vals))
+}
+
+/// Run exact cosine top-k over a prepared query while using the current kth
+/// score as an adaptive pruning bound.
+///
+/// Query peaks are scanned from largest to smallest contribution. Once the
+/// remaining query suffix norm cannot reach the current pruning score, no
+/// unseen spectrum can enter the result set, so the index scan stops early.
+fn for_each_cosine_top_k_prepared<Emit>(
+    inner: &FlashIndex<CosineKernel>,
+    search: DirectThresholdSearch<'_, CosineKernel>,
+    k: usize,
+    state: &mut SearchState,
+    top_k_state: &mut TopKSearchState,
+    emit: Emit,
+) where
+    Emit: FnMut(FlashSearchResult),
+{
+    let mut top_k = TopKSearchResults::new(k, search.score_threshold, top_k_state);
+    if k == 0 || search.score_threshold > 1.0 || inner.n_spectra == 0 || search.query_mz.is_empty()
+    {
+        top_k.emit(emit);
+        return;
+    }
+
+    let query_norm = search.query_meta.0;
+    if query_norm == 0.0 {
+        top_k.emit(emit);
+        return;
+    }
+
+    state.prepare_threshold_order(search.query_data);
+    state.ensure_candidate_capacity(inner.n_spectra as usize);
+
+    let query_order_len = state.query_order().len();
+    for order_position in 0..query_order_len {
+        let query_index = state.query_order()[order_position];
+        let qmz = search.query_mz[query_index];
+
+        inner.for_each_product_spectrum_in_window(qmz, |spec_id| {
+            if state.is_candidate(spec_id) {
+                return;
+            }
+            state.mark_candidate(spec_id);
+
+            let lib_meta = inner.spectrum_meta(spec_id);
+            if lib_meta.0 == 0.0 {
+                return;
+            }
+
+            let target_raw = top_k.pruning_score() * query_norm * lib_meta.0;
+            let (raw, count) =
+                inner.direct_score_for_spectrum(search.query_mz, search.query_data, spec_id);
+            if raw < target_raw {
+                return;
+            }
+
+            let score = CosineKernel::finalize(raw, count, search.query_meta, lib_meta);
+            if score > 0.0 {
+                top_k.push(FlashSearchResult {
+                    spectrum_id: spec_id,
+                    score,
+                    n_matches: count,
+                });
+            }
+        });
+
+        let processed_prefix_len = order_position + 1;
+        let pruning_score = top_k.pruning_score();
+        if state.query_suffix_norm_at(processed_prefix_len) < pruning_score * query_norm {
+            break;
+        }
+    }
+
+    state.reset_candidates();
+    top_k.emit(emit);
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +313,136 @@ impl FlashCosineIndex {
             .search_direct_with_state(&query_mz, &query_data, &query_meta, state))
     }
 
+    /// Direct search that returns the best `k` results by descending score.
+    ///
+    /// Ties are ordered by descending match count and then ascending spectrum
+    /// id to keep output deterministic. This is exact: it returns the same
+    /// first `k` entries as sorting [`Self::search`] by that ranking.
+    pub fn search_top_k<S>(
+        &self,
+        query: &S,
+        k: usize,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut state = self.new_search_state();
+        self.search_top_k_with_state(query, k, &mut state)
+    }
+
+    /// Top-k direct search using caller-provided scratch state.
+    pub fn search_top_k_with_state<S>(
+        &self,
+        query: &S,
+        k: usize,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        self.search_top_k_threshold_with_state(query, k, 0.0, state)
+    }
+
+    /// Direct search that returns the best `k` results with
+    /// `score >= score_threshold`.
+    ///
+    /// This threads `score_threshold` into the threshold-aware cosine search
+    /// path. Once `k` results have been found, the current kth score becomes
+    /// the pruning cutoff for the remaining index scan.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mass_spectrometry::prelude::*;
+    ///
+    /// let mut left: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+    /// left.add_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
+    /// let mut right: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+    /// right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
+    ///
+    /// let spectra = vec![left, right];
+    /// let index = FlashCosineIndex::new(0.0, 1.0, 0.1, &spectra).unwrap();
+    /// let hits = index.search_top_k_threshold(&spectra[0], 1, 0.8).unwrap();
+    ///
+    /// assert_eq!(hits.len(), 1);
+    /// assert_eq!(hits[0].spectrum_id, 0);
+    /// ```
+    pub fn search_top_k_threshold<S>(
+        &self,
+        query: &S,
+        k: usize,
+        score_threshold: f64,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut state = self.new_search_state();
+        self.search_top_k_threshold_with_state(query, k, score_threshold, &mut state)
+    }
+
+    /// Thresholded top-k direct search using caller-provided scratch state.
+    pub fn search_top_k_threshold_with_state<S>(
+        &self,
+        query: &S,
+        k: usize,
+        score_threshold: f64,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        ensure_finite(score_threshold, "score_threshold")?;
+        let mut top_k_state = TopKSearchState::new();
+        let mut results = Vec::new();
+        self.for_each_top_k_threshold_with_state(
+            query,
+            k,
+            score_threshold,
+            state,
+            &mut top_k_state,
+            |result| results.push(result),
+        )?;
+        Ok(results)
+    }
+
+    /// Thresholded top-k direct search that emits each selected result.
+    ///
+    /// Reuse both `state` and `top_k_state` across queries in high-throughput
+    /// workloads to avoid per-query scratch allocation. The search is exact
+    /// and raises its pruning cutoff to the current kth score as soon as the
+    /// bounded result set is full.
+    pub fn for_each_top_k_threshold_with_state<S, Emit>(
+        &self,
+        query: &S,
+        k: usize,
+        score_threshold: f64,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        S: Spectrum,
+        Emit: FnMut(FlashSearchResult),
+    {
+        ensure_finite(score_threshold, "score_threshold")?;
+        let (query_mz, query_data) = self.prepare_query(query)?;
+        let query_meta = CosineKernel::spectrum_meta(&query_data);
+        for_each_cosine_top_k_prepared(
+            &self.inner,
+            DirectThresholdSearch {
+                query_mz: &query_mz,
+                query_data: &query_data,
+                query_meta: &query_meta,
+                score_threshold,
+            },
+            k,
+            state,
+            top_k_state,
+            emit,
+        );
+        Ok(())
+    }
+
     /// Direct search that returns only results with `score >= score_threshold`.
     ///
     /// Unlike filtering [`Self::search`] afterward, this threads the threshold
@@ -291,7 +497,7 @@ impl FlashCosineIndex {
         query: &S,
         score_threshold: f64,
         state: &mut SearchState,
-        mut emit: Emit,
+        emit: Emit,
     ) -> Result<(), SimilarityComputationError>
     where
         S: Spectrum,
@@ -299,9 +505,10 @@ impl FlashCosineIndex {
     {
         ensure_finite(score_threshold, "score_threshold")?;
         if score_threshold <= 0.0 {
-            for result in self.search_with_state(query, state)? {
-                emit(result);
-            }
+            let (query_mz, query_data) = self.prepare_query(query)?;
+            let query_meta = CosineKernel::spectrum_meta(&query_data);
+            self.inner
+                .for_each_direct_with_state(&query_mz, &query_data, &query_meta, state, emit);
             return Ok(());
         }
         if score_threshold > 1.0 {
@@ -535,6 +742,80 @@ impl FlashCosineThresholdIndex {
         Ok(results)
     }
 
+    /// Search an external query and return the best `k` thresholded results.
+    ///
+    /// This is exact and uses the fixed index threshold until the bounded
+    /// result set fills, then prunes with the current kth score.
+    pub fn search_top_k<S>(
+        &self,
+        query: &S,
+        k: usize,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut state = self.new_search_state();
+        self.search_top_k_with_state(query, k, &mut state)
+    }
+
+    /// Search an external query and return the best `k` thresholded results
+    /// using caller-provided scratch state.
+    pub fn search_top_k_with_state<S>(
+        &self,
+        query: &S,
+        k: usize,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut top_k_state = TopKSearchState::new();
+        let mut results = Vec::new();
+        self.for_each_top_k_with_state(query, k, state, &mut top_k_state, |result| {
+            results.push(result);
+        })?;
+        Ok(results)
+    }
+
+    /// Stream the best `k` thresholded results for an external query using
+    /// caller-provided scratch state.
+    ///
+    /// This is the low-allocation variant of [`Self::search_top_k`].
+    pub fn for_each_top_k_with_state<S, Emit>(
+        &self,
+        query: &S,
+        k: usize,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        S: Spectrum,
+        Emit: FnMut(FlashSearchResult),
+    {
+        let (query_mz, query_data) = prepare_cosine_query(
+            query,
+            self.mz_power,
+            self.intensity_power,
+            self.inner.tolerance,
+        )?;
+        let query_meta = CosineKernel::spectrum_meta(&query_data);
+        for_each_cosine_top_k_prepared(
+            &self.inner,
+            DirectThresholdSearch {
+                query_mz: &query_mz,
+                query_data: &query_data,
+                query_meta: &query_meta,
+                score_threshold: self.score_threshold,
+            },
+            k,
+            state,
+            top_k_state,
+            emit,
+        );
+        Ok(())
+    }
+
     /// Stream thresholded results for an external query.
     pub fn for_each_with_state<S, Emit>(
         &self,
@@ -585,6 +866,91 @@ impl FlashCosineThresholdIndex {
             &query_meta,
             query_prefix_mz,
             state,
+            emit,
+        );
+        Ok(())
+    }
+
+    /// Return the best `k` thresholded results for a query spectrum that is
+    /// already in this index.
+    ///
+    /// This is exact and uses adaptive kth-score pruning on top of the fixed
+    /// index threshold.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mass_spectrometry::prelude::*;
+    ///
+    /// let mut left: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+    /// left.add_peaks([(100.0, 10.0), (200.0, 20.0)]).unwrap();
+    /// let mut right: GenericSpectrum = GenericSpectrum::try_with_capacity(500.0, 2).unwrap();
+    /// right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
+    ///
+    /// let spectra = vec![left, right];
+    /// let index = FlashCosineThresholdIndex::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
+    /// let hits = index.search_top_k_indexed(0, 2).unwrap();
+    ///
+    /// assert_eq!(hits[0].spectrum_id, 0);
+    /// assert!(hits.iter().any(|hit| hit.spectrum_id == 1));
+    /// ```
+    pub fn search_top_k_indexed(
+        &self,
+        query_id: u32,
+        k: usize,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        let mut state = self.new_search_state();
+        self.search_top_k_indexed_with_state(query_id, k, &mut state)
+    }
+
+    /// Return the best `k` thresholded results for an indexed query using
+    /// caller-provided scratch state.
+    pub fn search_top_k_indexed_with_state(
+        &self,
+        query_id: u32,
+        k: usize,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        let mut top_k_state = TopKSearchState::new();
+        let mut results = Vec::new();
+        self.for_each_top_k_indexed_with_state(query_id, k, state, &mut top_k_state, |result| {
+            results.push(result)
+        })?;
+        Ok(results)
+    }
+
+    /// Stream the best `k` thresholded results for an indexed query using
+    /// caller-provided scratch state.
+    ///
+    /// This is the intended low-allocation indexed-query top-k API.
+    pub fn for_each_top_k_indexed_with_state<Emit>(
+        &self,
+        query_id: u32,
+        k: usize,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        Emit: FnMut(FlashSearchResult),
+    {
+        if query_id >= self.inner.n_spectra {
+            return Err(SimilarityComputationError::IndexOverflow);
+        }
+
+        let (query_mz, query_data) = self.inner.spectrum_slices(query_id);
+        let query_meta = *self.inner.spectrum_meta(query_id);
+        for_each_cosine_top_k_prepared(
+            &self.inner,
+            DirectThresholdSearch {
+                query_mz,
+                query_data,
+                query_meta: &query_meta,
+                score_threshold: self.score_threshold,
+            },
+            k,
+            state,
+            top_k_state,
             emit,
         );
         Ok(())

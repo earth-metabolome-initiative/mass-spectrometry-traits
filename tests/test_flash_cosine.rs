@@ -7,7 +7,7 @@ use mass_spectrometry::prelude::{
     CocaineSpectrum, FlashCosineIndex, FlashCosineIndexError, FlashCosineThresholdIndex,
     FlashSearchResult, GenericSpectrum, GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearCosine,
     PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, SimilarityComputationError,
-    SimilarityConfigError, Spectrum, SpectrumAlloc, SpectrumMut,
+    SimilarityConfigError, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
 };
 
 fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
@@ -114,6 +114,23 @@ fn assert_results_close(
             expected.score
         );
     }
+}
+
+fn top_k_expected(
+    mut results: Vec<FlashSearchResult>,
+    k: usize,
+    score_threshold: f64,
+) -> Vec<FlashSearchResult> {
+    results.retain(|result| result.score >= score_threshold);
+    results.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| right.n_matches.cmp(&left.n_matches))
+            .then_with(|| left.spectrum_id.cmp(&right.spectrum_id))
+    });
+    results.truncate(k);
+    results
 }
 
 // ---------- self-similarity: flash score ~1.0 for each spectrum ----------
@@ -295,6 +312,7 @@ fn rejects_non_well_separated_query() {
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
     let result = index.search(&bad);
     assert!(result.is_err());
+    assert!(index.search_top_k(&bad, 0).is_err());
 }
 
 // ---------- single-spectrum library ----------
@@ -420,6 +438,88 @@ fn thresholded_emitter_reuses_state_and_validates_threshold() {
 }
 
 #[test]
+fn top_k_matches_sorted_direct_search_and_reuses_state() {
+    let spectra = reference_spectra();
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
+
+    let query_a = &spectra[0].1;
+    let query_b = &spectra[1].1;
+    let mut state = index.new_search_state();
+
+    let expected_a = top_k_expected(
+        index.search(query_a).expect("search should succeed"),
+        3,
+        0.0,
+    );
+    let actual_a = index
+        .search_top_k_with_state(query_a, 3, &mut state)
+        .expect("top-k search should succeed");
+    assert_results_close(actual_a, expected_a, "top-k query a");
+
+    let expected_b = top_k_expected(
+        index.search(query_b).expect("search should succeed"),
+        2,
+        0.0,
+    );
+    let actual_b = index
+        .search_top_k_with_state(query_b, 2, &mut state)
+        .expect("top-k state reuse should succeed");
+    assert_results_close(actual_b, expected_b, "top-k query b");
+
+    assert!(
+        index
+            .search_top_k(query_a, 0)
+            .expect("zero-k search should succeed")
+            .is_empty()
+    );
+}
+
+#[test]
+fn top_k_threshold_matches_filtered_direct_search() {
+    let spectra = reference_spectra();
+    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
+    let query = &spectra[0].1;
+
+    for threshold in [0.0_f64, 0.5_f64, 0.9_f64, 1.1_f64] {
+        let expected = top_k_expected(
+            index.search(query).expect("search should succeed"),
+            4,
+            threshold,
+        );
+        let actual = index
+            .search_top_k_threshold(query, 4, threshold)
+            .expect("thresholded top-k search should succeed");
+        assert_results_close(actual, expected, "thresholded top-k");
+    }
+
+    let expected = top_k_expected(index.search(query).expect("search should succeed"), 3, 0.9);
+    let mut search_state = index.new_search_state();
+    let mut top_k_state = TopKSearchState::new();
+    let mut streamed = Vec::new();
+    index
+        .for_each_top_k_threshold_with_state(
+            query,
+            3,
+            0.9,
+            &mut search_state,
+            &mut top_k_state,
+            |result| streamed.push(result),
+        )
+        .expect("streamed thresholded top-k should succeed");
+    assert_results_close(streamed, expected, "streamed thresholded top-k");
+
+    let error = index
+        .search_top_k_threshold(query, 4, f64::NAN)
+        .expect_err("non-finite threshold must be rejected");
+    assert_eq!(
+        error,
+        SimilarityComputationError::NonFiniteValue("score_threshold")
+    );
+}
+
+#[test]
 fn threshold_index_matches_filtered_direct_search() {
     let spectra = reference_spectra();
     let direct_index =
@@ -469,6 +569,74 @@ fn threshold_index_matches_filtered_direct_search() {
 }
 
 #[test]
+fn threshold_index_top_k_matches_thresholded_results_for_external_and_indexed_queries() {
+    let spectra = reference_spectra();
+    let direct_index =
+        FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("direct index build should succeed");
+    let threshold_index = FlashCosineThresholdIndex::new(
+        1.0_f64,
+        1.0_f64,
+        0.1_f64,
+        0.9_f64,
+        spectra.iter().map(|(_, s)| s),
+    )
+    .expect("threshold index build should succeed");
+
+    let query_id = 0_u32;
+    let query = &spectra[query_id as usize].1;
+    let expected_external = top_k_expected(
+        direct_index.search(query).expect("search should succeed"),
+        2,
+        threshold_index.score_threshold(),
+    );
+    let actual_external = threshold_index
+        .search_top_k(query, 2)
+        .expect("external threshold top-k should succeed");
+    assert_results_close(
+        actual_external,
+        expected_external,
+        "threshold top-k external query",
+    );
+
+    let mut emitted = Vec::new();
+    let mut state = threshold_index.new_search_state();
+    threshold_index
+        .for_each_indexed_with_state(query_id, &mut state, |hit| emitted.push(hit))
+        .expect("indexed threshold search should succeed");
+    let expected_indexed = top_k_expected(emitted, 2, threshold_index.score_threshold());
+
+    let actual_indexed = threshold_index
+        .search_top_k_indexed_with_state(query_id, 2, &mut state)
+        .expect("indexed threshold top-k should succeed");
+    assert_results_close(
+        actual_indexed,
+        expected_indexed.clone(),
+        "threshold top-k indexed query",
+    );
+
+    let mut top_k_state = TopKSearchState::new();
+    let mut streamed_indexed = Vec::new();
+    threshold_index
+        .for_each_top_k_indexed_with_state(query_id, 2, &mut state, &mut top_k_state, |result| {
+            streamed_indexed.push(result)
+        })
+        .expect("streamed indexed threshold top-k should succeed");
+    assert_results_close(
+        streamed_indexed,
+        expected_indexed,
+        "streamed threshold top-k indexed query",
+    );
+
+    assert!(
+        threshold_index
+            .search_top_k_indexed_with_state(query_id, 0, &mut state)
+            .expect("zero-k indexed top-k should succeed")
+            .is_empty()
+    );
+}
+
+#[test]
 fn threshold_index_validates_threshold_and_query_id() {
     let spectra = reference_spectra();
     let nan_threshold = FlashCosineThresholdIndex::new(
@@ -506,6 +674,14 @@ fn threshold_index_validates_threshold_and_query_id() {
         .for_each_indexed_with_state(spectra.len() as u32, &mut state, |_| {})
         .expect_err("out-of-bounds query id should fail");
     assert_eq!(out_of_bounds, SimilarityComputationError::IndexOverflow);
+
+    let top_k_out_of_bounds = threshold_index
+        .search_top_k_indexed_with_state(spectra.len() as u32, 1, &mut state)
+        .expect_err("out-of-bounds top-k query id should fail");
+    assert_eq!(
+        top_k_out_of_bounds,
+        SimilarityComputationError::IndexOverflow
+    );
 }
 
 #[test]

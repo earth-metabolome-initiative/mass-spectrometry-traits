@@ -7,7 +7,7 @@ use mass_spectrometry::prelude::{
     CocaineSpectrum, FlashEntropyIndex, FlashEntropyIndexError, FlashSearchResult, GenericSpectrum,
     GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearEntropy, PhenylalanineSpectrum,
     SalicinSpectrum, ScalarSimilarity, SimilarityComputationError, SimilarityConfigError, Spectrum,
-    SpectrumAlloc, SpectrumMut,
+    SpectrumAlloc, SpectrumMut, TopKSearchState,
 };
 
 fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
@@ -93,6 +93,18 @@ impl Spectrum for RawSpectrum {
 
 fn sorted_results(mut results: Vec<FlashSearchResult>) -> Vec<FlashSearchResult> {
     results.sort_by_key(|result| result.spectrum_id);
+    results
+}
+
+fn top_k_expected(mut results: Vec<FlashSearchResult>, k: usize) -> Vec<FlashSearchResult> {
+    results.sort_by(|left, right| {
+        right
+            .score
+            .total_cmp(&left.score)
+            .then_with(|| right.n_matches.cmp(&left.n_matches))
+            .then_with(|| left.spectrum_id.cmp(&right.spectrum_id))
+    });
+    results.truncate(k);
     results
 }
 
@@ -385,6 +397,51 @@ fn search_with_state_matches_stateless_results_and_state_reuse_is_stable() {
 }
 
 #[test]
+fn top_k_matches_sorted_direct_search_and_reuses_state() {
+    let spectra = reference_spectra();
+    let index = FlashEntropyIndex::new(
+        0.0_f64,
+        1.0_f64,
+        0.1_f64,
+        true,
+        spectra.iter().map(|(_, s)| s),
+    )
+    .expect("index build should succeed");
+
+    let query_a = &spectra[0].1;
+    let query_b = &spectra[1].1;
+    let mut state = index.new_search_state();
+
+    let expected_a = top_k_expected(index.search(query_a).expect("search should succeed"), 3);
+    let actual_a = index
+        .search_top_k_with_state(query_a, 3, &mut state)
+        .expect("top-k search should succeed");
+    assert_eq!(actual_a, expected_a);
+
+    let mut top_k_state = TopKSearchState::new();
+    let mut streamed_a = Vec::new();
+    index
+        .for_each_top_k_with_state(query_a, 3, &mut state, &mut top_k_state, |result| {
+            streamed_a.push(result);
+        })
+        .expect("streamed top-k search should succeed");
+    assert_eq!(streamed_a, expected_a);
+
+    let expected_b = top_k_expected(index.search(query_b).expect("search should succeed"), 2);
+    let actual_b = index
+        .search_top_k_with_state(query_b, 2, &mut state)
+        .expect("top-k state reuse should succeed");
+    assert_eq!(actual_b, expected_b);
+
+    assert!(
+        index
+            .search_top_k(query_a, 0)
+            .expect("zero-k search should succeed")
+            .is_empty()
+    );
+}
+
+#[test]
 fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
     let library = [
         make_spectrum_f64(300.0, &[(100.0, 10.0), (200.0, 5.0)]),
@@ -558,4 +615,5 @@ fn rejects_non_well_separated_query() {
 
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
     assert!(index.search(&bad).is_err());
+    assert!(index.search_top_k(&bad, 0).is_err());
 }
