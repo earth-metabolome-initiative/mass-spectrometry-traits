@@ -70,6 +70,60 @@ fn sorted_peak_additions_keep_accessors_consistent() {
 }
 
 #[test]
+fn top_k_peaks_keeps_most_intense_peaks_in_mz_order() {
+    let spectrum = make_spectrum(
+        400.0,
+        &[
+            (50.0, 1.0),
+            (75.0, 9.0),
+            (100.0, 4.0),
+            (120.0, 9.0),
+            (150.0, 2.0),
+        ],
+    );
+
+    let top_three: GenericSpectrum = spectrum
+        .top_k_peaks(3)
+        .expect("top-k spectrum should build");
+    assert_eq!(top_three.precursor_mz(), spectrum.precursor_mz());
+    assert_eq!(
+        top_three.peaks().collect::<Vec<_>>(),
+        vec![(75.0, 9.0), (100.0, 4.0), (120.0, 9.0)]
+    );
+
+    let all: GenericSpectrum = spectrum
+        .top_k_peaks(usize::MAX)
+        .expect("oversized k should keep every peak");
+    assert_eq!(
+        all.peaks().collect::<Vec<_>>(),
+        spectrum.peaks().collect::<Vec<_>>()
+    );
+
+    let empty: GenericSpectrum = spectrum
+        .top_k_peaks(0)
+        .expect("zero k should return an empty spectrum");
+    assert_eq!(empty.precursor_mz(), spectrum.precursor_mz());
+    assert!(empty.is_empty());
+}
+
+#[test]
+fn top_k_peaks_breaks_intensity_ties_by_mz_and_preserves_precision() {
+    let mut spectrum: GenericSpectrum<f32> =
+        GenericSpectrum::try_with_capacity(250.0, 4).expect("f32 precursor should fit");
+    spectrum
+        .add_peaks([(50.0_f32, 5.0_f32), (75.0, 5.0), (100.0, 4.0), (125.0, 5.0)])
+        .expect("f32 peaks should fit");
+
+    let top_two: GenericSpectrum<f32> = spectrum
+        .top_k_peaks(2)
+        .expect("top-k f32 spectrum should build");
+    assert_eq!(
+        top_two.peaks().collect::<Vec<_>>(),
+        vec![(50.0_f32, 5.0_f32), (75.0, 5.0)]
+    );
+}
+
+#[test]
 fn generic_spectrum_can_store_f32_precision() {
     let mut spectrum: GenericSpectrum<f32> =
         GenericSpectrum::try_with_capacity(250.125, 2).expect("f32 precursor should fit");

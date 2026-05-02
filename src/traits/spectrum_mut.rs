@@ -125,6 +125,63 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
     /// `precursor_mz`, returning an error when the value is invalid.
     fn with_capacity(precursor_mz: f64, capacity: usize) -> Result<Self, Self::MutationError>;
 
+    /// Returns a new spectrum containing only the `k` most intense peaks.
+    ///
+    /// The selected peaks are stored in m/z order, preserving the normal
+    /// [`Spectrum`] ordering invariant. When more peaks have the same
+    /// intensity than can be kept, the lowest m/z values are retained first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::MutationError`] if constructing the new spectrum or
+    /// adding one of the retained peaks fails.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mass_spectrometry::prelude::*;
+    ///
+    /// let mut spectrum: GenericSpectrum = GenericSpectrum::try_with_capacity(250.0, 4).unwrap();
+    /// spectrum
+    ///     .add_peaks([(50.0, 1.0), (75.0, 5.0), (100.0, 3.0), (125.0, 5.0)])
+    ///     .unwrap();
+    ///
+    /// let top: GenericSpectrum = spectrum.top_k_peaks(2).unwrap();
+    /// assert_eq!(top.peaks().collect::<Vec<_>>(), vec![(75.0, 5.0), (125.0, 5.0)]);
+    /// ```
+    fn top_k_peaks(&self, k: usize) -> Result<Self, Self::MutationError> {
+        let mut peaks: Vec<(usize, Self::Precision, Self::Precision)> = self
+            .peaks()
+            .enumerate()
+            .map(|(index, (mz, intensity))| (index, mz, intensity))
+            .collect();
+
+        if k == 0 {
+            peaks.clear();
+        } else if k < peaks.len() {
+            peaks.sort_unstable_by(|left, right| {
+                right
+                    .2
+                    .to_f64()
+                    .total_cmp(&left.2.to_f64())
+                    .then_with(|| left.1.to_f64().total_cmp(&right.1.to_f64()))
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+            peaks.truncate(k);
+        }
+
+        peaks.sort_unstable_by(|left, right| {
+            left.1
+                .to_f64()
+                .total_cmp(&right.1.to_f64())
+                .then_with(|| left.0.cmp(&right.0))
+        });
+
+        let mut spectrum = Self::with_capacity(self.precursor_mz().to_f64(), peaks.len())?;
+        spectrum.add_peaks(peaks.into_iter().map(|(_, mz, intensity)| (mz, intensity)))?;
+        Ok(spectrum)
+    }
+
     /// Generate a random spectrum from a parameterized configuration.
     ///
     /// Generation is deterministic for a fixed `seed` and `config`.
