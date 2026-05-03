@@ -56,12 +56,13 @@ fn spectra_index_trait_covers_all_flash_index_variants() {
     let spectra = spectra();
     let query = &spectra[0];
 
-    let cosine = FlashCosineIndex::new(0.0, 1.0, 0.1, &spectra).unwrap();
+    let cosine = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap();
     assert_trait_surface(&cosine, query);
 
-    let threshold_cosine = FlashCosineThresholdIndex::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
+    let threshold_cosine =
+        FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
     assert_trait_surface(&threshold_cosine, query);
 
-    let entropy = FlashEntropyIndex::weighted(0.1, &spectra).unwrap();
+    let entropy = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
     assert_trait_surface(&entropy, query);
 }

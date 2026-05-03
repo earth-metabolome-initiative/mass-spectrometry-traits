@@ -12,12 +12,18 @@ use bitvec::prelude::*;
 use rayon::prelude::*;
 
 use super::similarity_errors::SimilarityComputationError;
+use crate::traits::SpectrumFloat;
 
 const PREFIX_PRUNING_MIN_THRESHOLD: f64 = 0.85;
 
-pub(crate) type PreparedFlashSpectrum = (f64, Vec<f64>, Vec<f64>);
-pub(crate) type PreparedFlashSpectra = Vec<PreparedFlashSpectrum>;
-type PrefixEntries = Vec<(f64, u32)>;
+pub(crate) struct PreparedFlashSpectrum<P: SpectrumFloat> {
+    pub(crate) precursor_mz: P,
+    pub(crate) mz: Vec<P>,
+    pub(crate) data: Vec<P>,
+}
+
+pub(crate) type PreparedFlashSpectra<P> = Vec<PreparedFlashSpectrum<P>>;
+type PrefixEntries<P> = Vec<(P, u32)>;
 
 #[derive(Clone, Copy)]
 enum SortBackend {
@@ -26,13 +32,41 @@ enum SortBackend {
     Parallel,
 }
 
-fn compare_indexed_values(values: &[f64], left: u32, right: u32) -> Ordering {
+pub(crate) fn convert_flash_value<P: SpectrumFloat>(
+    value: f64,
+    name: &'static str,
+) -> Result<P, SimilarityComputationError> {
+    if !value.is_finite() {
+        return Err(SimilarityComputationError::NonFiniteValue(name));
+    }
+    P::from_f64(value).ok_or(SimilarityComputationError::NonFiniteValue(name))
+}
+
+pub(crate) fn convert_flash_values<P: SpectrumFloat>(
+    values: impl IntoIterator<Item = f64>,
+    name: &'static str,
+) -> Result<Vec<P>, SimilarityComputationError> {
+    values
+        .into_iter()
+        .map(|value| convert_flash_value(value, name))
+        .collect()
+}
+
+pub(crate) fn flash_values_to_f64<P: SpectrumFloat>(values: &[P]) -> Vec<f64> {
+    values.iter().map(|value| value.to_f64()).collect()
+}
+
+fn compare_indexed_values<P: SpectrumFloat>(values: &[P], left: u32, right: u32) -> Ordering {
     values[left as usize]
-        .total_cmp(&values[right as usize])
+        .to_f64()
+        .total_cmp(&values[right as usize].to_f64())
         .then_with(|| left.cmp(&right))
 }
 
-fn sort_permutation_by_values(perm: &mut [u32], values: &[f64], backend: SortBackend) {
+fn sort_permutation_by_values<P>(perm: &mut [u32], values: &[P], backend: SortBackend)
+where
+    P: SpectrumFloat + Sync,
+{
     match backend {
         SortBackend::Sequential => {
             perm.sort_unstable_by(|&left, &right| compare_indexed_values(values, left, right));
@@ -44,10 +78,11 @@ fn sort_permutation_by_values(perm: &mut [u32], values: &[f64], backend: SortBac
     }
 }
 
-fn sort_prefix_entries(prefix_entries: &mut [(f64, u32)]) {
+fn sort_prefix_entries<P: SpectrumFloat>(prefix_entries: &mut [(P, u32)]) {
     prefix_entries.sort_unstable_by(|left, right| {
         left.0
-            .total_cmp(&right.0)
+            .to_f64()
+            .total_cmp(&right.0.to_f64())
             .then_with(|| left.1.cmp(&right.1))
     });
 }
@@ -121,7 +156,7 @@ pub(crate) trait FlashKernel {
     type SpectrumMeta: Copy + Default;
 
     /// Compute per-spectrum metadata from all prepared peak data values.
-    fn spectrum_meta(peak_data: &[f64]) -> Self::SpectrumMeta;
+    fn spectrum_meta<P: SpectrumFloat>(peak_data: &[P]) -> Self::SpectrumMeta;
 
     /// Score contribution of a single matched pair.
     fn pair_score(query: f64, library: f64) -> f64;
@@ -181,7 +216,7 @@ pub(crate) fn compare_search_results_by_rank(
 /// right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
 ///
 /// let spectra = vec![left, right];
-/// let index = FlashCosineIndex::new(0.0, 1.0, 0.1, &spectra).unwrap();
+/// let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap();
 /// let mut search_state = index.new_search_state();
 /// let mut top_k_state = TopKSearchState::new();
 /// let mut hits = Vec::new();
@@ -295,9 +330,9 @@ impl<'a> TopKSearchResults<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct DirectThresholdSearch<'a, K: FlashKernel> {
-    pub(crate) query_mz: &'a [f64],
-    pub(crate) query_data: &'a [f64],
+pub(crate) struct DirectThresholdSearch<'a, K: FlashKernel, Q: SpectrumFloat> {
+    pub(crate) query_mz: &'a [Q],
+    pub(crate) query_data: &'a [Q],
     pub(crate) query_meta: &'a K::SpectrumMeta,
     pub(crate) score_threshold: f64,
 }
@@ -310,28 +345,28 @@ pub(crate) struct DirectThresholdSearch<'a, K: FlashKernel> {
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(rec))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
-pub(crate) struct ThresholdPrefixPostings {
-    prefix_mz: Vec<f64>,
+pub(crate) struct ThresholdPrefixPostings<P: SpectrumFloat = f64> {
+    prefix_mz: Vec<P>,
     prefix_spec_id: Vec<u32>,
     spectrum_prefix_offsets: Vec<u32>,
-    spectrum_prefix_mz: Vec<f64>,
+    spectrum_prefix_mz: Vec<P>,
 }
 
-impl ThresholdPrefixPostings {
+impl<P: SpectrumFloat> ThresholdPrefixPostings<P> {
     pub(crate) fn build(
-        spectra: &[PreparedFlashSpectrum],
-        mut prefix_indices: impl FnMut(&[f64]) -> Vec<usize>,
+        spectra: &[PreparedFlashSpectrum<P>],
+        mut prefix_indices: impl FnMut(&[P]) -> Vec<usize>,
     ) -> Result<Self, SimilarityComputationError> {
-        let mut prefix_entries = PrefixEntries::new();
+        let mut prefix_entries = PrefixEntries::<P>::new();
         let mut spectrum_prefix_offsets = Vec::with_capacity(spectra.len() + 1);
         let mut spectrum_prefix_mz = Vec::new();
         spectrum_prefix_offsets.push(0);
 
-        for (spec_id, (_, mz_vals, data_vals)) in spectra.iter().enumerate() {
+        for (spec_id, spectrum) in spectra.iter().enumerate() {
             let spec_id_u32 =
                 u32::try_from(spec_id).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-            for peak_index in prefix_indices(data_vals) {
-                let mz = mz_vals[peak_index];
+            for peak_index in prefix_indices(&spectrum.data) {
+                let mz = spectrum.mz[peak_index];
                 prefix_entries.push((mz, spec_id_u32));
                 spectrum_prefix_mz.push(mz);
             }
@@ -362,22 +397,29 @@ impl ThresholdPrefixPostings {
         self.prefix_mz.len()
     }
 
-    pub(crate) fn spectrum_prefix_mz(&self, spec_id: u32) -> &[f64] {
+    pub(crate) fn spectrum_prefix_mz(&self, spec_id: u32) -> &[P] {
         let prefix_start = self.spectrum_prefix_offsets[spec_id as usize] as usize;
         let prefix_end = self.spectrum_prefix_offsets[spec_id as usize + 1] as usize;
         &self.spectrum_prefix_mz[prefix_start..prefix_end]
     }
 
-    fn for_each_spectrum_in_window(&self, mz: f64, tolerance: f64, mut emit: impl FnMut(u32)) {
+    fn for_each_spectrum_in_window<Q: SpectrumFloat>(
+        &self,
+        mz: Q,
+        tolerance: f64,
+        mut emit: impl FnMut(u32),
+    ) {
+        let mz = mz.to_f64();
         let lo = mz - tolerance;
         let hi = mz + tolerance;
-        let start = self.prefix_mz.partition_point(|&value| value < lo);
+        let start = self.prefix_mz.partition_point(|&value| value.to_f64() < lo);
 
         for idx in start..self.prefix_mz.len() {
-            if self.prefix_mz[idx] > hi {
+            let value = self.prefix_mz[idx].to_f64();
+            if value > hi {
                 break;
             }
-            if self.prefix_mz[idx] < mz - tolerance || self.prefix_mz[idx] > mz + tolerance {
+            if value < mz - tolerance || value > mz + tolerance {
                 continue;
             }
 
@@ -388,8 +430,8 @@ impl ThresholdPrefixPostings {
 
 /// Prefix indices for score bounds that can be represented as an L2 suffix
 /// norm over per-peak weights.
-pub(crate) fn l2_threshold_prefix_indices(
-    peak_weights: &[f64],
+pub(crate) fn l2_threshold_prefix_indices<P: SpectrumFloat>(
+    peak_weights: &[P],
     score_threshold: f64,
 ) -> Vec<usize> {
     if peak_weights.is_empty() || score_threshold > 1.0 {
@@ -399,8 +441,9 @@ pub(crate) fn l2_threshold_prefix_indices(
     let mut order: Vec<usize> = (0..peak_weights.len()).collect();
     order.sort_unstable_by(|&left, &right| {
         peak_weights[right]
+            .to_f64()
             .abs()
-            .total_cmp(&peak_weights[left].abs())
+            .total_cmp(&peak_weights[left].to_f64().abs())
             .then_with(|| left.cmp(&right))
     });
 
@@ -410,7 +453,10 @@ pub(crate) fn l2_threshold_prefix_indices(
 
     let norm = peak_weights
         .iter()
-        .map(|&value| value * value)
+        .map(|&value| {
+            let value = value.to_f64();
+            value * value
+        })
         .sum::<f64>()
         .sqrt();
     if norm == 0.0 {
@@ -420,8 +466,8 @@ pub(crate) fn l2_threshold_prefix_indices(
     let mut suffix_norm = alloc::vec![0.0_f64; order.len() + 1];
     for order_index in (0..order.len()).rev() {
         let peak_index = order[order_index];
-        suffix_norm[order_index] =
-            suffix_norm[order_index + 1] + peak_weights[peak_index] * peak_weights[peak_index];
+        let peak_weight = peak_weights[peak_index].to_f64();
+        suffix_norm[order_index] = suffix_norm[order_index + 1] + peak_weight * peak_weight;
     }
     for value in &mut suffix_norm {
         *value = value.sqrt();
@@ -572,13 +618,40 @@ impl SearchState {
         self.direct_scores.resize(n_products, 0.0);
     }
 
-    pub(crate) fn prepare_threshold_order(&mut self, query_data: &[f64]) {
+    pub(crate) fn prepare_threshold_order<P: SpectrumFloat>(&mut self, query_data: &[P]) {
         self.query_order.clear();
         self.query_order.extend(0..query_data.len());
         self.query_order.sort_unstable_by(|&left, &right| {
             query_data[right]
+                .to_f64()
                 .abs()
-                .total_cmp(&query_data[left].abs())
+                .total_cmp(&query_data[left].to_f64().abs())
+                .then_with(|| left.cmp(&right))
+        });
+
+        self.query_suffix_bound.clear();
+        self.query_suffix_bound.resize(query_data.len() + 1, 0.0);
+        for order_index in (0..self.query_order.len()).rev() {
+            let query_index = self.query_order[order_index];
+            let query_value = query_data[query_index].to_f64();
+            self.query_suffix_bound[order_index] =
+                self.query_suffix_bound[order_index + 1] + query_value * query_value;
+        }
+        for value in &mut self.query_suffix_bound {
+            *value = value.sqrt();
+        }
+    }
+
+    pub(crate) fn prepare_additive_threshold_order<P: SpectrumFloat>(
+        &mut self,
+        query_data: &[P],
+        mut upper_bound: impl FnMut(f64) -> f64,
+    ) {
+        self.query_order.clear();
+        self.query_order.extend(0..query_data.len());
+        self.query_order.sort_unstable_by(|&left, &right| {
+            upper_bound(query_data[right].to_f64())
+                .total_cmp(&upper_bound(query_data[left].to_f64()))
                 .then_with(|| left.cmp(&right))
         });
 
@@ -587,32 +660,7 @@ impl SearchState {
         for order_index in (0..self.query_order.len()).rev() {
             let query_index = self.query_order[order_index];
             self.query_suffix_bound[order_index] = self.query_suffix_bound[order_index + 1]
-                + query_data[query_index] * query_data[query_index];
-        }
-        for value in &mut self.query_suffix_bound {
-            *value = value.sqrt();
-        }
-    }
-
-    pub(crate) fn prepare_additive_threshold_order(
-        &mut self,
-        query_data: &[f64],
-        mut upper_bound: impl FnMut(f64) -> f64,
-    ) {
-        self.query_order.clear();
-        self.query_order.extend(0..query_data.len());
-        self.query_order.sort_unstable_by(|&left, &right| {
-            upper_bound(query_data[right])
-                .total_cmp(&upper_bound(query_data[left]))
-                .then_with(|| left.cmp(&right))
-        });
-
-        self.query_suffix_bound.clear();
-        self.query_suffix_bound.resize(query_data.len() + 1, 0.0);
-        for order_index in (0..self.query_order.len()).rev() {
-            let query_index = self.query_order[order_index];
-            self.query_suffix_bound[order_index] =
-                self.query_suffix_bound[order_index + 1] + upper_bound(query_data[query_index]);
+                + upper_bound(query_data[query_index].to_f64());
         }
     }
 
@@ -697,21 +745,21 @@ impl SearchState {
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(rec))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
-pub(crate) struct FlashIndex<K: FlashKernel> {
+pub(crate) struct FlashIndex<K: FlashKernel, P: SpectrumFloat = f64> {
     // Product ion index (sorted by m/z).
-    pub(crate) product_mz: Vec<f64>,
+    pub(crate) product_mz: Vec<P>,
     product_spec_id: Vec<u32>,
-    pub(crate) product_data: Vec<f64>,
+    pub(crate) product_data: Vec<P>,
 
     // Product peaks in per-spectrum order for exact candidate rescoring.
     spectrum_offsets: Vec<u32>,
-    spectrum_mz: Vec<f64>,
-    spectrum_data: Vec<f64>,
+    spectrum_mz: Vec<P>,
+    spectrum_data: Vec<P>,
 
     // Neutral loss index (sorted by neutral loss value).
-    nl_value: Vec<f64>,
+    nl_value: Vec<P>,
     nl_spec_id: Vec<u32>,
-    nl_data: Vec<f64>,
+    nl_data: Vec<P>,
     /// Maps neutral-loss entry → product entry for anti-double-counting.
     nl_to_product: Vec<u32>,
 
@@ -723,7 +771,7 @@ pub(crate) struct FlashIndex<K: FlashKernel> {
     pub(crate) tolerance: f64,
 }
 
-impl<K: FlashKernel> FlashIndex<K> {
+impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
     /// Build the index from prepared spectrum data.
     ///
     /// Each element of `spectra` is `(precursor_mz, mz_values, peak_data_values)`.
@@ -736,7 +784,7 @@ impl<K: FlashKernel> FlashIndex<K> {
     /// spectra or total peaks exceeds `u32::MAX`.
     pub(crate) fn build(
         tolerance: f64,
-        spectra: PreparedFlashSpectra,
+        spectra: PreparedFlashSpectra<P>,
     ) -> Result<Self, SimilarityComputationError> {
         Self::build_with_sort(tolerance, spectra, SortBackend::Sequential)
     }
@@ -745,19 +793,19 @@ impl<K: FlashKernel> FlashIndex<K> {
     #[cfg(feature = "rayon")]
     pub(crate) fn build_parallel(
         tolerance: f64,
-        spectra: PreparedFlashSpectra,
+        spectra: PreparedFlashSpectra<P>,
     ) -> Result<Self, SimilarityComputationError> {
         Self::build_with_sort(tolerance, spectra, SortBackend::Parallel)
     }
 
     fn build_with_sort(
         tolerance: f64,
-        spectra: PreparedFlashSpectra,
+        spectra: PreparedFlashSpectra<P>,
         sort_backend: SortBackend,
     ) -> Result<Self, SimilarityComputationError> {
         let n_spectra: u32 =
             u32::try_from(spectra.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let total_peaks: usize = spectra.iter().map(|(_, mz, _)| mz.len()).sum();
+        let total_peaks: usize = spectra.iter().map(|spectrum| spectrum.mz.len()).sum();
         let _: u32 =
             u32::try_from(total_peaks).map_err(|_| SimilarityComputationError::IndexOverflow)?;
 
@@ -766,24 +814,27 @@ impl<K: FlashKernel> FlashIndex<K> {
         // Collect sort-key indices. We sort a permutation array by m/z rather
         // than sorting the full (u32, PeakEntry) tuples to reduce sort
         // bandwidth.
-        let mut peak_mz_flat: Vec<f64> = Vec::with_capacity(total_peaks);
+        let mut peak_mz_flat: Vec<P> = Vec::with_capacity(total_peaks);
         let mut peak_spec_id_flat: Vec<u32> = Vec::with_capacity(total_peaks);
-        let mut peak_data_flat: Vec<f64> = Vec::with_capacity(total_peaks);
-        let mut peak_nl_flat: Vec<f64> = Vec::with_capacity(total_peaks);
+        let mut peak_data_flat: Vec<P> = Vec::with_capacity(total_peaks);
+        let mut peak_nl_flat: Vec<P> = Vec::with_capacity(total_peaks);
         let mut spectrum_offsets: Vec<u32> = Vec::with_capacity(spectra.len() + 1);
-        let mut spectrum_mz: Vec<f64> = Vec::with_capacity(total_peaks);
-        let mut spectrum_data: Vec<f64> = Vec::with_capacity(total_peaks);
+        let mut spectrum_mz: Vec<P> = Vec::with_capacity(total_peaks);
+        let mut spectrum_data: Vec<P> = Vec::with_capacity(total_peaks);
 
-        for (spec_id, (prec_mz, mz_vals, data_vals)) in spectra.iter().enumerate() {
+        for (spec_id, spectrum) in spectra.iter().enumerate() {
             let spec_id = spec_id as u32; // safe: checked above
-            spectrum_meta_vec.push(K::spectrum_meta(data_vals));
+            spectrum_meta_vec.push(K::spectrum_meta(&spectrum.data));
             spectrum_offsets.push(spectrum_mz.len() as u32);
 
-            for (&mz, &data) in mz_vals.iter().zip(data_vals.iter()) {
+            for (&mz, &data) in spectrum.mz.iter().zip(spectrum.data.iter()) {
                 peak_mz_flat.push(mz);
                 peak_spec_id_flat.push(spec_id);
                 peak_data_flat.push(data);
-                peak_nl_flat.push(*prec_mz - mz);
+                peak_nl_flat.push(convert_flash_value(
+                    spectrum.precursor_mz.to_f64() - mz.to_f64(),
+                    "neutral_loss",
+                )?);
                 spectrum_mz.push(mz);
                 spectrum_data.push(data);
             }
@@ -851,7 +902,7 @@ impl<K: FlashKernel> FlashIndex<K> {
         SearchState::new(self.n_spectra as usize, self.product_mz.len())
     }
 
-    pub(crate) fn spectrum_slices(&self, spec_id: u32) -> (&[f64], &[f64]) {
+    pub(crate) fn spectrum_slices(&self, spec_id: u32) -> (&[P], &[P]) {
         let offset_start = self.spectrum_offsets[spec_id as usize] as usize;
         let offset_end = self.spectrum_offsets[spec_id as usize + 1] as usize;
         (
@@ -864,18 +915,22 @@ impl<K: FlashKernel> FlashIndex<K> {
         &self.spectrum_meta[spec_id as usize]
     }
 
-    pub(crate) fn for_each_product_spectrum_in_window(&self, mz: f64, mut emit: impl FnMut(u32)) {
+    pub(crate) fn for_each_product_spectrum_in_window<Q: SpectrumFloat>(
+        &self,
+        mz: Q,
+        mut emit: impl FnMut(u32),
+    ) {
+        let mz = mz.to_f64();
         let lo = mz - self.tolerance;
         let hi = mz + self.tolerance;
-        let start = self.product_mz.partition_point(|&v| v < lo);
+        let start = self.product_mz.partition_point(|&v| v.to_f64() < lo);
 
         for idx in start..self.product_mz.len() {
-            if self.product_mz[idx] > hi {
+            let product_mz = self.product_mz[idx].to_f64();
+            if product_mz > hi {
                 break;
             }
-            if self.product_mz[idx] < mz - self.tolerance
-                || self.product_mz[idx] > mz + self.tolerance
-            {
+            if product_mz < mz - self.tolerance || product_mz > mz + self.tolerance {
                 continue;
             }
             emit(self.product_spec_id[idx]);
@@ -884,7 +939,7 @@ impl<K: FlashKernel> FlashIndex<K> {
 
     pub(crate) fn mark_candidates_from_query_prefix_indices(
         &self,
-        query_mz: &[f64],
+        query_mz: &[impl SpectrumFloat],
         query_prefix_indices: &[usize],
         state: &mut SearchState,
     ) {
@@ -898,7 +953,7 @@ impl<K: FlashKernel> FlashIndex<K> {
 
     pub(crate) fn mark_candidates_from_query_prefix_mz(
         &self,
-        query_prefix_mz: &[f64],
+        query_prefix_mz: &[impl SpectrumFloat],
         state: &mut SearchState,
     ) {
         state.ensure_candidate_capacity(self.n_spectra as usize);
@@ -911,8 +966,8 @@ impl<K: FlashKernel> FlashIndex<K> {
 
     pub(crate) fn intersect_candidates_with_library_prefixes(
         &self,
-        query_mz: &[f64],
-        library_prefixes: &ThresholdPrefixPostings,
+        query_mz: &[impl SpectrumFloat],
+        library_prefixes: &ThresholdPrefixPostings<P>,
         state: &mut SearchState,
     ) {
         state.ensure_secondary_candidate_capacity(self.n_spectra as usize);
@@ -927,10 +982,10 @@ impl<K: FlashKernel> FlashIndex<K> {
 
     /// Direct (unshifted) search: for each query peak, binary-search the
     /// product index and accumulate scores.
-    pub(crate) fn search_direct(
+    pub(crate) fn search_direct<Q: SpectrumFloat>(
         &self,
-        query_mz: &[f64],
-        query_data: &[f64],
+        query_mz: &[Q],
+        query_data: &[Q],
         query_meta: &K::SpectrumMeta,
     ) -> Vec<FlashSearchResult> {
         let mut state = self.new_search_state();
@@ -939,10 +994,10 @@ impl<K: FlashKernel> FlashIndex<K> {
 
     /// Direct search using a caller-provided [`SearchState`] to avoid
     /// per-query allocation.
-    pub(crate) fn search_direct_with_state(
+    pub(crate) fn search_direct_with_state<Q: SpectrumFloat>(
         &self,
-        query_mz: &[f64],
-        query_data: &[f64],
+        query_mz: &[Q],
+        query_data: &[Q],
         query_meta: &K::SpectrumMeta,
         state: &mut SearchState,
     ) -> Vec<FlashSearchResult> {
@@ -953,10 +1008,10 @@ impl<K: FlashKernel> FlashIndex<K> {
         results
     }
 
-    pub(crate) fn for_each_direct_with_state<Emit>(
+    pub(crate) fn for_each_direct_with_state<Q: SpectrumFloat, Emit>(
         &self,
-        query_mz: &[f64],
-        query_data: &[f64],
+        query_mz: &[Q],
+        query_data: &[Q],
         query_meta: &K::SpectrumMeta,
         state: &mut SearchState,
         mut emit: Emit,
@@ -971,25 +1026,26 @@ impl<K: FlashKernel> FlashIndex<K> {
         let acc = &mut state.acc;
 
         for (q_idx, &qmz) in query_mz.iter().enumerate() {
+            let qmz = qmz.to_f64();
             let lo = qmz - self.tolerance;
             let hi = qmz + self.tolerance;
 
             // Binary search for the start of the tolerance window.
-            let start = self.product_mz.partition_point(|&v| v < lo);
+            let start = self.product_mz.partition_point(|&v| v.to_f64() < lo);
 
             for idx in start..self.product_mz.len() {
-                if self.product_mz[idx] > hi {
+                let product_mz = self.product_mz[idx].to_f64();
+                if product_mz > hi {
                     break;
                 }
                 // Guard against FP inconsistency between window arithmetic
                 // (qmz ± tol) and the canonical |diff| ≤ tol check used by
                 // the linear oracle.
-                if self.product_mz[idx] < qmz - self.tolerance
-                    || self.product_mz[idx] > qmz + self.tolerance
-                {
+                if product_mz < qmz - self.tolerance || product_mz > qmz + self.tolerance {
                     continue;
                 }
-                let score = K::pair_score(query_data[q_idx], self.product_data[idx]);
+                let score =
+                    K::pair_score(query_data[q_idx].to_f64(), self.product_data[idx].to_f64());
                 acc.accumulate(self.product_spec_id[idx], score);
             }
         }
@@ -1011,10 +1067,10 @@ impl<K: FlashKernel> FlashIndex<K> {
         });
     }
 
-    pub(crate) fn direct_score_for_spectrum(
+    pub(crate) fn direct_score_for_spectrum<Q: SpectrumFloat>(
         &self,
-        query_mz: &[f64],
-        query_data: &[f64],
+        query_mz: &[Q],
+        query_data: &[Q],
         spec_id: u32,
     ) -> (f64, usize) {
         let offset_start = self.spectrum_offsets[spec_id as usize] as usize;
@@ -1027,16 +1083,20 @@ impl<K: FlashKernel> FlashIndex<K> {
         let mut library_index = 0usize;
 
         for (query_index, &qmz) in query_mz.iter().enumerate() {
+            let qmz = qmz.to_f64();
             while library_index < library_mz.len()
-                && library_mz[library_index] < qmz - self.tolerance
+                && library_mz[library_index].to_f64() < qmz - self.tolerance
             {
                 library_index += 1;
             }
             if library_index < library_mz.len()
-                && library_mz[library_index] >= qmz - self.tolerance
-                && library_mz[library_index] <= qmz + self.tolerance
+                && library_mz[library_index].to_f64() >= qmz - self.tolerance
+                && library_mz[library_index].to_f64() <= qmz + self.tolerance
             {
-                let score = K::pair_score(query_data[query_index], library_data[library_index]);
+                let score = K::pair_score(
+                    query_data[query_index].to_f64(),
+                    library_data[library_index].to_f64(),
+                );
                 if score != 0.0 {
                     raw += score;
                     n_matches += 1;
@@ -1048,14 +1108,15 @@ impl<K: FlashKernel> FlashIndex<K> {
         (raw, n_matches)
     }
 
-    pub(crate) fn emit_exact_primary_candidates<Emit, TargetRaw, LibraryBound>(
+    pub(crate) fn emit_exact_primary_candidates<Q, Emit, TargetRaw, LibraryBound>(
         &self,
-        search: DirectThresholdSearch<'_, K>,
+        search: DirectThresholdSearch<'_, K, Q>,
         state: &mut SearchState,
         emit: &mut Emit,
         target_raw_score: &mut TargetRaw,
         library_bound: &mut LibraryBound,
     ) where
+        Q: SpectrumFloat,
         Emit: FnMut(FlashSearchResult),
         TargetRaw: FnMut(&K::SpectrumMeta) -> f64,
         LibraryBound: FnMut(&K::SpectrumMeta) -> f64,
@@ -1073,14 +1134,15 @@ impl<K: FlashKernel> FlashIndex<K> {
         state.reset_candidates();
     }
 
-    pub(crate) fn emit_exact_secondary_candidates<Emit, TargetRaw, LibraryBound>(
+    pub(crate) fn emit_exact_secondary_candidates<Q, Emit, TargetRaw, LibraryBound>(
         &self,
-        search: DirectThresholdSearch<'_, K>,
+        search: DirectThresholdSearch<'_, K, Q>,
         state: &mut SearchState,
         emit: &mut Emit,
         target_raw_score: &mut TargetRaw,
         library_bound: &mut LibraryBound,
     ) where
+        Q: SpectrumFloat,
         Emit: FnMut(FlashSearchResult),
         TargetRaw: FnMut(&K::SpectrumMeta) -> f64,
         LibraryBound: FnMut(&K::SpectrumMeta) -> f64,
@@ -1099,14 +1161,15 @@ impl<K: FlashKernel> FlashIndex<K> {
         state.reset_candidates();
     }
 
-    fn emit_exact_threshold_candidate<Emit, TargetRaw, LibraryBound>(
+    fn emit_exact_threshold_candidate<Q, Emit, TargetRaw, LibraryBound>(
         &self,
-        search: &DirectThresholdSearch<'_, K>,
+        search: &DirectThresholdSearch<'_, K, Q>,
         spec_id: u32,
         emit: &mut Emit,
         target_raw_score: &mut TargetRaw,
         library_bound: &mut LibraryBound,
     ) where
+        Q: SpectrumFloat,
         Emit: FnMut(FlashSearchResult),
         TargetRaw: FnMut(&K::SpectrumMeta) -> f64,
         LibraryBound: FnMut(&K::SpectrumMeta) -> f64,
@@ -1132,14 +1195,15 @@ impl<K: FlashKernel> FlashIndex<K> {
         }
     }
 
-    pub(crate) fn for_each_direct_threshold_with_state<Emit, TargetRaw, LibraryBound>(
+    pub(crate) fn for_each_direct_threshold_with_state<Q, Emit, TargetRaw, LibraryBound>(
         &self,
-        search: DirectThresholdSearch<'_, K>,
+        search: DirectThresholdSearch<'_, K, Q>,
         state: &mut SearchState,
         mut emit: Emit,
         mut target_raw_score: TargetRaw,
         mut library_bound: LibraryBound,
     ) where
+        Q: SpectrumFloat,
         Emit: FnMut(FlashSearchResult),
         TargetRaw: FnMut(&K::SpectrumMeta) -> f64,
         LibraryBound: FnMut(&K::SpectrumMeta) -> f64,
@@ -1209,10 +1273,10 @@ impl<K: FlashKernel> FlashIndex<K> {
     /// Phase 2: for each query peak, compute `neutral_loss = query_precursor -
     /// query_mz`, binary-search the neutral-loss index, skip entries whose
     /// product counterpart was already matched in phase 1, accumulate the rest.
-    pub(crate) fn search_modified(
+    pub(crate) fn search_modified<Q: SpectrumFloat>(
         &self,
-        query_mz: &[f64],
-        query_data: &[f64],
+        query_mz: &[Q],
+        query_data: &[Q],
         query_meta: &K::SpectrumMeta,
         query_precursor_mz: f64,
     ) -> Vec<FlashSearchResult> {
@@ -1228,10 +1292,10 @@ impl<K: FlashKernel> FlashIndex<K> {
 
     /// Modified search using a caller-provided [`SearchState`] to avoid
     /// per-query allocation.
-    pub(crate) fn search_modified_with_state(
+    pub(crate) fn search_modified_with_state<Q: SpectrumFloat>(
         &self,
-        query_mz: &[f64],
-        query_data: &[f64],
+        query_mz: &[Q],
+        query_data: &[Q],
         query_meta: &K::SpectrumMeta,
         query_precursor_mz: f64,
         state: &mut SearchState,
@@ -1256,22 +1320,23 @@ impl<K: FlashKernel> FlashIndex<K> {
 
         // Phase 1: direct matches.
         for (q_idx, &qmz) in query_mz.iter().enumerate() {
+            let qmz = qmz.to_f64();
             let lo = qmz - self.tolerance;
             let hi = qmz + self.tolerance;
-            let start = self.product_mz.partition_point(|&v| v < lo);
+            let start = self.product_mz.partition_point(|&v| v.to_f64() < lo);
 
             let mut idx = start;
             while idx < self.product_mz.len() {
-                if self.product_mz[idx] > hi {
+                let product_mz = self.product_mz[idx].to_f64();
+                if product_mz > hi {
                     break;
                 }
-                if self.product_mz[idx] < qmz - self.tolerance
-                    || self.product_mz[idx] > qmz + self.tolerance
-                {
+                if product_mz < qmz - self.tolerance || product_mz > qmz + self.tolerance {
                     idx += 1;
                     continue;
                 }
-                let score = K::pair_score(query_data[q_idx], self.product_data[idx]);
+                let score =
+                    K::pair_score(query_data[q_idx].to_f64(), self.product_data[idx].to_f64());
                 acc.accumulate(self.product_spec_id[idx], score);
                 matched_products.set(idx, true);
                 direct_scores[idx] = score;
@@ -1282,22 +1347,22 @@ impl<K: FlashKernel> FlashIndex<K> {
 
         // Phase 2: shifted (neutral loss) matches.
         for (q_idx, &qmz) in query_mz.iter().enumerate() {
-            let query_nl = query_precursor_mz - qmz;
+            let query_nl = query_precursor_mz - qmz.to_f64();
             let lo = query_nl - self.tolerance;
             let hi = query_nl + self.tolerance;
-            let start = self.nl_value.partition_point(|&v| v < lo);
+            let start = self.nl_value.partition_point(|&v| v.to_f64() < lo);
 
             for idx in start..self.nl_value.len() {
-                if self.nl_value[idx] > hi {
+                let nl_value = self.nl_value[idx].to_f64();
+                if nl_value > hi {
                     break;
                 }
-                if self.nl_value[idx] < query_nl - self.tolerance
-                    || self.nl_value[idx] > query_nl + self.tolerance
-                {
+                if nl_value < query_nl - self.tolerance || nl_value > query_nl + self.tolerance {
                     continue;
                 }
                 let product_idx = self.nl_to_product[idx] as usize;
-                let nl_score = K::pair_score(query_data[q_idx], self.nl_data[idx]);
+                let nl_score =
+                    K::pair_score(query_data[q_idx].to_f64(), self.nl_data[idx].to_f64());
                 if matched_products[product_idx] {
                     // Library peak already matched directly. Upgrade if NL
                     // gives a better pair score.
@@ -1349,7 +1414,7 @@ mod tests {
     impl FlashKernel for TestKernel {
         type SpectrumMeta = ();
 
-        fn spectrum_meta(_peak_data: &[f64]) -> Self::SpectrumMeta {}
+        fn spectrum_meta<P: SpectrumFloat>(_peak_data: &[P]) -> Self::SpectrumMeta {}
 
         fn pair_score(query: f64, library: f64) -> f64 {
             query * library
@@ -1365,8 +1430,16 @@ mod tests {
         }
     }
 
+    fn prepared(precursor_mz: f64, mz: Vec<f64>, data: Vec<f64>) -> PreparedFlashSpectrum<f64> {
+        PreparedFlashSpectrum {
+            precursor_mz,
+            mz,
+            data,
+        }
+    }
+
     fn build_test_index(
-        spectra: Vec<(f64, Vec<f64>, Vec<f64>)>,
+        spectra: PreparedFlashSpectra<f64>,
         tolerance: f64,
     ) -> FlashIndex<TestKernel> {
         FlashIndex::<TestKernel>::build(tolerance, spectra).expect("test index should build")
@@ -1410,8 +1483,8 @@ mod tests {
     fn build_sorts_products_and_lazily_initializes_search_state() {
         let index = build_test_index(
             vec![
-                (210.0, vec![110.0, 100.0], vec![4.0, 1.0]),
-                (205.0, vec![90.0], vec![2.0]),
+                prepared(210.0, vec![110.0, 100.0], vec![4.0, 1.0]),
+                prepared(205.0, vec![90.0], vec![2.0]),
             ],
             0.1,
         );
@@ -1453,8 +1526,8 @@ mod tests {
     #[test]
     fn threshold_prefix_postings_support_candidate_intersection() {
         let spectra = vec![
-            (200.0, vec![100.0, 150.0], vec![4.0, 1.0]),
-            (300.0, vec![100.05, 250.0], vec![1.0, 5.0]),
+            prepared(200.0, vec![100.0, 150.0], vec![4.0, 1.0]),
+            prepared(300.0, vec![100.05, 250.0], vec![1.0, 5.0]),
         ];
         let prefixes =
             ThresholdPrefixPostings::build(&spectra, |data| l2_threshold_prefix_indices(data, 0.9))
@@ -1483,19 +1556,24 @@ mod tests {
         let empty_index = build_test_index(vec![], 0.1);
         assert!(empty_index.search_direct(&[100.0], &[1.0], &()).is_empty());
 
-        let zero_score_index = build_test_index(vec![(200.0, vec![100.0], vec![0.0])], 0.1);
+        let zero_score_index = build_test_index(vec![prepared(200.0, vec![100.0], vec![0.0])], 0.1);
         let mut state = zero_score_index.new_search_state();
         let zero_results =
             zero_score_index.search_direct_with_state(&[100.0], &[5.0], &(), &mut state);
         assert!(zero_results.is_empty());
 
-        let repeated_empty = zero_score_index.search_direct_with_state(&[], &[], &(), &mut state);
+        let repeated_empty = zero_score_index.search_direct_with_state(
+            &[] as &[f64],
+            &[] as &[f64],
+            &(),
+            &mut state,
+        );
         assert!(repeated_empty.is_empty());
     }
 
     #[test]
     fn modified_search_upgrades_direct_matches_and_reuses_state_cleanly() {
-        let index = build_test_index(vec![(200.0, vec![100.0], vec![1.0])], 0.1);
+        let index = build_test_index(vec![prepared(200.0, vec![100.0], vec![1.0])], 0.1);
         let mut state = index.new_search_state();
 
         let upgraded =

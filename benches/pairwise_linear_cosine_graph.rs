@@ -407,8 +407,9 @@ fn bench_pairwise_linear_cosine_graph(c: &mut Criterion) {
         let prepared = prepare_spectra(&spectra);
         let logical_pairs = upper_triangle_pairs(node_count);
 
-        let index = FlashCosineIndex::new(MZ_POWER, INTENSITY_POWER, MZ_TOLERANCE, spectra.iter())
-            .expect("benchmark spectra should build a flash cosine index");
+        let index =
+            FlashCosineIndex::<f64>::new(MZ_POWER, INTENSITY_POWER, MZ_TOLERANCE, spectra.iter())
+                .expect("benchmark spectra should build a flash cosine index");
 
         for &score_threshold in &score_thresholds {
             group.throughput(Throughput::Elements(logical_pairs));
@@ -448,7 +449,7 @@ fn bench_pairwise_linear_cosine_graph(c: &mut Criterion) {
                 },
             );
 
-            let threshold_index = FlashCosineThresholdIndex::new(
+            let threshold_index = FlashCosineThresholdIndex::<f64>::new(
                 MZ_POWER,
                 INTENSITY_POWER,
                 MZ_TOLERANCE,

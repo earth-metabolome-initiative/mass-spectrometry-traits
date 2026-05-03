@@ -54,6 +54,8 @@ assert_eq!(
 
 The regular cosine and entropy indices accept a cutoff at query time. `FlashCosineThresholdIndex` bakes one cutoff into the cosine index and is the intended path for thresholded indexed self-similarity; entropy keeps query-time thresholding only. `FlashCosineIndex`, `FlashCosineThresholdIndex`, and `FlashEntropyIndex` implement `SpectraIndex` for external-query search and top-k search with reusable scratch state.
 
+Flash indices are generic over their stored peak precision, so the default `f64` examples below can be switched to `FlashCosineIndex::<f32>`, `FlashCosineThresholdIndex::<f32>`, or `FlashEntropyIndex::<f32>` when index memory is the limiting factor; half precision is also available for spectra whose m/z and intensity values remain representable at that precision.
+
 ```rust
 use mass_spectrometry::prelude::*;
 
@@ -68,7 +70,7 @@ c.add_peaks([(300.0, 10.0), (400.0, 20.0)]).unwrap();
 
 let spectra = vec![a, b, c];
 
-let index = FlashCosineIndex::new(0.0, 1.0, 0.1, &spectra).unwrap();
+let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap();
 let hits = index.search_threshold(&spectra[0], 0.8).unwrap();
 assert!(hits.iter().any(|hit| hit.spectrum_id == 1));
 
@@ -77,7 +79,7 @@ assert_eq!(best[0].spectrum_id, 0);
 assert!(best.iter().any(|hit| hit.spectrum_id == 1));
 
 let threshold_index =
-    FlashCosineThresholdIndex::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
+    FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
 let indexed_best = threshold_index.search_top_k_indexed(0, 2).unwrap();
 assert_eq!(indexed_best[0].spectrum_id, 0);
 assert!(indexed_best.iter().any(|hit| hit.spectrum_id == 1));
@@ -107,7 +109,7 @@ assert_eq!(edges[0].0, 0);
 assert_eq!(edges[0].1, 1);
 assert!(edges[0].2 > 0.99);
 
-let entropy_index = FlashEntropyIndex::weighted(0.1, &spectra).unwrap();
+let entropy_index = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
 let entropy_best = entropy_index.search_top_k_threshold(&spectra[0], 2, 0.8).unwrap();
 assert_eq!(entropy_best[0].spectrum_id, 0);
 assert!(entropy_best.iter().any(|hit| hit.spectrum_id == 1));

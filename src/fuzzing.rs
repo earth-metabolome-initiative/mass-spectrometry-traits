@@ -394,10 +394,11 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
     let merged_query = merger.process(&case.query);
 
     // Fixed config (1.0, 1.0, 0.1): differential oracle against LinearCosine.
-    let index = match FlashCosineIndex::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE, merged_lib.iter()) {
-        Ok(idx) => idx,
-        Err(_) => return FlashCosineHarnessOutcome::Checked,
-    };
+    let index =
+        match FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE, merged_lib.iter()) {
+            Ok(idx) => idx,
+            Err(_) => return FlashCosineHarnessOutcome::Checked,
+        };
 
     let direct_results = match index.search(&merged_query) {
         Ok(r) => r,
@@ -455,7 +456,7 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
     }
 
     // Dynamic config (arbitrary params): attempt build + search, check score ranges.
-    if let Ok(dyn_index) = FlashCosineIndex::new(
+    if let Ok(dyn_index) = FlashCosineIndex::<f64>::new(
         case.mz_power,
         case.intensity_power,
         case.tolerance,
@@ -497,10 +498,11 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     let merged_query = merger.process(&case.query);
 
     // Fixed unweighted config: differential oracle against LinearEntropy.
-    let unweighted_index = match FlashEntropyIndex::unweighted(FIXED_TOLERANCE, merged_lib.iter()) {
-        Ok(idx) => idx,
-        Err(_) => return FlashEntropyHarnessOutcome::Checked,
-    };
+    let unweighted_index =
+        match FlashEntropyIndex::<f64>::unweighted(FIXED_TOLERANCE, merged_lib.iter()) {
+            Ok(idx) => idx,
+            Err(_) => return FlashEntropyHarnessOutcome::Checked,
+        };
 
     let uw_direct = match unweighted_index.search(&merged_query) {
         Ok(r) => r,
@@ -568,10 +570,11 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     }
 
     // Fixed weighted config.
-    let weighted_index = match FlashEntropyIndex::weighted(FIXED_TOLERANCE, merged_lib.iter()) {
-        Ok(idx) => idx,
-        Err(_) => return FlashEntropyHarnessOutcome::Checked,
-    };
+    let weighted_index =
+        match FlashEntropyIndex::<f64>::weighted(FIXED_TOLERANCE, merged_lib.iter()) {
+            Ok(idx) => idx,
+            Err(_) => return FlashEntropyHarnessOutcome::Checked,
+        };
 
     let w_direct = match weighted_index.search(&merged_query) {
         Ok(r) => r,
@@ -623,7 +626,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     }
 
     // Dynamic config (arbitrary params): attempt build + search, check score ranges.
-    if let Ok(dyn_index) = FlashEntropyIndex::new(
+    if let Ok(dyn_index) = FlashEntropyIndex::<f64>::new(
         case.mz_power,
         case.intensity_power,
         case.tolerance,
@@ -1748,7 +1751,7 @@ mod tests {
         let library = flash_library();
         let query = make_spectrum(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
 
-        let cosine_index = FlashCosineIndex::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+        let cosine_index = FlashCosineIndex::<f64>::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
             .expect("cosine index should build");
         let cosine_direct = cosine_index
             .search(&query)
@@ -1787,7 +1790,7 @@ mod tests {
         assert_flash_state_equivalence(&cosine_state_results, &cosine_direct, "flash/cosine/state");
         assert_flash_self_similarity_cosine(&cosine_index, &library[0], 0, "flash/cosine/self");
 
-        let entropy_index = FlashEntropyIndex::weighted(FIXED_TOLERANCE, library.iter())
+        let entropy_index = FlashEntropyIndex::<f64>::weighted(FIXED_TOLERANCE, library.iter())
             .expect("entropy index should build");
         let entropy_direct = entropy_index
             .search(&query)
@@ -1918,7 +1921,7 @@ mod tests {
         ];
         let query = make_spectrum(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
 
-        let cosine_index = FlashCosineIndex::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+        let cosine_index = FlashCosineIndex::<f64>::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
             .expect("cosine index should build");
         let cosine_results = cosine_index.search(&query).expect("search should work");
         let cosine_oracle =
@@ -1931,7 +1934,7 @@ mod tests {
             "flash/cosine/present",
         );
 
-        let entropy_index = FlashEntropyIndex::weighted(FIXED_TOLERANCE, library.iter())
+        let entropy_index = FlashEntropyIndex::<f64>::weighted(FIXED_TOLERANCE, library.iter())
             .expect("entropy index should build");
         let entropy_results = entropy_index.search(&query).expect("search should work");
         let entropy_oracle = LinearEntropy::weighted(FIXED_TOLERANCE).expect("oracle should build");
@@ -1972,12 +1975,12 @@ mod tests {
         let invalid_query = make_spectrum(300.0, &[(100.0, 10.0), (100.15, 5.0)]);
         let missing_query = make_spectrum(900.0, &[(800.0, 1.0)]);
 
-        let cosine_index = FlashCosineIndex::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+        let cosine_index = FlashCosineIndex::<f64>::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
             .expect("cosine index should build");
         assert_flash_self_similarity_cosine(&cosine_index, &invalid_query, 0, "flash/cosine/err");
         assert_flash_self_similarity_cosine(&cosine_index, &missing_query, 99, "flash/cosine/miss");
 
-        let entropy_index = FlashEntropyIndex::weighted(FIXED_TOLERANCE, library.iter())
+        let entropy_index = FlashEntropyIndex::<f64>::weighted(FIXED_TOLERANCE, library.iter())
             .expect("entropy index should build");
         assert_flash_self_similarity_entropy(
             &entropy_index,

@@ -275,11 +275,11 @@ fn bench_index_search(c: &mut Criterion) {
         .expect("valid modified linear entropy config");
 
     let flash_cosine =
-        FlashCosineIndex::new(mz_power, intensity_power, mz_tolerance, library.iter())
+        FlashCosineIndex::<f64>::new(mz_power, intensity_power, mz_tolerance, library.iter())
             .expect("flash cosine index should build");
     let top_k = 8_usize;
     let flash_entropy =
-        FlashEntropyIndex::new(0.0_f64, 1.0_f64, mz_tolerance, true, library.iter())
+        FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, mz_tolerance, true, library.iter())
             .expect("flash entropy index should build");
 
     let mut cosine_group = c.benchmark_group("library_search_cosine");
@@ -311,7 +311,7 @@ fn bench_index_search(c: &mut Criterion) {
     cosine_group.finish();
 
     let top_k_library = build_clustered_spectra(TOP_K_LIBRARY_SIZE, RANDOM_BASE_SEED ^ 0xC05E_C05E);
-    let flash_cosine_top_k = FlashCosineIndex::new(
+    let flash_cosine_top_k = FlashCosineIndex::<f64>::new(
         mz_power,
         intensity_power,
         mz_tolerance,
@@ -319,13 +319,13 @@ fn bench_index_search(c: &mut Criterion) {
     )
     .expect("top-k flash cosine index should build");
     let flash_entropy_top_k =
-        FlashEntropyIndex::new(0.0_f64, 1.0_f64, mz_tolerance, true, top_k_library.iter())
+        FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, mz_tolerance, true, top_k_library.iter())
             .expect("top-k flash entropy index should build");
 
     let mut top_k_group = c.benchmark_group("library_search_cosine_top_k");
     top_k_group.sample_size(10);
     for top_k_threshold in [0.5_f64, 0.7_f64, 0.9_f64] {
-        let flash_cosine_threshold_top_k = FlashCosineThresholdIndex::new(
+        let flash_cosine_threshold_top_k = FlashCosineThresholdIndex::<f64>::new(
             mz_power,
             intensity_power,
             mz_tolerance,

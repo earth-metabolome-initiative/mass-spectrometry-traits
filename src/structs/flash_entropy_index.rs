@@ -16,7 +16,8 @@ use super::cosine_common::{
 use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
 use super::flash_common::{
     DirectThresholdSearch, FlashIndex, FlashKernel, FlashSearchResult, PreparedFlashSpectra,
-    PreparedFlashSpectrum, SearchState, TopKSearchResults, TopKSearchState,
+    PreparedFlashSpectrum, SearchState, TopKSearchResults, TopKSearchState, convert_flash_value,
+    convert_flash_values, flash_values_to_f64,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{SpectraIndex, Spectrum, SpectrumFloat};
@@ -31,7 +32,7 @@ impl FlashKernel for EntropyKernel {
     type SpectrumMeta = ();
 
     #[inline]
-    fn spectrum_meta(_peak_data: &[f64]) {}
+    fn spectrum_meta<P: SpectrumFloat>(_peak_data: &[P]) {}
 
     #[inline]
     fn pair_score(query: f64, library: f64) -> f64 {
@@ -68,49 +69,73 @@ fn validate_entropy_index_config(
 }
 
 /// Prepare one entropy-library spectrum into the shared Flash representation.
-fn prepare_entropy_spectrum<S>(
+fn prepare_entropy_spectrum<P, S>(
     spectrum: &S,
     mz_power: f64,
     intensity_power: f64,
     mz_tolerance: f64,
     weighted: bool,
-) -> Result<PreparedFlashSpectrum, FlashEntropyIndexError>
+) -> Result<PreparedFlashSpectrum<P>, FlashEntropyIndexError>
 where
+    P: SpectrumFloat,
     S: Spectrum,
 {
     let peaks = prepare_entropy_peaks(spectrum, weighted, mz_power, intensity_power)
         .map_err(FlashEntropyIndexError::Computation)?;
 
+    let precursor_mz = convert_flash_value(
+        ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
+            .map_err(FlashEntropyIndexError::Computation)?,
+        "precursor_mz",
+    )
+    .map_err(FlashEntropyIndexError::Computation)?;
+
     if peaks.int.is_empty() {
-        let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
-            .map_err(FlashEntropyIndexError::Computation)?;
-        return Ok((precursor_f64, Vec::new(), Vec::new()));
+        return Ok(PreparedFlashSpectrum {
+            precursor_mz,
+            mz: Vec::new(),
+            data: Vec::new(),
+        });
     }
 
-    validate_well_separated(&peaks.mz, mz_tolerance, "library spectrum")
+    let mz_vals =
+        convert_flash_values(peaks.mz, "mz").map_err(FlashEntropyIndexError::Computation)?;
+    let mz_vals_f64 = flash_values_to_f64(&mz_vals);
+    validate_well_separated(&mz_vals_f64, mz_tolerance, "library spectrum")
         .map_err(FlashEntropyIndexError::Computation)?;
 
-    let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
+    let data_vals = convert_flash_values(peaks.int, "intensity")
         .map_err(FlashEntropyIndexError::Computation)?;
 
-    Ok((precursor_f64, peaks.mz, peaks.int))
+    Ok(PreparedFlashSpectrum {
+        precursor_mz,
+        mz: mz_vals,
+        data: data_vals,
+    })
 }
 
 /// Prepare an entropy library sequentially from any borrowed-spectrum iterator.
-fn prepare_entropy_library<'a, S>(
+fn prepare_entropy_library<'a, P, S>(
     mz_power: f64,
     intensity_power: f64,
     mz_tolerance: f64,
     weighted: bool,
     spectra: impl IntoIterator<Item = &'a S>,
-) -> Result<PreparedFlashSpectra, FlashEntropyIndexError>
+) -> Result<PreparedFlashSpectra<P>, FlashEntropyIndexError>
 where
+    P: SpectrumFloat,
     S: Spectrum + 'a,
 {
     spectra
         .into_iter()
         .map(|spectrum| {
-            prepare_entropy_spectrum(spectrum, mz_power, intensity_power, mz_tolerance, weighted)
+            prepare_entropy_spectrum::<P, S>(
+                spectrum,
+                mz_power,
+                intensity_power,
+                mz_tolerance,
+                weighted,
+            )
         })
         .collect()
 }
@@ -118,33 +143,42 @@ where
 /// Prepare an entropy library in parallel from a Rayon-compatible
 /// borrowed-spectrum collection.
 #[cfg(feature = "rayon")]
-fn prepare_entropy_library_parallel<'a, S, I>(
+fn prepare_entropy_library_parallel<'a, P, S, I>(
     mz_power: f64,
     intensity_power: f64,
     mz_tolerance: f64,
     weighted: bool,
     spectra: I,
-) -> Result<PreparedFlashSpectra, FlashEntropyIndexError>
+) -> Result<PreparedFlashSpectra<P>, FlashEntropyIndexError>
 where
+    P: SpectrumFloat + Send,
     S: Spectrum + Sync + 'a,
     I: IntoParallelIterator<Item = &'a S>,
 {
     spectra
         .into_par_iter()
         .map(|spectrum| {
-            prepare_entropy_spectrum(spectrum, mz_power, intensity_power, mz_tolerance, weighted)
+            prepare_entropy_spectrum::<P, S>(
+                spectrum,
+                mz_power,
+                intensity_power,
+                mz_tolerance,
+                weighted,
+            )
         })
         .collect()
 }
 
-fn for_each_entropy_threshold_prepared<Emit>(
-    inner: &FlashIndex<EntropyKernel>,
-    query_mz: &[f64],
-    query_data: &[f64],
+fn for_each_entropy_threshold_prepared<P, Q, Emit>(
+    inner: &FlashIndex<EntropyKernel, P>,
+    query_mz: &[Q],
+    query_data: &[Q],
     score_threshold: f64,
     state: &mut SearchState,
     mut emit: Emit,
 ) where
+    P: SpectrumFloat + Sync,
+    Q: SpectrumFloat,
     Emit: FnMut(FlashSearchResult),
 {
     if score_threshold <= 0.0 {
@@ -176,14 +210,16 @@ fn for_each_entropy_threshold_prepared<Emit>(
     );
 }
 
-fn for_each_entropy_top_k_prepared<Emit>(
-    inner: &FlashIndex<EntropyKernel>,
-    search: DirectThresholdSearch<'_, EntropyKernel>,
+fn for_each_entropy_top_k_prepared<P, Q, Emit>(
+    inner: &FlashIndex<EntropyKernel, P>,
+    search: DirectThresholdSearch<'_, EntropyKernel, Q>,
     k: usize,
     state: &mut SearchState,
     top_k_state: &mut TopKSearchState,
     emit: Emit,
 ) where
+    P: SpectrumFloat + Sync,
+    Q: SpectrumFloat,
     Emit: FnMut(FlashSearchResult),
 {
     let mut top_k = TopKSearchResults::new(k, search.score_threshold, top_k_state);
@@ -254,7 +290,7 @@ fn for_each_entropy_top_k_prepared<Emit>(
 ///     GenericSpectrum::cocaine().unwrap(),
 ///     GenericSpectrum::glucose().unwrap(),
 /// ];
-/// let index = FlashEntropyIndex::new(0.0, 1.0, 0.1, true, library.iter())
+/// let index = FlashEntropyIndex::<f64>::new(0.0, 1.0, 0.1, true, library.iter())
 ///     .expect("index build should succeed");
 ///
 /// let query: GenericSpectrum = GenericSpectrum::cocaine().unwrap();
@@ -264,14 +300,14 @@ fn for_each_entropy_top_k_prepared<Emit>(
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(rec))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
-pub struct FlashEntropyIndex {
-    inner: FlashIndex<EntropyKernel>,
+pub struct FlashEntropyIndex<P: SpectrumFloat = f64> {
+    inner: FlashIndex<EntropyKernel, P>,
     weighted: bool,
     mz_power_f64: f64,
     intensity_power_f64: f64,
 }
 
-impl FlashEntropyIndex {
+impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
     /// Returns whether entropy-based intensity weighting is enabled.
     #[inline]
     pub fn is_weighted(&self) -> bool {
@@ -323,6 +359,7 @@ impl FlashEntropyIndex {
         spectra: I,
     ) -> Result<Self, FlashEntropyIndexError>
     where
+        P: Send,
         S: Spectrum + Sync + 'a,
         I: IntoParallelIterator<Item = &'a S>,
     {
@@ -350,6 +387,7 @@ impl FlashEntropyIndex {
         spectra: I,
     ) -> Result<Self, FlashEntropyIndexError>
     where
+        P: Send,
         S: Spectrum + Sync + 'a,
         I: IntoParallelIterator<Item = &'a S>,
     {
@@ -379,10 +417,15 @@ impl FlashEntropyIndex {
     {
         validate_entropy_index_config(mz_power, intensity_power, mz_tolerance)?;
 
-        let prepared =
-            prepare_entropy_library(mz_power, intensity_power, mz_tolerance, weighted, spectra)?;
+        let prepared = prepare_entropy_library::<P, S>(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            weighted,
+            spectra,
+        )?;
 
-        let inner = FlashIndex::<EntropyKernel>::build(mz_tolerance, prepared)
+        let inner = FlashIndex::<EntropyKernel, P>::build(mz_tolerance, prepared)
             .map_err(FlashEntropyIndexError::Computation)?;
 
         Ok(Self {
@@ -408,12 +451,13 @@ impl FlashEntropyIndex {
         spectra: I,
     ) -> Result<Self, FlashEntropyIndexError>
     where
+        P: Send,
         S: Spectrum + Sync + 'a,
         I: IntoParallelIterator<Item = &'a S>,
     {
         validate_entropy_index_config(mz_power, intensity_power, mz_tolerance)?;
 
-        let prepared = prepare_entropy_library_parallel(
+        let prepared = prepare_entropy_library_parallel::<P, S, I>(
             mz_power,
             intensity_power,
             mz_tolerance,
@@ -421,7 +465,7 @@ impl FlashEntropyIndex {
             spectra,
         )?;
 
-        let inner = FlashIndex::<EntropyKernel>::build_parallel(mz_tolerance, prepared)
+        let inner = FlashIndex::<EntropyKernel, P>::build_parallel(mz_tolerance, prepared)
             .map_err(FlashEntropyIndexError::Computation)?;
 
         Ok(Self {
@@ -537,7 +581,7 @@ impl FlashEntropyIndex {
     /// right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
     ///
     /// let spectra = vec![left, right];
-    /// let index = FlashEntropyIndex::weighted(0.1, &spectra).unwrap();
+    /// let index = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
     /// let hits = index.search_top_k(&spectra[0], 1).unwrap();
     ///
     /// assert_eq!(hits.len(), 1);
@@ -718,7 +762,7 @@ impl FlashEntropyIndex {
 // SpectraIndex implementations
 // ---------------------------------------------------------------------------
 
-impl SpectraIndex for FlashEntropyIndex {
+impl<P: SpectrumFloat + Sync> SpectraIndex for FlashEntropyIndex<P> {
     fn n_spectra(&self) -> u32 {
         self.n_spectra()
     }
@@ -807,6 +851,8 @@ pub enum FlashEntropyIndexError {
 mod tests {
     use alloc::{vec, vec::Vec};
 
+    use half::f16;
+
     use super::*;
     use crate::structs::GenericSpectrum;
     use crate::traits::{Spectrum, SpectrumMut};
@@ -884,8 +930,8 @@ mod tests {
     #[test]
     fn entropy_index_accessors_convenience_constructors_and_wrappers_round_trip() {
         let library = [make_spectrum(200.0, &[(100.0, 4.0)])];
-        let weighted =
-            FlashEntropyIndex::weighted(0.1, library.iter()).expect("weighted index should build");
+        let weighted = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
+            .expect("weighted index should build");
         assert!(weighted.is_weighted());
         assert_eq!(weighted.mz_power_f64(), 0.0);
         assert_eq!(weighted.intensity_power_f64(), 1.0);
@@ -911,9 +957,32 @@ mod tests {
             .expect("stateful modified search should work");
         assert_eq!(modified, modified_with_state);
 
-        let unweighted = FlashEntropyIndex::unweighted(0.1, library.iter())
+        let unweighted = FlashEntropyIndex::<f64>::unweighted(0.1, library.iter())
             .expect("unweighted index should build");
         assert!(!unweighted.is_weighted());
+    }
+
+    #[test]
+    fn entropy_index_supports_lower_storage_precision() {
+        let library = [
+            make_spectrum(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+            make_spectrum(500.0, &[(100.05, 10.0), (200.05, 20.0)]),
+            make_spectrum(500.0, &[(300.0, 10.0), (400.0, 20.0)]),
+        ];
+
+        let f32_index = FlashEntropyIndex::<f32>::weighted(0.1, library.iter())
+            .expect("f32 entropy index should build");
+        let f32_hits = f32_index
+            .search_top_k_threshold(&library[0], 2, 0.5)
+            .expect("f32 entropy top-k should work");
+        assert!(f32_hits.iter().any(|hit| hit.spectrum_id == 0));
+
+        let f16_index = FlashEntropyIndex::<f16>::weighted(0.1, library.iter())
+            .expect("f16 entropy index should build for representable peaks");
+        let f16_hits = f16_index
+            .search_threshold(&library[0], 0.5)
+            .expect("f16 entropy search should work");
+        assert!(f16_hits.iter().any(|hit| hit.spectrum_id == 0));
     }
 
     #[cfg(feature = "rayon")]
@@ -924,9 +993,9 @@ mod tests {
             make_spectrum(500.0, &[(100.05, 10.0), (200.05, 20.0)]),
             make_spectrum(500.0, &[(300.0, 10.0), (400.0, 20.0)]),
         ];
-        let sequential = FlashEntropyIndex::weighted(0.1, library.iter())
+        let sequential = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
             .expect("sequential entropy index should build");
-        let parallel = FlashEntropyIndex::weighted_parallel(0.1, library.as_slice())
+        let parallel = FlashEntropyIndex::<f64>::weighted_parallel(0.1, library.as_slice())
             .expect("parallel entropy index should build");
 
         assert_eq!(sequential.search(&library[0]), parallel.search(&library[0]));
@@ -945,7 +1014,7 @@ mod tests {
             parallel.search_modified(&shifted_query)
         );
 
-        let unweighted = FlashEntropyIndex::unweighted_parallel(0.1, library.as_slice())
+        let unweighted = FlashEntropyIndex::<f64>::unweighted_parallel(0.1, library.as_slice())
             .expect("parallel unweighted index should build");
         assert!(!unweighted.is_weighted());
     }
@@ -953,7 +1022,7 @@ mod tests {
     #[test]
     fn entropy_index_treats_underflowed_products_as_empty() {
         let tiny = make_spectrum(200.0, &[(100.0, f64::MIN_POSITIVE)]);
-        let index = FlashEntropyIndex::new(0.0, 2.0, 0.1, false, core::iter::once(&tiny))
+        let index = FlashEntropyIndex::<f64>::new(0.0, 2.0, 0.1, false, core::iter::once(&tiny))
             .expect("empty-product library should still build");
 
         assert_eq!(index.n_spectra(), 1);
@@ -974,7 +1043,8 @@ mod tests {
     #[test]
     fn modified_search_rejects_non_finite_query_precursor() {
         let library = [make_spectrum(200.0, &[(100.0, 1.0)])];
-        let index = FlashEntropyIndex::weighted(0.1, library.iter()).expect("index should build");
+        let index =
+            FlashEntropyIndex::<f64>::weighted(0.1, library.iter()).expect("index should build");
         let query = RawSpectrum {
             precursor_mz: f64::NAN,
             peaks: vec![(100.0, 1.0)],

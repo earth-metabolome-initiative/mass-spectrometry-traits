@@ -139,8 +139,9 @@ fn top_k_expected(
 fn self_similarity_all_reference() {
     let spectra = reference_spectra();
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
 
     for (i, (name, spectrum)) in spectra.iter().enumerate() {
         let results = index.search(spectrum).expect("search should succeed");
@@ -170,8 +171,9 @@ fn equivalence_with_linear_cosine() {
     let spectra = reference_spectra();
     let linear = LinearCosine::new(1.0_f64, 1.0_f64, 0.1_f64).expect("valid scorer config");
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
 
     // Test every pair.
     for (qname, query) in spectra.iter() {
@@ -220,8 +222,9 @@ fn equivalence_with_linear_cosine() {
 fn equivalence_mz_power_0() {
     let spectra = reference_spectra();
     let linear = LinearCosine::new(0.0_f64, 1.0_f64, 0.1_f64).expect("valid config");
-    let index = FlashCosineIndex::new(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
 
     let query = &spectra[0].1;
     let results = index.search(query).expect("search should succeed");
@@ -246,7 +249,7 @@ fn equivalence_mz_power_0() {
 #[test]
 fn empty_library() {
     let empty: Vec<&GenericSpectrum> = Vec::new();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, empty)
+    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, empty)
         .expect("empty index build should succeed");
     assert_eq!(index.n_spectra(), 0);
 
@@ -258,8 +261,9 @@ fn empty_library() {
 #[test]
 fn empty_query() {
     let spectra = reference_spectra();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
 
     let empty = make_spectrum_f64(100.0, &[]);
     let results = index.search(&empty).expect("search should succeed");
@@ -275,7 +279,7 @@ fn zero_intensity_spectrum() {
     let normal = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let library = [empty, normal];
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
+    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
         .expect("index build should succeed");
 
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
@@ -299,14 +303,14 @@ fn zero_intensity_spectrum() {
 fn rejects_non_well_separated_library() {
     // Gap = 0.15, tolerance = 0.1, min_gap = 0.2 → gap < min_gap.
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
-    let result = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&bad]);
+    let result = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&bad]);
     assert!(result.is_err());
 }
 
 #[test]
 fn rejects_non_well_separated_query() {
     let good = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 8.0)]);
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&good])
+    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&good])
         .expect("index build should succeed");
 
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
@@ -320,7 +324,7 @@ fn rejects_non_well_separated_query() {
 #[test]
 fn single_spectrum_library() {
     let cocaine: GenericSpectrum = GenericSpectrum::cocaine().unwrap();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&cocaine])
+    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&cocaine])
         .expect("index build should succeed");
 
     let results = index.search(&cocaine).expect("search should succeed");
@@ -331,8 +335,9 @@ fn single_spectrum_library() {
 #[test]
 fn accessors_and_search_with_state_match_stateless_results() {
     let spectra = reference_spectra();
-    let index = FlashCosineIndex::new(0.5_f64, 2.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(0.5_f64, 2.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
 
     assert_eq!(index.mz_power(), 0.5);
     assert_eq!(index.intensity_power(), 2.0);
@@ -376,8 +381,9 @@ fn accessors_and_search_with_state_match_stateless_results() {
 #[test]
 fn thresholded_search_matches_filtered_direct_search() {
     let spectra = reference_spectra();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
 
     for threshold in [0.0_f64, 0.5_f64, 0.9_f64] {
         let mut state = index.new_search_state();
@@ -399,8 +405,9 @@ fn thresholded_search_matches_filtered_direct_search() {
 #[test]
 fn thresholded_emitter_reuses_state_and_validates_threshold() {
     let spectra = reference_spectra();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
     let mut state = index.new_search_state();
 
     let query_a = &spectra[0].1;
@@ -440,8 +447,9 @@ fn thresholded_emitter_reuses_state_and_validates_threshold() {
 #[test]
 fn top_k_matches_sorted_direct_search_and_reuses_state() {
     let spectra = reference_spectra();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
 
     let query_a = &spectra[0].1;
     let query_b = &spectra[1].1;
@@ -478,8 +486,9 @@ fn top_k_matches_sorted_direct_search_and_reuses_state() {
 #[test]
 fn top_k_threshold_matches_filtered_direct_search() {
     let spectra = reference_spectra();
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
     let query = &spectra[0].1;
 
     for threshold in [0.0_f64, 0.5_f64, 0.9_f64, 1.1_f64] {
@@ -523,11 +532,11 @@ fn top_k_threshold_matches_filtered_direct_search() {
 fn threshold_index_matches_filtered_direct_search() {
     let spectra = reference_spectra();
     let direct_index =
-        FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
             .expect("direct index build should succeed");
 
     for threshold in [0.5_f64, 0.7_f64, 0.9_f64] {
-        let threshold_index = FlashCosineThresholdIndex::new(
+        let threshold_index = FlashCosineThresholdIndex::<f64>::new(
             1.0_f64,
             1.0_f64,
             0.1_f64,
@@ -572,9 +581,9 @@ fn threshold_index_matches_filtered_direct_search() {
 fn threshold_index_top_k_matches_thresholded_results_for_external_and_indexed_queries() {
     let spectra = reference_spectra();
     let direct_index =
-        FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
             .expect("direct index build should succeed");
-    let threshold_index = FlashCosineThresholdIndex::new(
+    let threshold_index = FlashCosineThresholdIndex::<f64>::new(
         1.0_f64,
         1.0_f64,
         0.1_f64,
@@ -639,7 +648,7 @@ fn threshold_index_top_k_matches_thresholded_results_for_external_and_indexed_qu
 #[test]
 fn threshold_index_validates_threshold_and_query_id() {
     let spectra = reference_spectra();
-    let nan_threshold = FlashCosineThresholdIndex::new(
+    let nan_threshold = FlashCosineThresholdIndex::<f64>::new(
         1.0_f64,
         1.0_f64,
         0.1_f64,
@@ -653,7 +662,7 @@ fn threshold_index_validates_threshold_and_query_id() {
         ))
     ));
 
-    let threshold_index = FlashCosineThresholdIndex::new(
+    let threshold_index = FlashCosineThresholdIndex::<f64>::new(
         1.0_f64,
         1.0_f64,
         0.1_f64,
@@ -693,7 +702,7 @@ fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
     let query = make_spectrum_f64(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
     let nonmatching_query = make_spectrum_f64(700.0, &[(400.0, 9.0)]);
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
+    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
         .expect("index build should succeed");
     let mut state = index.new_search_state();
 
@@ -726,7 +735,8 @@ fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
 fn constructor_and_query_validation_errors_are_exposed() {
     let spectra = reference_spectra();
 
-    let nan_power = FlashCosineIndex::new(f64::NAN, 1.0, 0.1, spectra.iter().map(|(_, s)| s));
+    let nan_power =
+        FlashCosineIndex::<f64>::new(f64::NAN, 1.0, 0.1, spectra.iter().map(|(_, s)| s));
     assert!(matches!(
         nan_power,
         Err(FlashCosineIndexError::Computation(
@@ -735,7 +745,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
     ));
 
     let inf_intensity =
-        FlashCosineIndex::new(1.0, f64::INFINITY, 0.1, spectra.iter().map(|(_, s)| s));
+        FlashCosineIndex::<f64>::new(1.0, f64::INFINITY, 0.1, spectra.iter().map(|(_, s)| s));
     assert!(matches!(
         inf_intensity,
         Err(FlashCosineIndexError::Computation(
@@ -743,7 +753,8 @@ fn constructor_and_query_validation_errors_are_exposed() {
         ))
     ));
 
-    let nan_tolerance = FlashCosineIndex::new(1.0, 1.0, f64::NAN, spectra.iter().map(|(_, s)| s));
+    let nan_tolerance =
+        FlashCosineIndex::<f64>::new(1.0, 1.0, f64::NAN, spectra.iter().map(|(_, s)| s));
     assert!(matches!(
         nan_tolerance,
         Err(FlashCosineIndexError::Config(
@@ -755,7 +766,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
         precursor_mz: f64::NAN,
         peaks: vec![(100.0, 1.0)],
     };
-    let build_error = FlashCosineIndex::new(1.0, 1.0, 0.1, [&bad_library]);
+    let build_error = FlashCosineIndex::<f64>::new(1.0, 1.0, 0.1, [&bad_library]);
     assert!(matches!(
         build_error,
         Err(FlashCosineIndexError::Computation(
@@ -763,8 +774,9 @@ fn constructor_and_query_validation_errors_are_exposed() {
         ))
     ));
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-        .expect("index build should succeed");
+    let index =
+        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+            .expect("index build should succeed");
     let bad_query = RawSpectrum {
         precursor_mz: f64::NAN,
         peaks: vec![(100.0, 1.0)],
@@ -797,7 +809,7 @@ fn modified_search_includes_shifted_matches() {
     let lib = make_spectrum_f64(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let query = make_spectrum_f64(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib])
+    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib])
         .expect("index build should succeed");
 
     let direct_results = index.search(&query).expect("direct search should succeed");
@@ -827,7 +839,7 @@ fn modified_search_anti_double_counting() {
     let lib = make_spectrum_f64(200.0, &[(100.0, 10.0)]);
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0)]);
 
-    let index = FlashCosineIndex::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib])
+    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib])
         .expect("index build should succeed");
 
     let direct = index.search(&query).expect("search should succeed");

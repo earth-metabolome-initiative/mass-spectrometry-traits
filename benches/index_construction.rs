@@ -12,24 +12,35 @@
 //! - `INDEX_CONSTRUCTION_MEASUREMENT_SECS=1`
 //! - `INDEX_CONSTRUCTION_SAMPLE_SIZE=10`
 
-use std::{hint::black_box, time::Duration};
+use std::hint::black_box;
+#[cfg(feature = "rayon")]
+use std::time::Duration;
 
-use criterion::{
-    BenchmarkId, Criterion, SamplingMode, Throughput, criterion_group, criterion_main,
-};
+#[cfg(feature = "rayon")]
+use criterion::{BenchmarkId, SamplingMode, Throughput};
+use criterion::{Criterion, criterion_group, criterion_main};
+#[cfg(feature = "rayon")]
 use mass_spectrometry::prelude::{
     FlashCosineIndex, FlashCosineThresholdIndex, FlashEntropyIndex, GenericSpectrum,
     RandomSpectrumConfig, SpectrumAlloc,
 };
 
+#[cfg(feature = "rayon")]
 const DEFAULT_LIBRARY_SIZES: &[usize] = &[1_000_000];
+#[cfg(feature = "rayon")]
 const PEAKS_PER_SPECTRUM: usize = 64;
+#[cfg(feature = "rayon")]
 const MZ_TOLERANCE: f64 = 0.1;
+#[cfg(feature = "rayon")]
 const MZ_POWER: f64 = 1.0;
+#[cfg(feature = "rayon")]
 const INTENSITY_POWER: f64 = 1.0;
+#[cfg(feature = "rayon")]
 const DEFAULT_SCORE_THRESHOLD: f64 = 0.9;
+#[cfg(feature = "rayon")]
 const RANDOM_BASE_SEED: u64 = 0xC0DE_1D5E_1A57_BA5E;
 
+#[cfg(feature = "rayon")]
 #[inline]
 fn nonzero_seed(seed: u64) -> u64 {
     if seed == 0 {
@@ -39,6 +50,7 @@ fn nonzero_seed(seed: u64) -> u64 {
     }
 }
 
+#[cfg(feature = "rayon")]
 #[inline]
 fn next_u64(state: &mut u64) -> u64 {
     let mut value = *state;
@@ -49,12 +61,14 @@ fn next_u64(state: &mut u64) -> u64 {
     value
 }
 
+#[cfg(feature = "rayon")]
 #[inline]
 fn next_unit_f64(state: &mut u64) -> f64 {
     const INV_2POW53: f64 = 1.0 / ((1_u64 << 53) as f64);
     ((next_u64(state) >> 11) as f64) * INV_2POW53
 }
 
+#[cfg(feature = "rayon")]
 fn parse_library_sizes() -> Vec<usize> {
     let Ok(raw) = std::env::var("INDEX_CONSTRUCTION_SIZES") else {
         return DEFAULT_LIBRARY_SIZES.to_vec();
@@ -73,6 +87,7 @@ fn parse_library_sizes() -> Vec<usize> {
     }
 }
 
+#[cfg(feature = "rayon")]
 fn parse_score_threshold() -> f64 {
     std::env::var("INDEX_CONSTRUCTION_THRESHOLD")
         .ok()
@@ -81,6 +96,7 @@ fn parse_score_threshold() -> f64 {
         .unwrap_or(DEFAULT_SCORE_THRESHOLD)
 }
 
+#[cfg(feature = "rayon")]
 fn parse_u64_env(env_name: &str, default: u64) -> u64 {
     std::env::var(env_name)
         .ok()
@@ -89,6 +105,7 @@ fn parse_u64_env(env_name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+#[cfg(feature = "rayon")]
 fn parse_usize_env(env_name: &str, default: usize) -> usize {
     std::env::var(env_name)
         .ok()
@@ -97,6 +114,7 @@ fn parse_usize_env(env_name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+#[cfg(feature = "rayon")]
 fn random_spectrum_from_seed(seed: u64) -> GenericSpectrum {
     let mut state = nonzero_seed(seed);
     let precursor_mz = 650.0 + next_unit_f64(&mut state) * 550.0;
@@ -112,6 +130,7 @@ fn random_spectrum_from_seed(seed: u64) -> GenericSpectrum {
     GenericSpectrum::random(config, seed).expect("benchmark spectrum should build")
 }
 
+#[cfg(feature = "rayon")]
 fn build_random_spectra(count: usize) -> Vec<GenericSpectrum> {
     (0..count)
         .map(|index| {
@@ -139,108 +158,130 @@ fn bench_index_construction(c: &mut Criterion) {
         let spectra = build_random_spectra(library_size);
         group.throughput(Throughput::Elements(library_size as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("flash_cosine/sequential", library_size),
-            &spectra,
-            |b, spectra| {
-                b.iter(|| {
-                    let index = FlashCosineIndex::new(
-                        black_box(MZ_POWER),
-                        black_box(INTENSITY_POWER),
-                        black_box(MZ_TOLERANCE),
-                        black_box(spectra).iter(),
-                    )
-                    .expect("sequential cosine index should build");
-                    black_box(index)
-                });
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("flash_cosine/rayon", library_size),
-            &spectra,
-            |b, spectra| {
-                b.iter(|| {
-                    let index = FlashCosineIndex::new_parallel(
-                        black_box(MZ_POWER),
-                        black_box(INTENSITY_POWER),
-                        black_box(MZ_TOLERANCE),
-                        black_box(spectra.as_slice()),
-                    )
-                    .expect("parallel cosine index should build");
-                    black_box(index)
-                });
-            },
-        );
+        macro_rules! bench_precision {
+            ($precision:literal, $precision_ty:ty) => {
+                group.bench_with_input(
+                    BenchmarkId::new(
+                        concat!("flash_cosine/", $precision, "/sequential"),
+                        library_size,
+                    ),
+                    &spectra,
+                    |b, spectra| {
+                        b.iter(|| {
+                            let index = FlashCosineIndex::<$precision_ty>::new(
+                                black_box(MZ_POWER),
+                                black_box(INTENSITY_POWER),
+                                black_box(MZ_TOLERANCE),
+                                black_box(spectra).iter(),
+                            )
+                            .expect("sequential cosine index should build");
+                            black_box(index)
+                        });
+                    },
+                );
+                group.bench_with_input(
+                    BenchmarkId::new(concat!("flash_cosine/", $precision, "/rayon"), library_size),
+                    &spectra,
+                    |b, spectra| {
+                        b.iter(|| {
+                            let index = FlashCosineIndex::<$precision_ty>::new_parallel(
+                                black_box(MZ_POWER),
+                                black_box(INTENSITY_POWER),
+                                black_box(MZ_TOLERANCE),
+                                black_box(spectra.as_slice()),
+                            )
+                            .expect("parallel cosine index should build");
+                            black_box(index)
+                        });
+                    },
+                );
 
-        group.bench_with_input(
-            BenchmarkId::new("flash_cosine_threshold/sequential", library_size),
-            &spectra,
-            |b, spectra| {
-                b.iter(|| {
-                    let index = FlashCosineThresholdIndex::new(
-                        black_box(MZ_POWER),
-                        black_box(INTENSITY_POWER),
-                        black_box(MZ_TOLERANCE),
-                        black_box(score_threshold),
-                        black_box(spectra).iter(),
-                    )
-                    .expect("sequential threshold cosine index should build");
-                    black_box(index)
-                });
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("flash_cosine_threshold/rayon", library_size),
-            &spectra,
-            |b, spectra| {
-                b.iter(|| {
-                    let index = FlashCosineThresholdIndex::new_parallel(
-                        black_box(MZ_POWER),
-                        black_box(INTENSITY_POWER),
-                        black_box(MZ_TOLERANCE),
-                        black_box(score_threshold),
-                        black_box(spectra.as_slice()),
-                    )
-                    .expect("parallel threshold cosine index should build");
-                    black_box(index)
-                });
-            },
-        );
+                group.bench_with_input(
+                    BenchmarkId::new(
+                        concat!("flash_cosine_threshold/", $precision, "/sequential"),
+                        library_size,
+                    ),
+                    &spectra,
+                    |b, spectra| {
+                        b.iter(|| {
+                            let index = FlashCosineThresholdIndex::<$precision_ty>::new(
+                                black_box(MZ_POWER),
+                                black_box(INTENSITY_POWER),
+                                black_box(MZ_TOLERANCE),
+                                black_box(score_threshold),
+                                black_box(spectra).iter(),
+                            )
+                            .expect("sequential threshold cosine index should build");
+                            black_box(index)
+                        });
+                    },
+                );
+                group.bench_with_input(
+                    BenchmarkId::new(
+                        concat!("flash_cosine_threshold/", $precision, "/rayon"),
+                        library_size,
+                    ),
+                    &spectra,
+                    |b, spectra| {
+                        b.iter(|| {
+                            let index = FlashCosineThresholdIndex::<$precision_ty>::new_parallel(
+                                black_box(MZ_POWER),
+                                black_box(INTENSITY_POWER),
+                                black_box(MZ_TOLERANCE),
+                                black_box(score_threshold),
+                                black_box(spectra.as_slice()),
+                            )
+                            .expect("parallel threshold cosine index should build");
+                            black_box(index)
+                        });
+                    },
+                );
 
-        group.bench_with_input(
-            BenchmarkId::new("flash_entropy/sequential", library_size),
-            &spectra,
-            |b, spectra| {
-                b.iter(|| {
-                    let index = FlashEntropyIndex::new(
-                        black_box(0.0),
-                        black_box(1.0),
-                        black_box(MZ_TOLERANCE),
-                        black_box(true),
-                        black_box(spectra).iter(),
-                    )
-                    .expect("sequential entropy index should build");
-                    black_box(index)
-                });
-            },
-        );
-        group.bench_with_input(
-            BenchmarkId::new("flash_entropy/rayon", library_size),
-            &spectra,
-            |b, spectra| {
-                b.iter(|| {
-                    let index = FlashEntropyIndex::new_parallel(
-                        black_box(0.0),
-                        black_box(1.0),
-                        black_box(MZ_TOLERANCE),
-                        black_box(true),
-                        black_box(spectra.as_slice()),
-                    )
-                    .expect("parallel entropy index should build");
-                    black_box(index)
-                });
-            },
-        );
+                group.bench_with_input(
+                    BenchmarkId::new(
+                        concat!("flash_entropy/", $precision, "/sequential"),
+                        library_size,
+                    ),
+                    &spectra,
+                    |b, spectra| {
+                        b.iter(|| {
+                            let index = FlashEntropyIndex::<$precision_ty>::new(
+                                black_box(0.0),
+                                black_box(1.0),
+                                black_box(MZ_TOLERANCE),
+                                black_box(true),
+                                black_box(spectra).iter(),
+                            )
+                            .expect("sequential entropy index should build");
+                            black_box(index)
+                        });
+                    },
+                );
+                group.bench_with_input(
+                    BenchmarkId::new(
+                        concat!("flash_entropy/", $precision, "/rayon"),
+                        library_size,
+                    ),
+                    &spectra,
+                    |b, spectra| {
+                        b.iter(|| {
+                            let index = FlashEntropyIndex::<$precision_ty>::new_parallel(
+                                black_box(0.0),
+                                black_box(1.0),
+                                black_box(MZ_TOLERANCE),
+                                black_box(true),
+                                black_box(spectra.as_slice()),
+                            )
+                            .expect("parallel entropy index should build");
+                            black_box(index)
+                        });
+                    },
+                );
+            };
+        }
+
+        bench_precision!("f64", f64);
+        bench_precision!("f32", f32);
     }
 
     group.finish();
