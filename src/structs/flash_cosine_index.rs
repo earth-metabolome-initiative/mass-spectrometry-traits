@@ -6,13 +6,17 @@
 
 use alloc::vec::Vec;
 
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
+
 use super::cosine_common::{
     ensure_finite, normalized_peak_products, validate_non_negative_tolerance,
     validate_well_separated,
 };
 use super::flash_common::{
-    DirectThresholdSearch, FlashIndex, FlashKernel, FlashSearchResult, SearchState,
-    ThresholdPrefixPostings, TopKSearchResults, TopKSearchState, l2_threshold_prefix_indices,
+    DirectThresholdSearch, FlashIndex, FlashKernel, FlashSearchResult, PreparedFlashSpectra,
+    PreparedFlashSpectrum, SearchState, ThresholdPrefixPostings, TopKSearchResults,
+    TopKSearchState, l2_threshold_prefix_indices,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{SpectraIndex, Spectrum, SpectrumFloat};
@@ -78,6 +82,91 @@ where
     validate_well_separated(&mz_vals, tolerance, "query spectrum")?;
 
     Ok((mz_vals, data_vals))
+}
+
+/// Validate shared cosine index construction parameters.
+fn validate_cosine_index_config(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+) -> Result<(), FlashCosineIndexError> {
+    validate_non_negative_tolerance(mz_tolerance).map_err(FlashCosineIndexError::Config)?;
+    ensure_finite(mz_power, "mz_power").map_err(FlashCosineIndexError::Computation)?;
+    ensure_finite(intensity_power, "intensity_power")
+        .map_err(FlashCosineIndexError::Computation)?;
+    Ok(())
+}
+
+/// Validate cosine threshold-index construction parameters.
+fn validate_cosine_threshold_index_config(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    score_threshold: f64,
+) -> Result<(), FlashCosineIndexError> {
+    validate_cosine_index_config(mz_power, intensity_power, mz_tolerance)?;
+    ensure_finite(score_threshold, "score_threshold")
+        .map_err(FlashCosineIndexError::Computation)?;
+    Ok(())
+}
+
+/// Prepare one library spectrum into the packed representation used by the
+/// shared Flash builder.
+fn prepare_cosine_spectrum<S>(
+    spectrum: &S,
+    mz_power: f64,
+    intensity_power: f64,
+    tolerance: f64,
+) -> Result<PreparedFlashSpectrum, FlashCosineIndexError>
+where
+    S: Spectrum,
+{
+    let mz_vals: Vec<f64> = spectrum.mz().map(SpectrumFloat::to_f64).collect();
+    let data_vals = normalized_peak_products(spectrum, mz_power, intensity_power)
+        .map_err(FlashCosineIndexError::Computation)?;
+
+    validate_well_separated(&mz_vals, tolerance, "library spectrum")
+        .map_err(FlashCosineIndexError::Computation)?;
+
+    let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
+        .map_err(FlashCosineIndexError::Computation)?;
+
+    Ok((precursor_f64, mz_vals, data_vals))
+}
+
+/// Prepare a library sequentially from any borrowed-spectrum iterator.
+fn prepare_cosine_library<'a, S>(
+    mz_power: f64,
+    intensity_power: f64,
+    tolerance: f64,
+    spectra: impl IntoIterator<Item = &'a S>,
+) -> Result<PreparedFlashSpectra, FlashCosineIndexError>
+where
+    S: Spectrum + 'a,
+{
+    spectra
+        .into_iter()
+        .map(|spectrum| prepare_cosine_spectrum(spectrum, mz_power, intensity_power, tolerance))
+        .collect()
+}
+
+/// Prepare a library in parallel from a Rayon-compatible borrowed-spectrum
+/// collection.
+#[cfg(feature = "rayon")]
+fn prepare_cosine_library_parallel<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    tolerance: f64,
+    spectra: I,
+) -> Result<PreparedFlashSpectra, FlashCosineIndexError>
+where
+    S: Spectrum + Sync + 'a,
+    I: IntoParallelIterator<Item = &'a S>,
+{
+    spectra
+        .into_par_iter()
+        .map(|spectrum| prepare_cosine_spectrum(spectrum, mz_power, intensity_power, tolerance))
+        .collect()
 }
 
 /// Run exact cosine top-k over a prepared query while using the current kth
@@ -235,32 +324,39 @@ impl FlashCosineIndex {
     where
         S: Spectrum + 'a,
     {
-        // Validate config.
-        validate_non_negative_tolerance(mz_tolerance).map_err(FlashCosineIndexError::Config)?;
-        ensure_finite(mz_power, "mz_power").map_err(FlashCosineIndexError::Computation)?;
-        ensure_finite(intensity_power, "intensity_power")
+        validate_cosine_index_config(mz_power, intensity_power, mz_tolerance)?;
+        let prepared = prepare_cosine_library(mz_power, intensity_power, mz_tolerance, spectra)?;
+        let inner = FlashIndex::<CosineKernel>::build(mz_tolerance, prepared)
             .map_err(FlashCosineIndexError::Computation)?;
 
-        let tolerance = mz_tolerance;
+        Ok(Self {
+            inner,
+            mz_power,
+            intensity_power,
+        })
+    }
 
-        // Prepare spectrum data.
-        let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
-
-        for spectrum in spectra {
-            let mz_vals: Vec<f64> = spectrum.mz().map(SpectrumFloat::to_f64).collect();
-            let data_vals = normalized_peak_products(spectrum, mz_power, intensity_power)
-                .map_err(FlashCosineIndexError::Computation)?;
-
-            validate_well_separated(&mz_vals, tolerance, "library spectrum")
-                .map_err(FlashCosineIndexError::Computation)?;
-
-            let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
-                .map_err(FlashCosineIndexError::Computation)?;
-
-            prepared.push((precursor_f64, mz_vals, data_vals));
-        }
-
-        let inner = FlashIndex::<CosineKernel>::build(tolerance, prepared)
+    /// Build a new cosine flash index with Rayon-backed library preparation
+    /// and internal index sorting.
+    ///
+    /// This constructor is available with the `rayon` feature. It accepts any
+    /// Rayon-compatible collection yielding borrowed spectra, such as `&[S]`
+    /// or `&Vec<S>`.
+    #[cfg(feature = "rayon")]
+    pub fn new_parallel<'a, S, I>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        spectra: I,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        S: Spectrum + Sync + 'a,
+        I: IntoParallelIterator<Item = &'a S>,
+    {
+        validate_cosine_index_config(mz_power, intensity_power, mz_tolerance)?;
+        let prepared =
+            prepare_cosine_library_parallel(mz_power, intensity_power, mz_tolerance, spectra)?;
+        let inner = FlashIndex::<CosineKernel>::build_parallel(mz_tolerance, prepared)
             .map_err(FlashCosineIndexError::Computation)?;
 
         Ok(Self {
@@ -653,35 +749,62 @@ impl FlashCosineThresholdIndex {
     where
         S: Spectrum + 'a,
     {
-        validate_non_negative_tolerance(mz_tolerance).map_err(FlashCosineIndexError::Config)?;
-        ensure_finite(mz_power, "mz_power").map_err(FlashCosineIndexError::Computation)?;
-        ensure_finite(intensity_power, "intensity_power")
-            .map_err(FlashCosineIndexError::Computation)?;
-        ensure_finite(score_threshold, "score_threshold")
-            .map_err(FlashCosineIndexError::Computation)?;
-
-        let tolerance = mz_tolerance;
-        let mut prepared: Vec<(f64, Vec<f64>, Vec<f64>)> = Vec::new();
-
-        for spectrum in spectra {
-            let mz_vals: Vec<f64> = spectrum.mz().map(SpectrumFloat::to_f64).collect();
-            let data_vals = normalized_peak_products(spectrum, mz_power, intensity_power)
-                .map_err(FlashCosineIndexError::Computation)?;
-
-            validate_well_separated(&mz_vals, tolerance, "library spectrum")
-                .map_err(FlashCosineIndexError::Computation)?;
-
-            let precursor_f64 = ensure_finite(spectrum.precursor_mz().to_f64(), "precursor_mz")
-                .map_err(FlashCosineIndexError::Computation)?;
-
-            prepared.push((precursor_f64, mz_vals, data_vals));
-        }
+        validate_cosine_threshold_index_config(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            score_threshold,
+        )?;
+        let prepared = prepare_cosine_library(mz_power, intensity_power, mz_tolerance, spectra)?;
 
         let prefix_postings = ThresholdPrefixPostings::build(&prepared, |data_vals| {
             l2_threshold_prefix_indices(data_vals, score_threshold)
         })
         .map_err(FlashCosineIndexError::Computation)?;
-        let inner = FlashIndex::<CosineKernel>::build(tolerance, prepared)
+        let inner = FlashIndex::<CosineKernel>::build(mz_tolerance, prepared)
+            .map_err(FlashCosineIndexError::Computation)?;
+
+        Ok(Self {
+            inner,
+            mz_power,
+            intensity_power,
+            score_threshold,
+            prefix_postings,
+        })
+    }
+
+    /// Build a threshold-specialized cosine index with Rayon-backed library
+    /// preparation and internal index sorting.
+    ///
+    /// This constructor is available with the `rayon` feature. It accepts any
+    /// Rayon-compatible collection yielding borrowed spectra, such as `&[S]`
+    /// or `&Vec<S>`.
+    #[cfg(feature = "rayon")]
+    pub fn new_parallel<'a, S, I>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        score_threshold: f64,
+        spectra: I,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        S: Spectrum + Sync + 'a,
+        I: IntoParallelIterator<Item = &'a S>,
+    {
+        validate_cosine_threshold_index_config(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            score_threshold,
+        )?;
+        let prepared =
+            prepare_cosine_library_parallel(mz_power, intensity_power, mz_tolerance, spectra)?;
+
+        let prefix_postings = ThresholdPrefixPostings::build(&prepared, |data_vals| {
+            l2_threshold_prefix_indices(data_vals, score_threshold)
+        })
+        .map_err(FlashCosineIndexError::Computation)?;
+        let inner = FlashIndex::<CosineKernel>::build_parallel(mz_tolerance, prepared)
             .map_err(FlashCosineIndexError::Computation)?;
 
         Ok(Self {
@@ -1421,6 +1544,70 @@ mod tests {
             .expect("stateful modified search should work");
         assert_eq!(modified, modified_with_state);
         assert_eq!(modified[0].spectrum_id, 0);
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn parallel_cosine_index_matches_sequential_constructor() {
+        let library = [
+            make_spectrum(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+            make_spectrum(500.0, &[(100.05, 10.0), (200.05, 20.0)]),
+            make_spectrum(500.0, &[(300.0, 10.0), (400.0, 20.0)]),
+        ];
+        let sequential = FlashCosineIndex::new(0.0, 1.0, 0.1, library.iter())
+            .expect("sequential index should build");
+        let parallel = FlashCosineIndex::new_parallel(0.0, 1.0, 0.1, library.as_slice())
+            .expect("parallel index should build");
+
+        assert_eq!(sequential.search(&library[0]), parallel.search(&library[0]));
+        assert_eq!(
+            sequential.search_top_k_threshold(&library[0], 2, 0.8),
+            parallel.search_top_k_threshold(&library[0], 2, 0.8)
+        );
+
+        let shifted_query = make_spectrum(510.0, &[(110.0, 10.0), (210.0, 20.0)]);
+        assert_eq!(
+            sequential.search_modified(&shifted_query),
+            parallel.search_modified(&shifted_query)
+        );
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn parallel_threshold_index_matches_sequential_constructor() {
+        let library = [
+            make_spectrum(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+            make_spectrum(500.0, &[(100.05, 10.0), (200.05, 20.0)]),
+            make_spectrum(500.0, &[(300.0, 10.0), (400.0, 20.0)]),
+        ];
+        let sequential = FlashCosineThresholdIndex::new(0.0, 1.0, 0.1, 0.8, library.iter())
+            .expect("sequential threshold index should build");
+        let parallel =
+            FlashCosineThresholdIndex::new_parallel(0.0, 1.0, 0.1, 0.8, library.as_slice())
+                .expect("parallel threshold index should build");
+
+        assert_eq!(sequential.n_prefix_peaks(), parallel.n_prefix_peaks());
+        assert_eq!(sequential.search(&library[0]), parallel.search(&library[0]));
+        assert_eq!(
+            sequential.search_top_k_indexed(0, 2),
+            parallel.search_top_k_indexed(0, 2)
+        );
+
+        let mut sequential_state = sequential.new_search_state();
+        let mut parallel_state = parallel.new_search_state();
+        let mut sequential_hits = Vec::new();
+        let mut parallel_hits = Vec::new();
+        sequential
+            .for_each_indexed_with_state(0, &mut sequential_state, |hit| {
+                sequential_hits.push(hit);
+            })
+            .expect("sequential indexed search should work");
+        parallel
+            .for_each_indexed_with_state(0, &mut parallel_state, |hit| {
+                parallel_hits.push(hit);
+            })
+            .expect("parallel indexed search should work");
+        assert_eq!(sequential_hits, parallel_hits);
     }
 
     #[test]

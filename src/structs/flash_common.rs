@@ -8,10 +8,49 @@ use core::cmp::Ordering;
 use core::ops::{Deref, DerefMut};
 
 use bitvec::prelude::*;
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 use super::similarity_errors::SimilarityComputationError;
 
 const PREFIX_PRUNING_MIN_THRESHOLD: f64 = 0.85;
+
+pub(crate) type PreparedFlashSpectrum = (f64, Vec<f64>, Vec<f64>);
+pub(crate) type PreparedFlashSpectra = Vec<PreparedFlashSpectrum>;
+type PrefixEntries = Vec<(f64, u32)>;
+
+#[derive(Clone, Copy)]
+enum SortBackend {
+    Sequential,
+    #[cfg(feature = "rayon")]
+    Parallel,
+}
+
+fn compare_indexed_values(values: &[f64], left: u32, right: u32) -> Ordering {
+    values[left as usize]
+        .total_cmp(&values[right as usize])
+        .then_with(|| left.cmp(&right))
+}
+
+fn sort_permutation_by_values(perm: &mut [u32], values: &[f64], backend: SortBackend) {
+    match backend {
+        SortBackend::Sequential => {
+            perm.sort_unstable_by(|&left, &right| compare_indexed_values(values, left, right));
+        }
+        #[cfg(feature = "rayon")]
+        SortBackend::Parallel => {
+            perm.par_sort_unstable_by(|&left, &right| compare_indexed_values(values, left, right));
+        }
+    }
+}
+
+fn sort_prefix_entries(prefix_entries: &mut [(f64, u32)]) {
+    prefix_entries.sort_unstable_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| left.1.cmp(&right.1))
+    });
+}
 
 struct SearchBitVec(BitVec);
 
@@ -280,10 +319,10 @@ pub(crate) struct ThresholdPrefixPostings {
 
 impl ThresholdPrefixPostings {
     pub(crate) fn build(
-        spectra: &[(f64, Vec<f64>, Vec<f64>)],
+        spectra: &[PreparedFlashSpectrum],
         mut prefix_indices: impl FnMut(&[f64]) -> Vec<usize>,
     ) -> Result<Self, SimilarityComputationError> {
-        let mut prefix_entries: Vec<(f64, u32)> = Vec::new();
+        let mut prefix_entries = PrefixEntries::new();
         let mut spectrum_prefix_offsets = Vec::with_capacity(spectra.len() + 1);
         let mut spectrum_prefix_mz = Vec::new();
         spectrum_prefix_offsets.push(0);
@@ -301,11 +340,7 @@ impl ThresholdPrefixPostings {
             spectrum_prefix_offsets.push(offset);
         }
 
-        prefix_entries.sort_unstable_by(|left, right| {
-            left.0
-                .total_cmp(&right.0)
-                .then_with(|| left.1.cmp(&right.1))
-        });
+        sort_prefix_entries(&mut prefix_entries);
 
         let mut prefix_mz = Vec::with_capacity(prefix_entries.len());
         let mut prefix_spec_id = Vec::with_capacity(prefix_entries.len());
@@ -701,7 +736,24 @@ impl<K: FlashKernel> FlashIndex<K> {
     /// spectra or total peaks exceeds `u32::MAX`.
     pub(crate) fn build(
         tolerance: f64,
-        spectra: Vec<(f64, Vec<f64>, Vec<f64>)>,
+        spectra: PreparedFlashSpectra,
+    ) -> Result<Self, SimilarityComputationError> {
+        Self::build_with_sort(tolerance, spectra, SortBackend::Sequential)
+    }
+
+    /// Build the index from prepared spectrum data using Rayon-backed sorting.
+    #[cfg(feature = "rayon")]
+    pub(crate) fn build_parallel(
+        tolerance: f64,
+        spectra: PreparedFlashSpectra,
+    ) -> Result<Self, SimilarityComputationError> {
+        Self::build_with_sort(tolerance, spectra, SortBackend::Parallel)
+    }
+
+    fn build_with_sort(
+        tolerance: f64,
+        spectra: PreparedFlashSpectra,
+        sort_backend: SortBackend,
     ) -> Result<Self, SimilarityComputationError> {
         let n_spectra: u32 =
             u32::try_from(spectra.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
@@ -740,9 +792,7 @@ impl<K: FlashKernel> FlashIndex<K> {
 
         // Build a permutation array and sort it by m/z.
         let mut product_perm: Vec<u32> = (0..total_peaks as u32).collect();
-        product_perm.sort_unstable_by(|&a, &b| {
-            peak_mz_flat[a as usize].total_cmp(&peak_mz_flat[b as usize])
-        });
+        sort_permutation_by_values(&mut product_perm, &peak_mz_flat, sort_backend);
 
         // Build old insertion index → new sorted index mapping.
         let mut old_to_new = alloc::vec![0u32; total_peaks];
@@ -763,9 +813,7 @@ impl<K: FlashKernel> FlashIndex<K> {
 
         // Build a permutation for NL entries sorted by neutral loss value.
         let mut nl_perm: Vec<u32> = (0..total_peaks as u32).collect();
-        nl_perm.sort_unstable_by(|&a, &b| {
-            peak_nl_flat[a as usize].total_cmp(&peak_nl_flat[b as usize])
-        });
+        sort_permutation_by_values(&mut nl_perm, &peak_nl_flat, sort_backend);
 
         // Scatter into sorted NL arrays, remapping product index.
         let mut nl_value = Vec::with_capacity(total_peaks);
