@@ -15,12 +15,19 @@ use super::cosine_common::{
 };
 use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
 use super::flash_common::{
-    DirectThresholdSearch, FlashIndex, FlashKernel, FlashSearchResult, PreparedFlashSpectra,
-    PreparedFlashSpectrum, SearchState, TopKSearchResults, TopKSearchState, convert_flash_value,
-    convert_flash_values, flash_values_to_f64,
+    DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashKernel,
+    FlashSearchResult, PreparedFlashSpectra, PreparedFlashSpectrum, SearchState,
+    SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults,
+    TopKSearchState, convert_flash_value, convert_flash_values, flash_values_to_f64,
+    spectrum_block_size,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{SpectraIndex, Spectrum, SpectrumFloat};
+
+#[cfg(feature = "experimental_reordered_index")]
+use super::flash_common::reorder_prepared_spectra_by_signature;
+
+const ENTROPY_BLOCK_PRUNING_MIN_THRESHOLD: f64 = 0.75;
 
 // ---------------------------------------------------------------------------
 // EntropyKernel
@@ -169,8 +176,49 @@ where
         .collect()
 }
 
+fn build_entropy_block_upper_bounds<P: SpectrumFloat>(
+    prepared: &[PreparedFlashSpectrum<P>],
+    mz_tolerance: f64,
+) -> Result<SpectrumBlockUpperBoundIndex, SimilarityComputationError> {
+    SpectrumBlockUpperBoundIndex::build(
+        prepared,
+        mz_tolerance,
+        spectrum_block_size(DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE),
+        |_, spectrum| Ok(spectrum.data.iter().map(|&value| value.to_f64()).collect()),
+    )
+}
+
+#[derive(Clone, Copy)]
+struct EntropyBlockPruning<'a, P: SpectrumFloat> {
+    upper_bounds: &'a SpectrumBlockUpperBoundIndex,
+    products: &'a SpectrumBlockProductIndex<P>,
+}
+
+fn prepare_entropy_block_pruned_candidate_blocks<P, Q>(
+    block_pruning: EntropyBlockPruning<'_, P>,
+    inner: &FlashIndex<EntropyKernel, P>,
+    query_mz: &[Q],
+    query_data: &[Q],
+    score_threshold: f64,
+    state: &mut SearchState,
+) where
+    P: SpectrumFloat + Sync,
+    Q: SpectrumFloat,
+{
+    block_pruning.upper_bounds.prepare_allowed_blocks(
+        query_mz,
+        inner.tolerance,
+        entropy_raw_threshold(score_threshold),
+        state,
+        |query_index, block_max_intensity| {
+            entropy_pair(query_data[query_index].to_f64(), block_max_intensity)
+        },
+    );
+}
+
 fn for_each_entropy_threshold_prepared<P, Q, Emit>(
     inner: &FlashIndex<EntropyKernel, P>,
+    block_pruning: EntropyBlockPruning<'_, P>,
     query_mz: &[Q],
     query_data: &[Q],
     score_threshold: f64,
@@ -181,6 +229,7 @@ fn for_each_entropy_threshold_prepared<P, Q, Emit>(
     Q: SpectrumFloat,
     Emit: FnMut(FlashSearchResult),
 {
+    state.reset_diagnostics();
     if score_threshold <= 0.0 {
         inner.for_each_direct_with_state(query_mz, query_data, &(), state, emit);
         return;
@@ -192,7 +241,42 @@ fn for_each_entropy_threshold_prepared<P, Q, Emit>(
     state.prepare_additive_threshold_order(query_data, entropy_peak_upper_bound);
     let prefix_len = state.threshold_prefix_len_by_target(entropy_raw_threshold(score_threshold));
     let query_order: Vec<usize> = state.query_order()[..prefix_len].to_vec();
-    inner.mark_candidates_from_query_prefix_indices(query_mz, &query_order, state);
+    if score_threshold >= ENTROPY_BLOCK_PRUNING_MIN_THRESHOLD {
+        prepare_entropy_block_pruned_candidate_blocks(
+            block_pruning,
+            inner,
+            query_mz,
+            query_data,
+            score_threshold,
+            state,
+        );
+        let mut results_emitted = 0usize;
+        inner.for_each_allowed_block_raw_score(
+            query_mz,
+            query_data,
+            block_pruning.products,
+            state,
+            |spec_id, raw, count| {
+                if raw < entropy_raw_threshold(score_threshold) {
+                    return;
+                }
+
+                let score = EntropyKernel::finalize(raw, count, &(), &());
+                if score > 0.0 && score >= score_threshold {
+                    results_emitted = results_emitted.saturating_add(1);
+                    emit(FlashSearchResult {
+                        spectrum_id: inner.public_spectrum_id(spec_id),
+                        score,
+                        n_matches: count,
+                    });
+                }
+            },
+        );
+        state.add_results_emitted(results_emitted);
+        return;
+    } else {
+        inner.mark_candidates_from_query_prefix_indices(query_mz, &query_order, state);
+    }
 
     let mut target_raw_score = |_: &()| entropy_raw_threshold(score_threshold);
     let mut library_bound = |_: &()| 1.0_f64;
@@ -212,6 +296,7 @@ fn for_each_entropy_threshold_prepared<P, Q, Emit>(
 
 fn for_each_entropy_top_k_prepared<P, Q, Emit>(
     inner: &FlashIndex<EntropyKernel, P>,
+    block_pruning: EntropyBlockPruning<'_, P>,
     search: DirectThresholdSearch<'_, EntropyKernel, Q>,
     k: usize,
     state: &mut SearchState,
@@ -222,6 +307,7 @@ fn for_each_entropy_top_k_prepared<P, Q, Emit>(
     Q: SpectrumFloat,
     Emit: FnMut(FlashSearchResult),
 {
+    state.reset_diagnostics();
     let mut top_k = TopKSearchResults::new(k, search.score_threshold, top_k_state);
     if k == 0 || search.score_threshold > 1.0 || inner.n_spectra == 0 || search.query_mz.is_empty()
     {
@@ -229,19 +315,56 @@ fn for_each_entropy_top_k_prepared<P, Q, Emit>(
         return;
     }
 
-    state.prepare_additive_threshold_order(search.query_data, entropy_peak_upper_bound);
     state.ensure_candidate_capacity(inner.n_spectra as usize);
+    let use_block_filter = search.score_threshold >= ENTROPY_BLOCK_PRUNING_MIN_THRESHOLD;
+    if use_block_filter {
+        prepare_entropy_block_pruned_candidate_blocks(
+            block_pruning,
+            inner,
+            search.query_mz,
+            search.query_data,
+            search.score_threshold,
+            state,
+        );
 
+        inner.for_each_allowed_block_raw_score(
+            search.query_mz,
+            search.query_data,
+            block_pruning.products,
+            state,
+            |spec_id, raw, count| {
+                if raw < entropy_raw_threshold(top_k.pruning_score()) {
+                    return;
+                }
+
+                let score = EntropyKernel::finalize(raw, count, search.query_meta, &());
+                if score > 0.0 && score >= search.score_threshold {
+                    top_k.push(FlashSearchResult {
+                        spectrum_id: inner.public_spectrum_id(spec_id),
+                        score,
+                        n_matches: count,
+                    });
+                }
+            },
+        );
+        state.add_results_emitted(top_k.len());
+        top_k.emit(emit);
+        return;
+    }
+
+    state.prepare_additive_threshold_order(search.query_data, entropy_peak_upper_bound);
+    let mut candidates_rescored = 0usize;
     let query_order_len = state.query_order().len();
     for order_position in 0..query_order_len {
         let query_index = state.query_order()[order_position];
         let qmz = search.query_mz[query_index];
 
-        inner.for_each_product_spectrum_in_window(qmz, |spec_id| {
+        let visited = inner.for_each_product_spectrum_in_window(qmz, |spec_id| {
             if state.is_candidate(spec_id) {
                 return;
             }
             state.mark_candidate(spec_id);
+            candidates_rescored = candidates_rescored.saturating_add(1);
 
             let (raw, count) =
                 inner.direct_score_for_spectrum(search.query_mz, search.query_data, spec_id);
@@ -252,12 +375,13 @@ fn for_each_entropy_top_k_prepared<P, Q, Emit>(
             let score = EntropyKernel::finalize(raw, count, search.query_meta, &());
             if score > 0.0 {
                 top_k.push(FlashSearchResult {
-                    spectrum_id: spec_id,
+                    spectrum_id: inner.public_spectrum_id(spec_id),
                     score,
                     n_matches: count,
                 });
             }
         });
+        state.add_product_postings_visited(visited);
 
         let processed_prefix_len = order_position + 1;
         if state.query_suffix_bound_at(processed_prefix_len)
@@ -268,6 +392,8 @@ fn for_each_entropy_top_k_prepared<P, Q, Emit>(
     }
 
     state.reset_candidates();
+    state.add_candidates_rescored(candidates_rescored);
+    state.add_results_emitted(top_k.len());
     top_k.emit(emit);
 }
 
@@ -302,6 +428,8 @@ fn for_each_entropy_top_k_prepared<P, Q, Emit>(
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub struct FlashEntropyIndex<P: SpectrumFloat = f64> {
     inner: FlashIndex<EntropyKernel, P>,
+    block_upper_bounds: SpectrumBlockUpperBoundIndex,
+    block_products: SpectrumBlockProductIndex<P>,
     weighted: bool,
     mz_power_f64: f64,
     intensity_power_f64: f64,
@@ -425,11 +553,81 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             spectra,
         )?;
 
-        let inner = FlashIndex::<EntropyKernel, P>::build(mz_tolerance, prepared)
+        Self::from_prepared_library(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            weighted,
+            prepared,
+            SpectrumIdMap::identity(),
+        )
+    }
+
+    /// Build a new entropy flash index after internally reordering spectra by
+    /// a deterministic peak-signature heuristic.
+    ///
+    /// This constructor is experimental. It preserves public spectrum ids and
+    /// indexed-query ids while changing only the internal spectrum-block order.
+    #[cfg(feature = "experimental_reordered_index")]
+    pub fn new_reordered_by_signature<'a, S>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        weighted: bool,
+        spectra: impl IntoIterator<Item = &'a S>,
+    ) -> Result<Self, FlashEntropyIndexError>
+    where
+        S: Spectrum + 'a,
+    {
+        validate_entropy_index_config(mz_power, intensity_power, mz_tolerance)?;
+
+        let prepared = prepare_entropy_library::<P, S>(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            weighted,
+            spectra,
+        )?;
+        let (prepared, spectrum_id_map) =
+            reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
+                .map_err(FlashEntropyIndexError::Computation)?;
+
+        Self::from_prepared_library(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            weighted,
+            prepared,
+            spectrum_id_map,
+        )
+    }
+
+    fn from_prepared_library(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        weighted: bool,
+        prepared: PreparedFlashSpectra<P>,
+        spectrum_id_map: SpectrumIdMap,
+    ) -> Result<Self, FlashEntropyIndexError> {
+        let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, mz_tolerance)
             .map_err(FlashEntropyIndexError::Computation)?;
+        let block_products = SpectrumBlockProductIndex::build(
+            &prepared,
+            spectrum_block_size(DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE),
+        )
+        .map_err(FlashEntropyIndexError::Computation)?;
+        let inner = FlashIndex::<EntropyKernel, P>::build_with_spectrum_id_map(
+            mz_tolerance,
+            prepared,
+            spectrum_id_map,
+        )
+        .map_err(FlashEntropyIndexError::Computation)?;
 
         Ok(Self {
             inner,
+            block_upper_bounds,
+            block_products,
             weighted,
             mz_power_f64: mz_power,
             intensity_power_f64: intensity_power,
@@ -465,11 +663,72 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             spectra,
         )?;
 
+        let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, mz_tolerance)
+            .map_err(FlashEntropyIndexError::Computation)?;
+        let block_products = SpectrumBlockProductIndex::build(
+            &prepared,
+            spectrum_block_size(DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE),
+        )
+        .map_err(FlashEntropyIndexError::Computation)?;
         let inner = FlashIndex::<EntropyKernel, P>::build_parallel(mz_tolerance, prepared)
             .map_err(FlashEntropyIndexError::Computation)?;
 
         Ok(Self {
             inner,
+            block_upper_bounds,
+            block_products,
+            weighted,
+            mz_power_f64: mz_power,
+            intensity_power_f64: intensity_power,
+        })
+    }
+
+    /// Build a reordered entropy flash index with Rayon-backed library
+    /// preparation and index sorting.
+    #[cfg(all(feature = "rayon", feature = "experimental_reordered_index"))]
+    pub fn new_parallel_reordered_by_signature<'a, S, I>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        weighted: bool,
+        spectra: I,
+    ) -> Result<Self, FlashEntropyIndexError>
+    where
+        P: Send,
+        S: Spectrum + Sync + 'a,
+        I: IntoParallelIterator<Item = &'a S>,
+    {
+        validate_entropy_index_config(mz_power, intensity_power, mz_tolerance)?;
+
+        let prepared = prepare_entropy_library_parallel::<P, S, I>(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            weighted,
+            spectra,
+        )?;
+        let (prepared, spectrum_id_map) =
+            reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
+                .map_err(FlashEntropyIndexError::Computation)?;
+
+        let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, mz_tolerance)
+            .map_err(FlashEntropyIndexError::Computation)?;
+        let block_products = SpectrumBlockProductIndex::build(
+            &prepared,
+            spectrum_block_size(DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE),
+        )
+        .map_err(FlashEntropyIndexError::Computation)?;
+        let inner = FlashIndex::<EntropyKernel, P>::build_parallel_with_spectrum_id_map(
+            mz_tolerance,
+            prepared,
+            spectrum_id_map,
+        )
+        .map_err(FlashEntropyIndexError::Computation)?;
+
+        Ok(Self {
+            inner,
+            block_upper_bounds,
+            block_products,
             weighted,
             mz_power_f64: mz_power,
             intensity_power_f64: intensity_power,
@@ -480,6 +739,14 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
     /// across multiple queries to avoid per-query allocation.
     pub fn new_search_state(&self) -> SearchState {
         self.inner.new_search_state()
+    }
+
+    fn indexed_query_slices(
+        &self,
+        query_id: u32,
+    ) -> Result<(&[P], &[P]), SimilarityComputationError> {
+        let internal_query_id = self.inner.internal_spectrum_id(query_id)?;
+        Ok(self.inner.spectrum_slices(internal_query_id))
     }
 
     /// Direct (unshifted) search against the library.
@@ -504,6 +771,45 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         Ok(self
             .inner
             .search_direct_with_state(&query_mz, &query_data, &(), state))
+    }
+
+    /// Direct search for a query spectrum that is already in this index.
+    ///
+    /// This avoids re-normalizing and validating the query spectrum, which is
+    /// the intended path for indexed self-similarity workloads.
+    pub fn search_indexed(
+        &self,
+        query_id: u32,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        let mut state = self.new_search_state();
+        self.search_indexed_with_state(query_id, &mut state)
+    }
+
+    /// Direct indexed search using caller-provided scratch state.
+    pub fn search_indexed_with_state(
+        &self,
+        query_id: u32,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        let mut results = Vec::new();
+        self.for_each_indexed_with_state(query_id, state, |result| results.push(result))?;
+        Ok(results)
+    }
+
+    /// Stream direct search results for a query spectrum already in this index.
+    pub fn for_each_indexed_with_state<Emit>(
+        &self,
+        query_id: u32,
+        state: &mut SearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        Emit: FnMut(FlashSearchResult),
+    {
+        let (query_mz, query_data) = self.indexed_query_slices(query_id)?;
+        self.inner
+            .for_each_direct_with_state(query_mz, query_data, &(), state, emit);
+        Ok(())
     }
 
     /// Direct search that returns only results with
@@ -540,6 +846,30 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         Ok(results)
     }
 
+    /// Thresholded search for a query spectrum already in this index.
+    pub fn search_threshold_indexed(
+        &self,
+        query_id: u32,
+        score_threshold: f64,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        let mut state = self.new_search_state();
+        self.search_threshold_indexed_with_state(query_id, score_threshold, &mut state)
+    }
+
+    /// Thresholded indexed search using caller-provided scratch state.
+    pub fn search_threshold_indexed_with_state(
+        &self,
+        query_id: u32,
+        score_threshold: f64,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        let mut results = Vec::new();
+        self.for_each_threshold_indexed_with_state(query_id, score_threshold, state, |result| {
+            results.push(result);
+        })?;
+        Ok(results)
+    }
+
     /// Thresholded direct search that emits each selected result.
     pub fn for_each_threshold_with_state<S, Emit>(
         &self,
@@ -556,8 +886,40 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         let (query_mz, query_data) = self.prepare_query(query)?;
         for_each_entropy_threshold_prepared(
             &self.inner,
+            EntropyBlockPruning {
+                upper_bounds: &self.block_upper_bounds,
+                products: &self.block_products,
+            },
             &query_mz,
             &query_data,
+            score_threshold,
+            state,
+            emit,
+        );
+        Ok(())
+    }
+
+    /// Stream thresholded results for a query spectrum already in this index.
+    pub fn for_each_threshold_indexed_with_state<Emit>(
+        &self,
+        query_id: u32,
+        score_threshold: f64,
+        state: &mut SearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        Emit: FnMut(FlashSearchResult),
+    {
+        ensure_finite(score_threshold, "score_threshold")?;
+        let (query_mz, query_data) = self.indexed_query_slices(query_id)?;
+        for_each_entropy_threshold_prepared(
+            &self.inner,
+            EntropyBlockPruning {
+                upper_bounds: &self.block_upper_bounds,
+                products: &self.block_products,
+            },
+            query_mz,
+            query_data,
             score_threshold,
             state,
             emit,
@@ -612,6 +974,27 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         self.search_top_k_threshold_with_state(query, k, 0.0, state)
     }
 
+    /// Return the best `k` entropy results for a query spectrum already in this
+    /// index.
+    pub fn search_top_k_indexed(
+        &self,
+        query_id: u32,
+        k: usize,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        let mut state = self.new_search_state();
+        self.search_top_k_indexed_with_state(query_id, k, &mut state)
+    }
+
+    /// Indexed top-k direct search using caller-provided scratch state.
+    pub fn search_top_k_indexed_with_state(
+        &self,
+        query_id: u32,
+        k: usize,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        self.search_top_k_threshold_indexed_with_state(query_id, k, 0.0, state)
+    }
+
     /// Direct search that returns the best `k` results with
     /// `score >= score_threshold`.
     pub fn search_top_k_threshold<S>(
@@ -652,6 +1035,39 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         Ok(results)
     }
 
+    /// Indexed top-k search with `score >= score_threshold`.
+    pub fn search_top_k_threshold_indexed(
+        &self,
+        query_id: u32,
+        k: usize,
+        score_threshold: f64,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        let mut state = self.new_search_state();
+        self.search_top_k_threshold_indexed_with_state(query_id, k, score_threshold, &mut state)
+    }
+
+    /// Indexed thresholded top-k search using caller-provided scratch state.
+    pub fn search_top_k_threshold_indexed_with_state(
+        &self,
+        query_id: u32,
+        k: usize,
+        score_threshold: f64,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> {
+        ensure_finite(score_threshold, "score_threshold")?;
+        let mut top_k_state = TopKSearchState::new();
+        let mut results = Vec::new();
+        self.for_each_top_k_threshold_indexed_with_state(
+            query_id,
+            k,
+            score_threshold,
+            state,
+            &mut top_k_state,
+            |result| results.push(result),
+        )?;
+        Ok(results)
+    }
+
     /// Stream the best `k` direct entropy results using caller-provided
     /// scratch state.
     pub fn for_each_top_k_with_state<S, Emit>(
@@ -667,6 +1083,22 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         Emit: FnMut(FlashSearchResult),
     {
         self.for_each_top_k_threshold_with_state(query, k, 0.0, state, top_k_state, emit)
+    }
+
+    /// Stream the best `k` entropy results for a query spectrum already in this
+    /// index.
+    pub fn for_each_top_k_indexed_with_state<Emit>(
+        &self,
+        query_id: u32,
+        k: usize,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        Emit: FnMut(FlashSearchResult),
+    {
+        self.for_each_top_k_threshold_indexed_with_state(query_id, k, 0.0, state, top_k_state, emit)
     }
 
     /// Stream the best `k` thresholded entropy results using caller-provided
@@ -688,9 +1120,49 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         let (query_mz, query_data) = self.prepare_query(query)?;
         for_each_entropy_top_k_prepared(
             &self.inner,
+            EntropyBlockPruning {
+                upper_bounds: &self.block_upper_bounds,
+                products: &self.block_products,
+            },
             DirectThresholdSearch {
                 query_mz: &query_mz,
                 query_data: &query_data,
+                query_meta: &(),
+                score_threshold,
+            },
+            k,
+            state,
+            top_k_state,
+            emit,
+        );
+        Ok(())
+    }
+
+    /// Stream indexed thresholded top-k entropy results using caller-provided
+    /// scratch state.
+    pub fn for_each_top_k_threshold_indexed_with_state<Emit>(
+        &self,
+        query_id: u32,
+        k: usize,
+        score_threshold: f64,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        Emit: FnMut(FlashSearchResult),
+    {
+        ensure_finite(score_threshold, "score_threshold")?;
+        let (query_mz, query_data) = self.indexed_query_slices(query_id)?;
+        for_each_entropy_top_k_prepared(
+            &self.inner,
+            EntropyBlockPruning {
+                upper_bounds: &self.block_upper_bounds,
+                products: &self.block_products,
+            },
+            DirectThresholdSearch {
+                query_mz,
+                query_data,
                 query_meta: &(),
                 score_threshold,
             },

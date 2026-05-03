@@ -17,6 +17,8 @@ mem_size = ["dep:mem_dbg_crate", "mem_dbg_crate/derive", "mem_dbg_crate/half", "
 mem_dbg = ["std", "mem_size", "mem_dbg_crate/std", "geometric-traits/mem_dbg"]
 proptest = ["dep:proptest"]
 rayon = ["std", "dep:rayon"]
+experimental_block_size_env = ["std"]
+experimental_reordered_index = []
 
 [dependencies]
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", default-features = false, features = ["alloc"] }
@@ -60,6 +62,10 @@ harness = false
 
 [[bench]]
 name = "index_search"
+harness = false
+
+[[bench]]
+name = "index_top_k_large"
 harness = false
 
 [[bench]]

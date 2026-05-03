@@ -5,6 +5,11 @@
 //! - modified cosine: `FlashCosineIndex::search_modified` vs `ModifiedLinearCosine`
 //! - entropy: `FlashEntropyIndex::search` vs `LinearEntropy` over all library spectra
 //! - modified entropy: `FlashEntropyIndex::search_modified` vs `ModifiedLinearEntropy`
+//!
+//! Top-k scaling knobs:
+//! - `INDEX_SEARCH_TOP_K_LIBRARY_SIZE=500000`
+//! - `INDEX_SEARCH_TOP_K_QUERY_COUNT=128`
+//! - `INDEX_SEARCH_TOP_K=16`
 
 use std::hint::black_box;
 
@@ -23,6 +28,14 @@ const TOP_K_LIBRARY_SIZE: usize = 50_000;
 const TOP_K_QUERY_COUNT: usize = 32;
 const TOP_K_CLUSTER_SIZE: usize = 256;
 const RANDOM_BASE_SEED: u64 = 0xDEAD_BEEF_CAFE_BABE;
+
+fn parse_usize_env(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(default)
+}
 
 #[inline]
 fn nonzero_seed(seed: u64) -> u64 {
@@ -277,7 +290,7 @@ fn bench_index_search(c: &mut Criterion) {
     let flash_cosine =
         FlashCosineIndex::<f64>::new(mz_power, intensity_power, mz_tolerance, library.iter())
             .expect("flash cosine index should build");
-    let top_k = 8_usize;
+    let top_k = parse_usize_env("INDEX_SEARCH_TOP_K", 16);
     let flash_entropy =
         FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, mz_tolerance, true, library.iter())
             .expect("flash entropy index should build");
@@ -310,7 +323,10 @@ fn bench_index_search(c: &mut Criterion) {
     });
     cosine_group.finish();
 
-    let top_k_library = build_clustered_spectra(TOP_K_LIBRARY_SIZE, RANDOM_BASE_SEED ^ 0xC05E_C05E);
+    let top_k_library_size = parse_usize_env("INDEX_SEARCH_TOP_K_LIBRARY_SIZE", TOP_K_LIBRARY_SIZE);
+    let top_k_library = build_clustered_spectra(top_k_library_size, RANDOM_BASE_SEED ^ 0xC05E_C05E);
+    let top_k_query_count = parse_usize_env("INDEX_SEARCH_TOP_K_QUERY_COUNT", TOP_K_QUERY_COUNT)
+        .min(top_k_library.len());
     let flash_cosine_top_k = FlashCosineIndex::<f64>::new(
         mz_power,
         intensity_power,
@@ -344,7 +360,9 @@ fn bench_index_search(c: &mut Criterion) {
                 b.iter(|| {
                     let mut total_score = 0.0;
                     let mut total_matches = 0usize;
-                    for query in top_k_library.iter().take(TOP_K_QUERY_COUNT) {
+                    let mut total_postings_visited = 0usize;
+                    let mut total_candidates_rescored = 0usize;
+                    for query in top_k_library.iter().take(top_k_query_count) {
                         flash_cosine_top_k
                             .for_each_top_k_threshold_with_state(
                                 black_box(query),
@@ -358,8 +376,16 @@ fn bench_index_search(c: &mut Criterion) {
                                 },
                             )
                             .expect("top-k threshold search should succeed");
+                        let diagnostics = state.diagnostics();
+                        total_postings_visited += diagnostics.product_postings_visited;
+                        total_candidates_rescored += diagnostics.candidates_rescored;
                     }
-                    black_box((total_score, total_matches))
+                    black_box((
+                        total_score,
+                        total_matches,
+                        total_postings_visited,
+                        total_candidates_rescored,
+                    ))
                 })
             },
         );
@@ -371,7 +397,7 @@ fn bench_index_search(c: &mut Criterion) {
                 b.iter(|| {
                     let mut total_score = 0.0;
                     let mut total_matches = 0usize;
-                    for query in top_k_library.iter().take(TOP_K_QUERY_COUNT) {
+                    for query in top_k_library.iter().take(top_k_query_count) {
                         let results = flash_cosine_top_k
                             .search_threshold_with_state(
                                 black_box(query),
@@ -397,7 +423,10 @@ fn bench_index_search(c: &mut Criterion) {
                 b.iter(|| {
                     let mut total_score = 0.0;
                     let mut total_matches = 0usize;
-                    for query_id in 0..TOP_K_QUERY_COUNT {
+                    let mut total_product_postings = 0usize;
+                    let mut total_prefix_postings = 0usize;
+                    let mut total_candidates_rescored = 0usize;
+                    for query_id in 0..top_k_query_count {
                         flash_cosine_threshold_top_k
                             .for_each_top_k_indexed_with_state(
                                 black_box(query_id as u32),
@@ -410,8 +439,18 @@ fn bench_index_search(c: &mut Criterion) {
                                 },
                             )
                             .expect("indexed top-k threshold search should succeed");
+                        let diagnostics = state.diagnostics();
+                        total_product_postings += diagnostics.product_postings_visited;
+                        total_prefix_postings += diagnostics.prefix_postings_visited;
+                        total_candidates_rescored += diagnostics.candidates_rescored;
                     }
-                    black_box((total_score, total_matches))
+                    black_box((
+                        total_score,
+                        total_matches,
+                        total_product_postings,
+                        total_prefix_postings,
+                        total_candidates_rescored,
+                    ))
                 })
             },
         );
@@ -423,7 +462,10 @@ fn bench_index_search(c: &mut Criterion) {
                 b.iter(|| {
                     let mut total_score = 0.0;
                     let mut total_matches = 0usize;
-                    for query_id in 0..TOP_K_QUERY_COUNT {
+                    let mut total_product_postings = 0usize;
+                    let mut total_prefix_postings = 0usize;
+                    let mut total_candidates_rescored = 0usize;
+                    for query_id in 0..top_k_query_count {
                         let mut results = Vec::new();
                         flash_cosine_threshold_top_k
                             .for_each_indexed_with_state(
@@ -438,8 +480,18 @@ fn bench_index_search(c: &mut Criterion) {
                         let (score, matches) = summarize_results(&results);
                         total_score += score;
                         total_matches += matches;
+                        let diagnostics = state.diagnostics();
+                        total_product_postings += diagnostics.product_postings_visited;
+                        total_prefix_postings += diagnostics.prefix_postings_visited;
+                        total_candidates_rescored += diagnostics.candidates_rescored;
                     }
-                    black_box((total_score, total_matches))
+                    black_box((
+                        total_score,
+                        total_matches,
+                        total_product_postings,
+                        total_prefix_postings,
+                        total_candidates_rescored,
+                    ))
                 })
             },
         );
@@ -459,7 +511,9 @@ fn bench_index_search(c: &mut Criterion) {
                 b.iter(|| {
                     let mut total_score = 0.0;
                     let mut total_matches = 0usize;
-                    for query in top_k_library.iter().take(TOP_K_QUERY_COUNT) {
+                    let mut total_postings_visited = 0usize;
+                    let mut total_candidates_rescored = 0usize;
+                    for query in top_k_library.iter().take(top_k_query_count) {
                         flash_entropy_top_k
                             .for_each_top_k_threshold_with_state(
                                 black_box(query),
@@ -473,8 +527,16 @@ fn bench_index_search(c: &mut Criterion) {
                                 },
                             )
                             .expect("top-k entropy threshold search should succeed");
+                        let diagnostics = state.diagnostics();
+                        total_postings_visited += diagnostics.product_postings_visited;
+                        total_candidates_rescored += diagnostics.candidates_rescored;
                     }
-                    black_box((total_score, total_matches))
+                    black_box((
+                        total_score,
+                        total_matches,
+                        total_postings_visited,
+                        total_candidates_rescored,
+                    ))
                 })
             },
         );
@@ -486,7 +548,7 @@ fn bench_index_search(c: &mut Criterion) {
                 b.iter(|| {
                     let mut total_score = 0.0;
                     let mut total_matches = 0usize;
-                    for query in top_k_library.iter().take(TOP_K_QUERY_COUNT) {
+                    for query in top_k_library.iter().take(top_k_query_count) {
                         let results = flash_entropy_top_k
                             .search_threshold_with_state(
                                 black_box(query),

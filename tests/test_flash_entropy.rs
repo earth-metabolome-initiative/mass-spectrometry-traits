@@ -534,6 +534,233 @@ fn thresholded_top_k_matches_filtered_direct_search() {
 }
 
 #[test]
+fn indexed_entropy_queries_match_external_queries() {
+    let spectra = reference_spectra();
+
+    for weighted in [true, false] {
+        let index = FlashEntropyIndex::<f64>::new(
+            0.0_f64,
+            1.0_f64,
+            0.1_f64,
+            weighted,
+            spectra.iter().map(|(_, s)| s),
+        )
+        .expect("index build should succeed");
+        let query_id = 0_u32;
+        let query = &spectra[query_id as usize].1;
+        let mut state = index.new_search_state();
+
+        let direct_expected = index.search(query).expect("external search should work");
+        let indexed = index
+            .search_indexed_with_state(query_id, &mut state)
+            .expect("indexed search should work");
+        assert_results_close(indexed, direct_expected.clone(), "indexed direct");
+
+        for threshold in [0.0_f64, 0.5, 0.9, 1.1] {
+            let threshold_expected = index
+                .search_threshold_with_state(query, threshold, &mut state)
+                .expect("external threshold search should work");
+            let threshold_indexed = index
+                .search_threshold_indexed_with_state(query_id, threshold, &mut state)
+                .expect("indexed threshold search should work");
+            assert_results_close(
+                threshold_indexed,
+                threshold_expected.clone(),
+                &format!("indexed threshold weighted={weighted} threshold={threshold}"),
+            );
+
+            let top_k_expected = top_k_threshold_expected(direct_expected.clone(), 3, threshold);
+            let top_k_indexed = index
+                .search_top_k_threshold_indexed_with_state(query_id, 3, threshold, &mut state)
+                .expect("indexed threshold top-k should work");
+            assert_results_close(
+                top_k_indexed,
+                top_k_expected.clone(),
+                &format!("indexed threshold top-k weighted={weighted} threshold={threshold}"),
+            );
+
+            let mut top_k_state = TopKSearchState::new();
+            let mut streamed = Vec::new();
+            index
+                .for_each_top_k_threshold_indexed_with_state(
+                    query_id,
+                    3,
+                    threshold,
+                    &mut state,
+                    &mut top_k_state,
+                    |result| streamed.push(result),
+                )
+                .expect("streamed indexed threshold top-k should work");
+            assert_results_close(
+                streamed,
+                top_k_expected,
+                &format!(
+                    "streamed indexed threshold top-k weighted={weighted} threshold={threshold}"
+                ),
+            );
+        }
+
+        assert!(
+            index
+                .search_top_k_indexed_with_state(query_id, 0, &mut state)
+                .expect("zero-k indexed search should work")
+                .is_empty()
+        );
+
+        let mut streamed_top_k = Vec::new();
+        let mut top_k_state = TopKSearchState::new();
+        index
+            .for_each_top_k_indexed_with_state(
+                query_id,
+                2,
+                &mut state,
+                &mut top_k_state,
+                |result| streamed_top_k.push(result),
+            )
+            .expect("streamed indexed top-k should work");
+        assert_results_close(
+            streamed_top_k,
+            top_k_expected(direct_expected, 2),
+            "streamed indexed top-k",
+        );
+    }
+}
+
+#[test]
+fn entropy_thresholded_top_k_prunes_low_bound_spectrum_blocks_without_losing_hits() {
+    let high_similarity = make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 10.0), (300.0, 10.0)]);
+    let low_similarity = make_spectrum_f64(500.0, &[(100.0, 10.0)]);
+
+    let mut spectra = Vec::new();
+    for _ in 0..256 {
+        spectra.push(high_similarity.clone());
+    }
+    for _ in 0..4 {
+        spectra.push(low_similarity.clone());
+    }
+
+    let index = FlashEntropyIndex::<f64>::unweighted(0.1_f64, spectra.iter())
+        .expect("entropy index should build");
+    let expected = top_k_threshold_expected(
+        index
+            .search(&spectra[0])
+            .expect("direct search should work"),
+        4,
+        0.9,
+    );
+
+    let mut indexed_state = index.new_search_state();
+    let indexed = index
+        .search_top_k_threshold_indexed_with_state(0, 4, 0.9, &mut indexed_state)
+        .expect("indexed entropy top-k should work");
+    assert_results_close(
+        indexed,
+        expected.clone(),
+        "indexed entropy block-pruned top-k",
+    );
+
+    let indexed_diagnostics = indexed_state.diagnostics();
+    assert_eq!(indexed_diagnostics.spectrum_blocks_evaluated, 2);
+    assert_eq!(indexed_diagnostics.spectrum_blocks_allowed, 1);
+    assert_eq!(indexed_diagnostics.spectrum_blocks_pruned, 1);
+    assert_eq!(indexed_diagnostics.candidates_marked, 256);
+
+    let mut external_state = index.new_search_state();
+    let external = index
+        .search_top_k_threshold_with_state(&spectra[0], 4, 0.9, &mut external_state)
+        .expect("external entropy top-k should work");
+    assert_results_close(external, expected, "external entropy block-pruned top-k");
+
+    let external_diagnostics = external_state.diagnostics();
+    assert_eq!(external_diagnostics.spectrum_blocks_evaluated, 2);
+    assert_eq!(external_diagnostics.spectrum_blocks_allowed, 1);
+    assert_eq!(external_diagnostics.spectrum_blocks_pruned, 1);
+    assert_eq!(external_diagnostics.candidates_marked, 256);
+}
+
+#[cfg(feature = "experimental_reordered_index")]
+#[test]
+fn reordered_entropy_index_preserves_public_ids_for_indexed_queries() {
+    let spectra = [
+        make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (150.0, 20.0)]),
+        make_spectrum_f64(500.0, &[(100.05, 11.0), (150.05, 19.0)]),
+        make_spectrum_f64(700.0, &[(400.05, 11.0), (450.05, 19.0)]),
+    ];
+    let baseline = FlashEntropyIndex::<f64>::unweighted(0.1_f64, spectra.iter())
+        .expect("baseline entropy index should build");
+    let reordered =
+        FlashEntropyIndex::<f64>::new_reordered_by_signature(0.0, 1.0, 0.1, false, spectra.iter())
+            .expect("reordered entropy index should build");
+
+    for query_id in 0..spectra.len() as u32 {
+        let mut baseline_state = baseline.new_search_state();
+        let mut reordered_state = reordered.new_search_state();
+        let baseline_hits = baseline
+            .search_top_k_threshold_indexed_with_state(query_id, 3, 0.9, &mut baseline_state)
+            .expect("baseline indexed top-k should work");
+        let reordered_hits = reordered
+            .search_top_k_threshold_indexed_with_state(query_id, 3, 0.9, &mut reordered_state)
+            .expect("reordered indexed top-k should work");
+
+        assert_results_close(
+            reordered_hits,
+            baseline_hits,
+            &format!("reordered entropy indexed top-k query_id={query_id}"),
+        );
+        assert!(
+            reordered
+                .search_top_k_threshold_indexed(query_id, 1, 0.9)
+                .expect("single top-k should work")
+                .iter()
+                .any(|hit| hit.spectrum_id == query_id),
+            "query {query_id} should retain its public self id"
+        );
+    }
+}
+
+#[test]
+fn indexed_entropy_queries_validate_ids_and_thresholds() {
+    let spectra = reference_spectra();
+    let index = FlashEntropyIndex::<f64>::weighted(0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
+    let mut state = index.new_search_state();
+    let out_of_bounds_id = spectra.len() as u32;
+
+    assert_eq!(
+        index
+            .search_indexed_with_state(out_of_bounds_id, &mut state)
+            .expect_err("out-of-bounds indexed search should fail"),
+        SimilarityComputationError::IndexOverflow
+    );
+    assert_eq!(
+        index
+            .search_threshold_indexed_with_state(out_of_bounds_id, 0.5, &mut state)
+            .expect_err("out-of-bounds indexed threshold search should fail"),
+        SimilarityComputationError::IndexOverflow
+    );
+    assert_eq!(
+        index
+            .search_top_k_threshold_indexed_with_state(out_of_bounds_id, 2, 0.5, &mut state)
+            .expect_err("out-of-bounds indexed threshold top-k should fail"),
+        SimilarityComputationError::IndexOverflow
+    );
+
+    assert_eq!(
+        index
+            .search_threshold_indexed_with_state(0, f64::NAN, &mut state)
+            .expect_err("non-finite indexed threshold should fail"),
+        SimilarityComputationError::NonFiniteValue("score_threshold")
+    );
+    assert_eq!(
+        index
+            .search_top_k_threshold_indexed_with_state(0, 2, f64::NAN, &mut state)
+            .expect_err("non-finite indexed top-k threshold should fail"),
+        SimilarityComputationError::NonFiniteValue("score_threshold")
+    );
+}
+
+#[test]
 fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
     let library = [
         make_spectrum_f64(300.0, &[(100.0, 10.0), (200.0, 5.0)]),

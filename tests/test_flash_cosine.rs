@@ -583,6 +583,74 @@ fn threshold_index_top_k_matches_thresholded_results_for_external_and_indexed_qu
     let direct_index =
         FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
             .expect("direct index build should succeed");
+
+    let query_id = 0_u32;
+    let query = &spectra[query_id as usize].1;
+
+    for threshold in [0.85_f64, 0.9, 0.95] {
+        let threshold_index = FlashCosineThresholdIndex::<f64>::new(
+            1.0_f64,
+            1.0_f64,
+            0.1_f64,
+            threshold,
+            spectra.iter().map(|(_, s)| s),
+        )
+        .expect("threshold index build should succeed");
+
+        for k in [0_usize, 1, 2, 16] {
+            let expected_external = top_k_expected(
+                direct_index.search(query).expect("search should succeed"),
+                k,
+                threshold_index.score_threshold(),
+            );
+            let actual_external = threshold_index
+                .search_top_k(query, k)
+                .expect("external threshold top-k should succeed");
+            assert_results_close(
+                actual_external,
+                expected_external,
+                &format!("threshold top-k external query threshold={threshold} k={k}"),
+            );
+
+            let mut emitted = Vec::new();
+            let mut state = threshold_index.new_search_state();
+            threshold_index
+                .for_each_indexed_with_state(query_id, &mut state, |hit| emitted.push(hit))
+                .expect("indexed threshold search should succeed");
+            let expected_indexed = top_k_expected(emitted, k, threshold_index.score_threshold());
+
+            let actual_indexed = threshold_index
+                .search_top_k_indexed_with_state(query_id, k, &mut state)
+                .expect("indexed threshold top-k should succeed");
+            assert_results_close(
+                actual_indexed,
+                expected_indexed.clone(),
+                &format!("threshold top-k indexed query threshold={threshold} k={k}"),
+            );
+
+            let mut top_k_state = TopKSearchState::new();
+            let mut streamed_indexed = Vec::new();
+            threshold_index
+                .for_each_top_k_indexed_with_state(
+                    query_id,
+                    k,
+                    &mut state,
+                    &mut top_k_state,
+                    |result| streamed_indexed.push(result),
+                )
+                .expect("streamed indexed threshold top-k should succeed");
+            assert_results_close(
+                streamed_indexed,
+                expected_indexed,
+                &format!("streamed threshold top-k indexed query threshold={threshold} k={k}"),
+            );
+        }
+    }
+}
+
+#[test]
+fn threshold_indexed_top_k_reports_dynamic_block_candidate_diagnostics() {
+    let spectra = reference_spectra();
     let threshold_index = FlashCosineThresholdIndex::<f64>::new(
         1.0_f64,
         1.0_f64,
@@ -593,56 +661,134 @@ fn threshold_index_top_k_matches_thresholded_results_for_external_and_indexed_qu
     .expect("threshold index build should succeed");
 
     let query_id = 0_u32;
-    let query = &spectra[query_id as usize].1;
-    let expected_external = top_k_expected(
-        direct_index.search(query).expect("search should succeed"),
-        2,
-        threshold_index.score_threshold(),
-    );
-    let actual_external = threshold_index
-        .search_top_k(query, 2)
-        .expect("external threshold top-k should succeed");
-    assert_results_close(
-        actual_external,
-        expected_external,
-        "threshold top-k external query",
-    );
-
-    let mut emitted = Vec::new();
     let mut state = threshold_index.new_search_state();
+    let mut emitted = Vec::new();
     threshold_index
         .for_each_indexed_with_state(query_id, &mut state, |hit| emitted.push(hit))
         .expect("indexed threshold search should succeed");
-    let expected_indexed = top_k_expected(emitted, 2, threshold_index.score_threshold());
-
-    let actual_indexed = threshold_index
-        .search_top_k_indexed_with_state(query_id, 2, &mut state)
-        .expect("indexed threshold top-k should succeed");
-    assert_results_close(
-        actual_indexed,
-        expected_indexed.clone(),
-        "threshold top-k indexed query",
-    );
+    let threshold_diagnostics = state.diagnostics();
 
     let mut top_k_state = TopKSearchState::new();
-    let mut streamed_indexed = Vec::new();
+    let mut top_k = Vec::new();
     threshold_index
-        .for_each_top_k_indexed_with_state(query_id, 2, &mut state, &mut top_k_state, |result| {
-            streamed_indexed.push(result)
+        .for_each_top_k_indexed_with_state(query_id, 2, &mut state, &mut top_k_state, |hit| {
+            top_k.push(hit)
         })
-        .expect("streamed indexed threshold top-k should succeed");
+        .expect("indexed top-k threshold search should succeed");
+    let top_k_diagnostics = state.diagnostics();
+
     assert_results_close(
-        streamed_indexed,
-        expected_indexed,
-        "streamed threshold top-k indexed query",
+        top_k,
+        top_k_expected(emitted, 2, threshold_index.score_threshold()),
+        "diagnostic top-k result",
+    );
+    assert!(top_k_diagnostics.product_postings_visited > 0);
+    assert_eq!(top_k_diagnostics.prefix_postings_visited, 0);
+    assert!(top_k_diagnostics.candidates_marked > 0);
+    assert_eq!(top_k_diagnostics.secondary_candidates_marked, 0);
+    assert_eq!(
+        top_k_diagnostics.candidates_rescored,
+        top_k_diagnostics.candidates_marked
+    );
+    assert!(top_k_diagnostics.candidates_marked <= threshold_diagnostics.candidates_marked);
+}
+
+#[test]
+fn threshold_index_top_k_prunes_low_bound_spectrum_blocks_without_losing_hits() {
+    let high_similarity = make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 10.0), (300.0, 10.0)]);
+    let low_similarity = make_spectrum_f64(500.0, &[(100.0, 10.0)]);
+
+    let mut spectra = Vec::new();
+    for _ in 0..1024 {
+        spectra.push(high_similarity.clone());
+    }
+    for _ in 0..4 {
+        spectra.push(low_similarity.clone());
+    }
+
+    let direct_index = FlashCosineIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter())
+        .expect("direct index should build");
+    let threshold_index =
+        FlashCosineThresholdIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, 0.9_f64, spectra.iter())
+            .expect("threshold index should build");
+
+    let expected = top_k_expected(
+        direct_index
+            .search(&spectra[0])
+            .expect("direct search should work"),
+        4,
+        threshold_index.score_threshold(),
     );
 
-    assert!(
-        threshold_index
-            .search_top_k_indexed_with_state(query_id, 0, &mut state)
-            .expect("zero-k indexed top-k should succeed")
-            .is_empty()
-    );
+    let mut indexed_state = threshold_index.new_search_state();
+    let indexed = threshold_index
+        .search_top_k_indexed_with_state(0, 4, &mut indexed_state)
+        .expect("indexed top-k should work");
+    assert_results_close(indexed, expected.clone(), "indexed block-pruned top-k");
+
+    let indexed_diagnostics = indexed_state.diagnostics();
+    assert_eq!(indexed_diagnostics.spectrum_blocks_evaluated, 2);
+    assert_eq!(indexed_diagnostics.spectrum_blocks_allowed, 1);
+    assert_eq!(indexed_diagnostics.spectrum_blocks_pruned, 1);
+    assert_eq!(indexed_diagnostics.candidates_marked, 1024);
+
+    let mut external_state = threshold_index.new_search_state();
+    let external = threshold_index
+        .search_top_k_with_state(&spectra[0], 4, &mut external_state)
+        .expect("external top-k should work");
+    assert_results_close(external, expected, "external block-pruned top-k");
+
+    let external_diagnostics = external_state.diagnostics();
+    assert_eq!(external_diagnostics.spectrum_blocks_evaluated, 2);
+    assert_eq!(external_diagnostics.spectrum_blocks_allowed, 1);
+    assert_eq!(external_diagnostics.spectrum_blocks_pruned, 1);
+    assert_eq!(external_diagnostics.candidates_marked, 1024);
+}
+
+#[cfg(feature = "experimental_reordered_index")]
+#[test]
+fn reordered_threshold_index_preserves_public_ids_for_indexed_queries() {
+    let spectra = [
+        make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (150.0, 20.0)]),
+        make_spectrum_f64(500.0, &[(100.05, 11.0), (150.05, 19.0)]),
+        make_spectrum_f64(700.0, &[(400.05, 11.0), (450.05, 19.0)]),
+    ];
+    let baseline = FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.9, spectra.iter())
+        .expect("baseline threshold index should build");
+    let reordered = FlashCosineThresholdIndex::<f64>::new_reordered_by_signature(
+        0.0,
+        1.0,
+        0.1,
+        0.9,
+        spectra.iter(),
+    )
+    .expect("reordered threshold index should build");
+
+    for query_id in 0..spectra.len() as u32 {
+        let mut baseline_state = baseline.new_search_state();
+        let mut reordered_state = reordered.new_search_state();
+        let baseline_hits = baseline
+            .search_top_k_indexed_with_state(query_id, 3, &mut baseline_state)
+            .expect("baseline indexed top-k should work");
+        let reordered_hits = reordered
+            .search_top_k_indexed_with_state(query_id, 3, &mut reordered_state)
+            .expect("reordered indexed top-k should work");
+
+        assert_results_close(
+            reordered_hits,
+            baseline_hits,
+            &format!("reordered indexed top-k query_id={query_id}"),
+        );
+        assert!(
+            reordered
+                .search_top_k_indexed(query_id, 1)
+                .expect("single top-k should work")
+                .iter()
+                .any(|hit| hit.spectrum_id == query_id),
+            "query {query_id} should retain its public self id"
+        );
+    }
 }
 
 #[test]

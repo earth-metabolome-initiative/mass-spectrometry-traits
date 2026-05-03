@@ -14,17 +14,19 @@ use super::cosine_common::{
     validate_well_separated,
 };
 use super::flash_common::{
-    DirectThresholdSearch, FlashIndex, FlashKernel, FlashSearchResult, PreparedFlashSpectra,
-    PreparedFlashSpectrum, SearchState, ThresholdPrefixPostings, TopKSearchResults,
-    TopKSearchState, convert_flash_value, convert_flash_values, flash_values_to_f64,
-    l2_threshold_prefix_indices,
+    DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashKernel,
+    FlashSearchResult, PreparedFlashSpectra, PreparedFlashSpectrum, SearchState,
+    SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex, SpectrumIdMap,
+    ThresholdPrefixPostings, TopKSearchResults, TopKSearchState, convert_flash_value,
+    convert_flash_values, flash_values_to_f64, l2_threshold_prefix_indices, spectrum_block_size,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{SpectraIndex, Spectrum, SpectrumFloat};
 
-const THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD: f64 = 0.85;
-const THRESHOLD_INDEX_TWO_SIDED_MIN_THRESHOLD: f64 = 0.85;
+#[cfg(feature = "experimental_reordered_index")]
+use super::flash_common::reorder_prepared_spectra_by_signature;
 
+const THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD: f64 = 0.85;
 // ---------------------------------------------------------------------------
 // CosineKernel
 // ---------------------------------------------------------------------------
@@ -195,6 +197,29 @@ where
         .collect()
 }
 
+fn build_cosine_block_upper_bounds<P: SpectrumFloat>(
+    prepared: &[PreparedFlashSpectrum<P>],
+    mz_tolerance: f64,
+) -> Result<SpectrumBlockUpperBoundIndex, SimilarityComputationError> {
+    SpectrumBlockUpperBoundIndex::build(
+        prepared,
+        mz_tolerance,
+        spectrum_block_size(DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE),
+        |_, spectrum| {
+            let norm = CosineKernel::spectrum_meta(&spectrum.data).0;
+            if norm == 0.0 {
+                return Ok(alloc::vec![0.0; spectrum.data.len()]);
+            }
+
+            Ok(spectrum
+                .data
+                .iter()
+                .map(|&data| data.to_f64().abs() / norm)
+                .collect())
+        },
+    )
+}
+
 /// Run exact cosine top-k over a prepared query while using the current kth
 /// score as an adaptive pruning bound.
 ///
@@ -213,15 +238,18 @@ fn for_each_cosine_top_k_prepared<P, Q, Emit>(
     Q: SpectrumFloat,
     Emit: FnMut(FlashSearchResult),
 {
+    state.reset_diagnostics();
     let mut top_k = TopKSearchResults::new(k, search.score_threshold, top_k_state);
     if k == 0 || search.score_threshold > 1.0 || inner.n_spectra == 0 || search.query_mz.is_empty()
     {
+        state.add_results_emitted(top_k.len());
         top_k.emit(emit);
         return;
     }
 
     let query_norm = search.query_meta.0;
     if query_norm == 0.0 {
+        state.add_results_emitted(top_k.len());
         top_k.emit(emit);
         return;
     }
@@ -234,7 +262,7 @@ fn for_each_cosine_top_k_prepared<P, Q, Emit>(
         let query_index = state.query_order()[order_position];
         let qmz = search.query_mz[query_index];
 
-        inner.for_each_product_spectrum_in_window(qmz, |spec_id| {
+        let visited = inner.for_each_product_spectrum_in_window(qmz, |spec_id| {
             if state.is_candidate(spec_id) {
                 return;
             }
@@ -255,12 +283,13 @@ fn for_each_cosine_top_k_prepared<P, Q, Emit>(
             let score = CosineKernel::finalize(raw, count, search.query_meta, lib_meta);
             if score > 0.0 {
                 top_k.push(FlashSearchResult {
-                    spectrum_id: spec_id,
+                    spectrum_id: inner.public_spectrum_id(spec_id),
                     score,
                     n_matches: count,
                 });
             }
         });
+        state.add_product_postings_visited(visited);
 
         let processed_prefix_len = order_position + 1;
         let pruning_score = top_k.pruning_score();
@@ -270,6 +299,7 @@ fn for_each_cosine_top_k_prepared<P, Q, Emit>(
     }
 
     state.reset_candidates();
+    state.add_results_emitted(top_k.len());
     top_k.emit(emit);
 }
 
@@ -765,6 +795,8 @@ pub struct FlashCosineThresholdIndex<P: SpectrumFloat = f64> {
     intensity_power: f64,
     score_threshold: f64,
     prefix_postings: ThresholdPrefixPostings<P>,
+    block_upper_bounds: SpectrumBlockUpperBoundIndex,
+    block_products: SpectrumBlockProductIndex<P>,
 }
 
 impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
@@ -792,12 +824,79 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         let prepared =
             prepare_cosine_library::<P, S>(mz_power, intensity_power, mz_tolerance, spectra)?;
 
+        Self::from_prepared_threshold_library(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            score_threshold,
+            prepared,
+            SpectrumIdMap::identity(),
+        )
+    }
+
+    /// Build a threshold-specialized cosine index after internally reordering
+    /// spectra by a deterministic peak-signature heuristic.
+    ///
+    /// This constructor is experimental. It preserves public spectrum ids and
+    /// indexed-query ids while changing only the internal spectrum-block order.
+    #[cfg(feature = "experimental_reordered_index")]
+    pub fn new_reordered_by_signature<'a, S>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        score_threshold: f64,
+        spectra: impl IntoIterator<Item = &'a S>,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        S: Spectrum + 'a,
+    {
+        validate_cosine_threshold_index_config(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            score_threshold,
+        )?;
+        let prepared =
+            prepare_cosine_library::<P, S>(mz_power, intensity_power, mz_tolerance, spectra)?;
+        let (prepared, spectrum_id_map) =
+            reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
+                .map_err(FlashCosineIndexError::Computation)?;
+
+        Self::from_prepared_threshold_library(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            score_threshold,
+            prepared,
+            spectrum_id_map,
+        )
+    }
+
+    fn from_prepared_threshold_library(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        score_threshold: f64,
+        prepared: PreparedFlashSpectra<P>,
+        spectrum_id_map: SpectrumIdMap,
+    ) -> Result<Self, FlashCosineIndexError> {
         let prefix_postings = ThresholdPrefixPostings::build(&prepared, |data_vals| {
             l2_threshold_prefix_indices(data_vals, score_threshold)
         })
         .map_err(FlashCosineIndexError::Computation)?;
-        let inner = FlashIndex::<CosineKernel, P>::build(mz_tolerance, prepared)
+        let block_upper_bounds = build_cosine_block_upper_bounds(&prepared, mz_tolerance)
             .map_err(FlashCosineIndexError::Computation)?;
+        let block_products = SpectrumBlockProductIndex::build(
+            &prepared,
+            spectrum_block_size(DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE),
+        )
+        .map_err(FlashCosineIndexError::Computation)?;
+        let inner = FlashIndex::<CosineKernel, P>::build_with_spectrum_id_map(
+            mz_tolerance,
+            prepared,
+            spectrum_id_map,
+        )
+        .map_err(FlashCosineIndexError::Computation)?;
 
         Ok(Self {
             inner,
@@ -805,6 +904,8 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             intensity_power,
             score_threshold,
             prefix_postings,
+            block_upper_bounds,
+            block_products,
         })
     }
 
@@ -844,6 +945,13 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             l2_threshold_prefix_indices(data_vals, score_threshold)
         })
         .map_err(FlashCosineIndexError::Computation)?;
+        let block_upper_bounds = build_cosine_block_upper_bounds(&prepared, mz_tolerance)
+            .map_err(FlashCosineIndexError::Computation)?;
+        let block_products = SpectrumBlockProductIndex::build(
+            &prepared,
+            spectrum_block_size(DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE),
+        )
+        .map_err(FlashCosineIndexError::Computation)?;
         let inner = FlashIndex::<CosineKernel, P>::build_parallel(mz_tolerance, prepared)
             .map_err(FlashCosineIndexError::Computation)?;
 
@@ -853,6 +961,68 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             intensity_power,
             score_threshold,
             prefix_postings,
+            block_upper_bounds,
+            block_products,
+        })
+    }
+
+    /// Build a reordered threshold-specialized cosine index with Rayon-backed
+    /// library preparation and index sorting.
+    #[cfg(all(feature = "rayon", feature = "experimental_reordered_index"))]
+    pub fn new_parallel_reordered_by_signature<'a, S, I>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        score_threshold: f64,
+        spectra: I,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        P: Send,
+        S: Spectrum + Sync + 'a,
+        I: IntoParallelIterator<Item = &'a S>,
+    {
+        validate_cosine_threshold_index_config(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            score_threshold,
+        )?;
+        let prepared = prepare_cosine_library_parallel::<P, S, I>(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            spectra,
+        )?;
+        let (prepared, spectrum_id_map) =
+            reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
+                .map_err(FlashCosineIndexError::Computation)?;
+
+        let prefix_postings = ThresholdPrefixPostings::build(&prepared, |data_vals| {
+            l2_threshold_prefix_indices(data_vals, score_threshold)
+        })
+        .map_err(FlashCosineIndexError::Computation)?;
+        let block_upper_bounds = build_cosine_block_upper_bounds(&prepared, mz_tolerance)
+            .map_err(FlashCosineIndexError::Computation)?;
+        let block_products = SpectrumBlockProductIndex::build(
+            &prepared,
+            spectrum_block_size(DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE),
+        )
+        .map_err(FlashCosineIndexError::Computation)?;
+        let inner = FlashIndex::<CosineKernel, P>::build_parallel_with_spectrum_id_map(
+            mz_tolerance,
+            prepared,
+            spectrum_id_map,
+        )
+        .map_err(FlashCosineIndexError::Computation)?;
+
+        Ok(Self {
+            inner,
+            mz_power,
+            intensity_power,
+            score_threshold,
+            prefix_postings,
+            block_upper_bounds,
+            block_products,
         })
     }
 
@@ -980,8 +1150,8 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             self.inner.tolerance,
         )?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
-        for_each_cosine_top_k_prepared(
-            &self.inner,
+        state.reset_diagnostics();
+        self.for_each_top_k_prepared_with_state(
             DirectThresholdSearch {
                 query_mz: &query_mz,
                 query_data: &query_data,
@@ -1014,6 +1184,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             self.inner.tolerance,
         )?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
+        state.reset_diagnostics();
         self.for_each_prepared_with_state(&query_mz, &query_data, &query_meta, state, emit);
         Ok(())
     }
@@ -1032,14 +1203,12 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
     where
         Emit: FnMut(FlashSearchResult),
     {
-        if query_id >= self.inner.n_spectra {
-            return Err(SimilarityComputationError::IndexOverflow);
-        }
+        let internal_query_id = self.inner.internal_spectrum_id(query_id)?;
+        let (query_mz, query_data) = self.inner.spectrum_slices(internal_query_id);
+        let query_meta = *self.inner.spectrum_meta(internal_query_id);
+        let query_prefix_mz = self.prefix_postings.spectrum_prefix_mz(internal_query_id);
 
-        let (query_mz, query_data) = self.inner.spectrum_slices(query_id);
-        let query_meta = *self.inner.spectrum_meta(query_id);
-        let query_prefix_mz = self.prefix_postings.spectrum_prefix_mz(query_id);
-
+        state.reset_diagnostics();
         self.for_each_prepared_indexed_with_state(
             query_mz,
             query_data,
@@ -1114,26 +1283,48 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
     where
         Emit: FnMut(FlashSearchResult),
     {
-        if query_id >= self.inner.n_spectra {
-            return Err(SimilarityComputationError::IndexOverflow);
-        }
+        let internal_query_id = self.inner.internal_spectrum_id(query_id)?;
+        let (query_mz, query_data) = self.inner.spectrum_slices(internal_query_id);
+        let query_meta = *self.inner.spectrum_meta(internal_query_id);
+        let query_prefix_mz = self.prefix_postings.spectrum_prefix_mz(internal_query_id);
 
-        let (query_mz, query_data) = self.inner.spectrum_slices(query_id);
-        let query_meta = *self.inner.spectrum_meta(query_id);
-        for_each_cosine_top_k_prepared(
-            &self.inner,
+        state.reset_diagnostics();
+        self.for_each_top_k_prepared_indexed_with_state(
             DirectThresholdSearch {
                 query_mz,
                 query_data,
                 query_meta: &query_meta,
                 score_threshold: self.score_threshold,
             },
+            query_prefix_mz,
             k,
             state,
             top_k_state,
             emit,
         );
         Ok(())
+    }
+
+    fn prepare_block_pruned_candidate_blocks<Q: SpectrumFloat>(
+        &self,
+        query_mz: &[Q],
+        query_data: &[Q],
+        query_meta: &CosineNorm,
+        minimum_score: f64,
+        state: &mut SearchState,
+    ) {
+        self.block_upper_bounds.prepare_allowed_blocks(
+            query_mz,
+            self.inner.tolerance,
+            minimum_score,
+            state,
+            |query_index, block_max_weight| {
+                if query_meta.0 == 0.0 {
+                    return 0.0;
+                }
+                query_data[query_index].to_f64().abs() / query_meta.0 * block_max_weight
+            },
+        );
     }
 
     fn for_each_prepared_with_state<Q: SpectrumFloat, Emit>(
@@ -1159,26 +1350,14 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             return;
         }
 
-        state.prepare_threshold_order(query_data);
-        let prefix_len = state.threshold_prefix_len(self.score_threshold);
-        let query_order: Vec<usize> = state.query_order()[..prefix_len].to_vec();
-
-        self.inner
-            .mark_candidates_from_query_prefix_indices(query_mz, &query_order, state);
-        if self.score_threshold < THRESHOLD_INDEX_TWO_SIDED_MIN_THRESHOLD {
-            self.emit_exact_query_prefix_candidates(
-                query_mz, query_data, query_meta, state, &mut emit,
-            );
-        } else {
-            self.inner.intersect_candidates_with_library_prefixes(
-                query_mz,
-                &self.prefix_postings,
-                state,
-            );
-            self.emit_exact_intersected_candidates(
-                query_mz, query_data, query_meta, state, &mut emit,
-            );
-        }
+        self.prepare_block_pruned_candidate_blocks(
+            query_mz,
+            query_data,
+            query_meta,
+            self.score_threshold,
+            state,
+        );
+        self.emit_allowed_block_scores(query_mz, query_data, query_meta, state, &mut emit);
     }
 
     fn for_each_prepared_indexed_with_state<Q: SpectrumFloat, Emit>(
@@ -1205,22 +1384,174 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             return;
         }
 
-        self.inner
-            .mark_candidates_from_query_prefix_mz(query_prefix_mz, state);
-        if self.score_threshold < THRESHOLD_INDEX_TWO_SIDED_MIN_THRESHOLD {
-            self.emit_exact_query_prefix_candidates(
-                query_mz, query_data, query_meta, state, &mut emit,
-            );
-        } else {
-            self.inner.intersect_candidates_with_library_prefixes(
-                query_mz,
-                &self.prefix_postings,
-                state,
-            );
-            self.emit_exact_intersected_candidates(
-                query_mz, query_data, query_meta, state, &mut emit,
-            );
+        self.prepare_block_pruned_candidate_blocks(
+            query_mz,
+            query_data,
+            query_meta,
+            self.score_threshold,
+            state,
+        );
+        let _ = query_prefix_mz;
+        self.emit_allowed_block_scores(query_mz, query_data, query_meta, state, &mut emit);
+    }
+
+    fn for_each_top_k_prepared_with_state<Q: SpectrumFloat, Emit>(
+        &self,
+        search: DirectThresholdSearch<'_, CosineKernel, Q>,
+        k: usize,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+    {
+        if self.score_threshold <= 0.0
+            || self.score_threshold < THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD
+        {
+            for_each_cosine_top_k_prepared(&self.inner, search, k, state, top_k_state, emit);
+            return;
         }
+
+        let mut top_k = TopKSearchResults::new(k, self.score_threshold, top_k_state);
+        if k == 0
+            || self.score_threshold > 1.0
+            || self.inner.n_spectra == 0
+            || search.query_mz.is_empty()
+        {
+            top_k.emit(emit);
+            return;
+        }
+
+        self.prepare_block_pruned_candidate_blocks(
+            search.query_mz,
+            search.query_data,
+            search.query_meta,
+            top_k.pruning_score(),
+            state,
+        );
+        self.push_allowed_block_top_k_candidates(search, state, &mut top_k);
+        state.add_results_emitted(top_k.len());
+        top_k.emit(emit);
+    }
+
+    fn for_each_top_k_prepared_indexed_with_state<Q: SpectrumFloat, Emit>(
+        &self,
+        search: DirectThresholdSearch<'_, CosineKernel, Q>,
+        query_prefix_mz: &[Q],
+        k: usize,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+    {
+        if self.score_threshold <= 0.0
+            || self.score_threshold < THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD
+        {
+            for_each_cosine_top_k_prepared(&self.inner, search, k, state, top_k_state, emit);
+            return;
+        }
+
+        let mut top_k = TopKSearchResults::new(k, self.score_threshold, top_k_state);
+        if k == 0
+            || self.score_threshold > 1.0
+            || self.inner.n_spectra == 0
+            || search.query_mz.is_empty()
+        {
+            top_k.emit(emit);
+            return;
+        }
+
+        self.prepare_block_pruned_candidate_blocks(
+            search.query_mz,
+            search.query_data,
+            search.query_meta,
+            top_k.pruning_score(),
+            state,
+        );
+        let _ = query_prefix_mz;
+        self.push_allowed_block_top_k_candidates(search, state, &mut top_k);
+        state.add_results_emitted(top_k.len());
+        top_k.emit(emit);
+    }
+
+    fn emit_allowed_block_scores<Q: SpectrumFloat, Emit>(
+        &self,
+        query_mz: &[Q],
+        query_data: &[Q],
+        query_meta: &CosineNorm,
+        state: &mut SearchState,
+        emit: &mut Emit,
+    ) where
+        Emit: FnMut(FlashSearchResult),
+    {
+        let mut results_emitted = 0usize;
+        self.inner.for_each_allowed_block_raw_score(
+            query_mz,
+            query_data,
+            &self.block_products,
+            state,
+            |spec_id, raw, count| {
+                let lib_meta = self.inner.spectrum_meta(spec_id);
+                let score = CosineKernel::finalize(raw, count, query_meta, lib_meta);
+                if score > 0.0 && score >= self.score_threshold {
+                    results_emitted = results_emitted.saturating_add(1);
+                    emit(FlashSearchResult {
+                        spectrum_id: self.inner.public_spectrum_id(spec_id),
+                        score,
+                        n_matches: count,
+                    });
+                }
+            },
+        );
+        state.add_results_emitted(results_emitted);
+    }
+
+    fn push_allowed_block_top_k_candidates<Q: SpectrumFloat>(
+        &self,
+        search: DirectThresholdSearch<'_, CosineKernel, Q>,
+        state: &mut SearchState,
+        top_k: &mut TopKSearchResults<'_>,
+    ) {
+        let query_norm = search.query_meta.0;
+        if query_norm == 0.0 {
+            state.reset_allowed_spectrum_blocks();
+            return;
+        }
+
+        state.prepare_threshold_order(search.query_data);
+        self.inner.score_allowed_block_candidates_by_query_order(
+            search.query_mz,
+            &self.block_products,
+            state,
+            top_k.pruning_score() * query_norm,
+            |spec_id| {
+                let lib_meta = self.inner.spectrum_meta(spec_id);
+                if lib_meta.0 == 0.0 {
+                    return top_k.pruning_score() * query_norm;
+                }
+
+                let target_raw = top_k.pruning_score() * query_norm * lib_meta.0;
+                let (raw, count) = self.inner.direct_score_for_spectrum(
+                    search.query_mz,
+                    search.query_data,
+                    spec_id,
+                );
+                if raw < target_raw {
+                    return top_k.pruning_score() * query_norm;
+                }
+
+                let score = CosineKernel::finalize(raw, count, search.query_meta, lib_meta);
+                if score > 0.0 && score >= self.score_threshold {
+                    top_k.push(FlashSearchResult {
+                        spectrum_id: self.inner.public_spectrum_id(spec_id),
+                        score,
+                        n_matches: count,
+                    });
+                }
+                top_k.pruning_score() * query_norm
+            },
+        );
     }
 
     fn for_each_direct_threshold_prepared<Q: SpectrumFloat, Emit>(
@@ -1245,62 +1576,6 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             emit,
             |lib_meta| self.score_threshold * query_norm * lib_meta.0,
             |lib_meta| lib_meta.0,
-        );
-    }
-
-    fn emit_exact_query_prefix_candidates<Q: SpectrumFloat, Emit>(
-        &self,
-        query_mz: &[Q],
-        query_data: &[Q],
-        query_meta: &CosineNorm,
-        state: &mut SearchState,
-        emit: &mut Emit,
-    ) where
-        Emit: FnMut(FlashSearchResult),
-    {
-        let query_norm = query_meta.0;
-        let mut target_raw_score =
-            |lib_meta: &CosineNorm| self.score_threshold * query_norm * lib_meta.0;
-        let mut library_bound = |lib_meta: &CosineNorm| lib_meta.0;
-        self.inner.emit_exact_primary_candidates(
-            DirectThresholdSearch {
-                query_mz,
-                query_data,
-                query_meta,
-                score_threshold: self.score_threshold,
-            },
-            state,
-            emit,
-            &mut target_raw_score,
-            &mut library_bound,
-        );
-    }
-
-    fn emit_exact_intersected_candidates<Q: SpectrumFloat, Emit>(
-        &self,
-        query_mz: &[Q],
-        query_data: &[Q],
-        query_meta: &CosineNorm,
-        state: &mut SearchState,
-        emit: &mut Emit,
-    ) where
-        Emit: FnMut(FlashSearchResult),
-    {
-        let query_norm = query_meta.0;
-        let mut target_raw_score =
-            |lib_meta: &CosineNorm| self.score_threshold * query_norm * lib_meta.0;
-        let mut library_bound = |lib_meta: &CosineNorm| lib_meta.0;
-        self.inner.emit_exact_secondary_candidates(
-            DirectThresholdSearch {
-                query_mz,
-                query_data,
-                query_meta,
-                score_threshold: self.score_threshold,
-            },
-            state,
-            emit,
-            &mut target_raw_score,
-            &mut library_bound,
         );
     }
 }
