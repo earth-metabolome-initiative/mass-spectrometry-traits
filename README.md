@@ -84,7 +84,10 @@ let indexed_best = threshold_index.search_top_k_indexed(0, 2).unwrap();
 assert_eq!(indexed_best[0].spectrum_id, 0);
 assert!(indexed_best.iter().any(|hit| hit.spectrum_id == 1));
 
+// Reuse both scratch buffers across queries when scanning an indexed library.
+// `SearchState` owns the per-query candidate buffers and diagnostics.
 let mut state = threshold_index.new_search_state();
+// `TopKSearchState` owns the heap/result buffers for maintaining the best k hits.
 let mut top_k_state = TopKSearchState::new();
 let mut edges = Vec::new();
 
