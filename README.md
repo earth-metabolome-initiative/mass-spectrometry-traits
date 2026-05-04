@@ -52,9 +52,11 @@ assert_eq!(
 
 ### Indices
 
-The regular cosine and entropy indices accept a cutoff at query time. `FlashCosineThresholdIndex` bakes one cutoff into the cosine index and is the intended path for thresholded indexed self-similarity; entropy keeps query-time thresholding only. `FlashCosineIndex`, `FlashCosineThresholdIndex`, and `FlashEntropyIndex` implement `SpectraIndex` for external-query search and top-k search with reusable scratch state.
+The regular cosine and entropy indices accept a cutoff at query time. `FlashCosineThresholdIndex` bakes one cutoff into the cosine index and is the intended path for thresholded indexed self-similarity; entropy keeps query-time thresholding only. `FlashCosineIndex`, `FlashCosineThresholdIndex`, and `FlashEntropyIndex` implement `SpectraIndex` for external-query search and top-k search with reusable scratch state. Flash indices can also enable an optional PEPmass/precursor m/z filter; when enabled, search uses a lazily built precursor-ordered posting index so spectra outside the configured precursor-mass window are skipped before most product-ion postings are scanned.
 
 Flash indices are generic over their stored peak precision, so the default `f64` examples below can be switched to `FlashCosineIndex::<f32>`, `FlashCosineThresholdIndex::<f32>`, or `FlashEntropyIndex::<f32>` when index memory is the limiting factor; half precision is also available for spectra whose m/z and intensity values remain representable at that precision.
+
+Index construction can report progress through `new_with_progress` constructors. The crate provides a small `FlashIndexBuildProgress` trait for custom reporters, and with the `indicatif` feature enabled an `indicatif::ProgressBar` can be passed directly. The PEPMASS reverse index is only built when a PEPMASS filter is enabled; use the `with_pepmass_tolerance_and_progress` variants if that lazy build should also report progress.
 
 ```rust
 use mass_spectrometry::prelude::*;
@@ -73,6 +75,12 @@ let spectra = vec![a, b, c];
 let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap();
 let hits = index.search_threshold(&spectra[0], 0.8).unwrap();
 assert!(hits.iter().any(|hit| hit.spectrum_id == 1));
+
+let pepmass_index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra)
+    .unwrap()
+    .with_pepmass_tolerance(0.5)
+    .unwrap();
+assert_eq!(pepmass_index.pepmass_filter().tolerance(), Some(0.5));
 
 let best = index.search_top_k_threshold(&spectra[0], 2, 0.8).unwrap();
 assert_eq!(best[0].spectrum_id, 0);
@@ -116,4 +124,14 @@ let entropy_index = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
 let entropy_best = entropy_index.search_top_k_threshold(&spectra[0], 2, 0.8).unwrap();
 assert_eq!(entropy_best[0].spectrum_id, 0);
 assert!(entropy_best.iter().any(|hit| hit.spectrum_id == 1));
+
+#[cfg(feature = "indicatif")]
+{
+    let progress = indicatif::ProgressBar::new(0);
+    let _index =
+        FlashCosineIndex::<f64>::new_with_progress(0.0, 1.0, 0.1, &spectra, &progress)
+            .unwrap()
+            .with_pepmass_tolerance_and_progress(0.5, &progress)
+            .unwrap();
+}
 ```
