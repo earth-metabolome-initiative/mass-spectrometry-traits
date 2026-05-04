@@ -187,7 +187,7 @@ fn index_build_progress_reports_construction_phases() {
             event,
             ProgressEvent::Phase(FlashIndexBuildPhase::BuildPrecursorIndex, _)
         )),
-        "PEPMASS reverse index should not be built during ordinary index construction"
+        "PEPMASS 2D index should not be built during ordinary index construction"
     );
     assert!(cosine_events.contains(&ProgressEvent::Finish));
 
@@ -203,7 +203,7 @@ fn index_build_progress_reports_construction_phases() {
     );
     assert!(
         cosine_events.contains(&ProgressEvent::Inc(precursor_progress_len)),
-        "PEPMASS reverse-index progress did not advance by expected length: {cosine_events:?}"
+        "PEPMASS 2D index progress did not advance by expected length: {cosine_events:?}"
     );
 
     let threshold_progress = RecordingProgress::default();
@@ -843,6 +843,94 @@ fn pepmass_filter_limits_cosine_search_paths() {
 }
 
 #[test]
+fn pepmass_filter_handles_bin_boundaries_without_false_hits() {
+    let library = [
+        make_spectrum_f64(100.0, &[(50.0, 10.0), (60.0, 20.0)]),
+        make_spectrum_f64(100.5, &[(50.0, 10.0), (60.0, 20.0)]),
+        make_spectrum_f64(100.9, &[(50.0, 10.0), (60.0, 20.0)]),
+        make_spectrum_f64(99.5, &[(50.0, 10.0), (60.0, 20.0)]),
+        make_spectrum_f64(99.49, &[(50.0, 10.0), (60.0, 20.0)]),
+    ];
+    let query = make_spectrum_f64(100.0, &[(50.0, 10.0), (60.0, 20.0)]);
+
+    let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
+        .expect("index build should succeed")
+        .with_pepmass_tolerance(0.5)
+        .expect("pepmass filter should be valid");
+
+    let direct_ids: Vec<_> = sorted_results(index.search(&query).expect("search should work"))
+        .into_iter()
+        .map(|hit| hit.spectrum_id)
+        .collect();
+    assert_eq!(direct_ids, vec![0, 1, 3]);
+
+    let modified_ids: Vec<_> = sorted_results(
+        index
+            .search_modified(&query)
+            .expect("modified search should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(modified_ids, vec![0, 1, 3]);
+}
+
+#[test]
+fn pepmass_2d_index_rebuilds_when_tolerance_changes() {
+    let library = [
+        make_spectrum_f64(100.0, &[(50.0, 10.0)]),
+        make_spectrum_f64(101.0, &[(50.0, 10.0)]),
+    ];
+    let progress = RecordingProgress::default();
+
+    let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
+        .expect("index build should succeed")
+        .with_pepmass_tolerance_and_progress(0.5, &progress)
+        .expect("pepmass filter should be valid");
+    let first_build_count = progress
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                ProgressEvent::Phase(FlashIndexBuildPhase::BuildPrecursorIndex, _)
+            )
+        })
+        .count();
+    assert_eq!(first_build_count, 1);
+
+    let index = index
+        .with_pepmass_tolerance_and_progress(0.5, &progress)
+        .expect("same pepmass tolerance should be reusable");
+    let same_tolerance_build_count = progress
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                ProgressEvent::Phase(FlashIndexBuildPhase::BuildPrecursorIndex, _)
+            )
+        })
+        .count();
+    assert_eq!(same_tolerance_build_count, first_build_count);
+
+    let _index = index
+        .with_pepmass_tolerance_and_progress(1.0, &progress)
+        .expect("changed pepmass tolerance should rebuild the 2D index");
+    let changed_tolerance_build_count = progress
+        .events()
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                ProgressEvent::Phase(FlashIndexBuildPhase::BuildPrecursorIndex, _)
+            )
+        })
+        .count();
+    assert_eq!(changed_tolerance_build_count, first_build_count + 1);
+}
+
+#[test]
 fn pepmass_filter_reduces_cosine_posting_scans() {
     let library: Vec<_> = (0..600)
         .map(|index| make_spectrum_f64(500.0 + index as f64, &[(100.0, 10.0)]))
@@ -875,7 +963,7 @@ fn pepmass_filter_reduces_cosine_posting_scans() {
     let filtered_visited = filtered_state.diagnostics().product_postings_visited;
     assert!(
         filtered_visited <= unfiltered_visited / 2,
-        "PEPMASS reverse index should reduce visited postings: {filtered_visited} vs {unfiltered_visited}"
+        "PEPMASS 2D index should reduce visited postings: {filtered_visited} vs {unfiltered_visited}"
     );
 }
 

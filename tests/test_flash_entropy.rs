@@ -84,7 +84,7 @@ fn entropy_index_build_progress_reports_construction_phases() {
     );
     assert!(
         events.contains(&ProgressEvent::Inc(precursor_progress_len)),
-        "PEPMASS reverse-index progress did not advance by expected length: {events:?}"
+        "PEPMASS 2D index progress did not advance by expected length: {events:?}"
     );
 }
 
@@ -654,6 +654,39 @@ fn pepmass_filter_limits_entropy_search_paths() {
 }
 
 #[test]
+fn pepmass_filter_handles_entropy_bin_boundaries_without_false_hits() {
+    let library = [
+        make_spectrum_f64(100.0, &[(50.0, 10.0), (60.0, 20.0)]),
+        make_spectrum_f64(100.5, &[(50.0, 10.0), (60.0, 20.0)]),
+        make_spectrum_f64(100.9, &[(50.0, 10.0), (60.0, 20.0)]),
+        make_spectrum_f64(99.5, &[(50.0, 10.0), (60.0, 20.0)]),
+        make_spectrum_f64(99.49, &[(50.0, 10.0), (60.0, 20.0)]),
+    ];
+    let query = make_spectrum_f64(100.0, &[(50.0, 10.0), (60.0, 20.0)]);
+
+    let index = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
+        .expect("index build should succeed")
+        .with_pepmass_tolerance(0.5)
+        .expect("pepmass filter should be valid");
+
+    let direct_ids: Vec<_> = sorted_results(index.search(&query).expect("search should work"))
+        .into_iter()
+        .map(|hit| hit.spectrum_id)
+        .collect();
+    assert_eq!(direct_ids, vec![0, 1, 3]);
+
+    let top_k_ids: Vec<_> = sorted_results(
+        index
+            .search_top_k_threshold(&query, 8, 0.8)
+            .expect("top-k search should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(top_k_ids, vec![0, 1, 3]);
+}
+
+#[test]
 fn pepmass_filter_reduces_entropy_posting_scans() {
     let library: Vec<_> = (0..600)
         .map(|index| make_spectrum_f64(500.0 + index as f64, &[(100.0, 10.0)]))
@@ -686,7 +719,7 @@ fn pepmass_filter_reduces_entropy_posting_scans() {
     let filtered_visited = filtered_state.diagnostics().product_postings_visited;
     assert!(
         filtered_visited <= unfiltered_visited / 2,
-        "PEPMASS reverse index should reduce visited postings: {filtered_visited} vs {unfiltered_visited}"
+        "PEPMASS 2D index should reduce visited postings: {filtered_visited} vs {unfiltered_visited}"
     );
 }
 

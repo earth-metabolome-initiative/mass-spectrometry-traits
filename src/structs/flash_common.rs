@@ -17,7 +17,6 @@ use crate::traits::{Spectrum, SpectrumFloat};
 const PREFIX_PRUNING_MIN_THRESHOLD: f64 = 0.85;
 pub(crate) const DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE: usize = 1024;
 pub(crate) const DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE: usize = 256;
-const DEFAULT_PRECURSOR_BLOCK_SIZE: usize = 256;
 const PRECURSOR_INDEX_PROGRESS_BATCH: usize = 8192;
 
 type PostingCsr = CSR2D<u32, u32, u32>;
@@ -114,7 +113,7 @@ pub enum FlashIndexBuildPhase {
     SortProductIndex,
     /// Sort the global neutral-loss postings by neutral-loss value.
     SortNeutralLossIndex,
-    /// Build the precursor-m/z ordered posting index used by PEPMASS filtering.
+    /// Build the 2D precursor/product posting index used by PEPMASS filtering.
     BuildPrecursorIndex,
     /// Index construction has completed.
     Finish,
@@ -245,7 +244,9 @@ where
     }
 }
 
-fn precursor_index_progress_len(
+/// Return the number of coarse work ticks reported while building the
+/// PEPMASS 2D index.
+fn pepmass_index_progress_len(
     n_spectra: usize,
     total_product_peaks: usize,
     total_neutral_loss_peaks: usize,
@@ -259,25 +260,47 @@ fn precursor_index_progress_len(
     u64::try_from(total).ok()
 }
 
-/// Build `(block, posting)` CSR entries by counting postings per precursor
-/// block. `posting_spec_id` is already in the desired within-block order, so a
-/// stable bucket fill is enough and avoids a full tuple sort.
-fn posting_entries_by_block<G>(
-    spectrum_to_block: &[u32],
+/// Choose the precursor-bin width for the PEPMASS 2D index.
+///
+/// A bin spans the full query PEPMASS window width, so any query overlaps only
+/// a small number of occupied bins. Zero-tolerance filters use a finite
+/// fallback width and rely on the final exact precursor check.
+fn pepmass_precursor_bin_width(filter: PepmassFilter) -> Option<f64> {
+    filter.tolerance().map(|tolerance| {
+        if tolerance > 0.0 {
+            2.0 * tolerance
+        } else {
+            1.0
+        }
+    })
+}
+
+/// Convert a precursor m/z value into the row bin used by the PEPMASS 2D index.
+#[inline]
+fn pepmass_precursor_bin_id(precursor_mz: f64, bin_width: f64) -> i64 {
+    (precursor_mz / bin_width).floor() as i64
+}
+
+/// Build `(precursor-bin-row, posting)` CSR entries by counting postings per
+/// occupied precursor bin. `posting_spec_id` is already in product-m/z or
+/// neutral-loss order, so stable bucketing preserves the searchable order
+/// inside each precursor bin without a full posting tuple sort.
+fn posting_entries_by_precursor_bin<G>(
+    spectrum_bin_row: &[u32],
     posting_spec_id: &[u32],
-    n_blocks: usize,
+    n_rows: usize,
     progress: &mut ProgressTicker<'_, G>,
 ) -> Result<Vec<(u32, u32)>, SimilarityComputationError>
 where
     G: FlashIndexBuildProgress + ?Sized,
 {
-    let mut counts = alloc::vec![0usize; n_blocks];
+    let mut counts = alloc::vec![0usize; n_rows];
     for &spec_id in posting_spec_id {
-        let &block_id = spectrum_to_block
+        let &row_id = spectrum_bin_row
             .get(spec_id as usize)
             .ok_or(SimilarityComputationError::IndexOverflow)?;
         let count = counts
-            .get_mut(block_id as usize)
+            .get_mut(row_id as usize)
             .ok_or(SimilarityComputationError::IndexOverflow)?;
         *count = count
             .checked_add(1)
@@ -285,7 +308,7 @@ where
         progress.tick_one();
     }
 
-    let mut offsets = Vec::with_capacity(n_blocks + 1);
+    let mut offsets = Vec::with_capacity(n_rows + 1);
     offsets.push(0usize);
     for &count in &counts {
         let next = offsets
@@ -296,21 +319,21 @@ where
         offsets.push(next);
     }
 
-    let mut next_offsets = offsets[..n_blocks].to_vec();
+    let mut next_offsets = offsets[..n_rows].to_vec();
     let mut entries = alloc::vec![(0u32, 0u32); posting_spec_id.len()];
     for (posting_index, &spec_id) in posting_spec_id.iter().enumerate() {
-        let &block_id = spectrum_to_block
+        let &row_id = spectrum_bin_row
             .get(spec_id as usize)
             .ok_or(SimilarityComputationError::IndexOverflow)?;
         let entry_offset = next_offsets
-            .get_mut(block_id as usize)
+            .get_mut(row_id as usize)
             .ok_or(SimilarityComputationError::IndexOverflow)?;
         let output_index = *entry_offset;
         *entry_offset = entry_offset
             .checked_add(1)
             .ok_or(SimilarityComputationError::IndexOverflow)?;
         entries[output_index] = (
-            block_id,
+            row_id,
             u32::try_from(posting_index).map_err(|_| SimilarityComputationError::IndexOverflow)?,
         );
         progress.tick_one();
@@ -907,9 +930,8 @@ pub(crate) struct DirectThresholdSearch<'a, K: FlashKernel, Q: SpectrumFloat> {
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub(crate) struct SpectrumBlockProductIndex<P: SpectrumFloat = f64> {
     block_size: u32,
+    n_blocks: u32,
     postings: PostingCsr,
-    block_min_precursor_mz: Vec<P>,
-    block_max_precursor_mz: Vec<P>,
     mz: Vec<P>,
     data: Vec<P>,
     spec_id: Vec<u32>,
@@ -929,24 +951,6 @@ impl<P: SpectrumFloat> SpectrumBlockProductIndex<P> {
         let total_peaks: usize = spectra.iter().map(|spectrum| spectrum.mz.len()).sum();
         let total_peaks_u32 =
             u32::try_from(total_peaks).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let mut block_min_precursor_mz = Vec::with_capacity(n_blocks);
-        let mut block_max_precursor_mz = Vec::with_capacity(n_blocks);
-
-        for block_start in (0..spectra.len()).step_by(block_size) {
-            let block_end = (block_start + block_size).min(spectra.len());
-            let mut min_precursor = spectra[block_start].precursor_mz;
-            let mut max_precursor = spectra[block_start].precursor_mz;
-            for spectrum in &spectra[block_start + 1..block_end] {
-                if spectrum.precursor_mz < min_precursor {
-                    min_precursor = spectrum.precursor_mz;
-                }
-                if spectrum.precursor_mz > max_precursor {
-                    max_precursor = spectrum.precursor_mz;
-                }
-            }
-            block_min_precursor_mz.push(min_precursor);
-            block_max_precursor_mz.push(max_precursor);
-        }
 
         let mut entries: Vec<(u32, P, P, u32)> = Vec::with_capacity(total_peaks);
         for (spec_id, spectrum) in spectra.iter().enumerate() {
@@ -981,33 +985,12 @@ impl<P: SpectrumFloat> SpectrumBlockProductIndex<P> {
 
         Ok(Self {
             block_size: block_size_u32,
+            n_blocks: n_blocks_u32,
             postings,
-            block_min_precursor_mz,
-            block_max_precursor_mz,
             mz,
             data,
             spec_id,
         })
-    }
-
-    #[inline]
-    pub(crate) fn block_may_match_precursor(
-        &self,
-        block_id: u32,
-        filter: PepmassFilter,
-        query_precursor_mz: Option<f64>,
-    ) -> bool {
-        let Some(tolerance) = filter.tolerance() else {
-            return true;
-        };
-        let Some(query_precursor_mz) = query_precursor_mz else {
-            return false;
-        };
-        let block_index = block_id as usize;
-        let min_precursor = self.block_min_precursor_mz[block_index].to_f64();
-        let max_precursor = self.block_max_precursor_mz[block_index].to_f64();
-        query_precursor_mz + tolerance >= min_precursor
-            && query_precursor_mz - tolerance <= max_precursor
     }
 
     #[inline]
@@ -1022,8 +1005,7 @@ impl<P: SpectrumFloat> SpectrumBlockProductIndex<P> {
         tolerance: f64,
         mut emit: impl FnMut(u32, P),
     ) -> usize {
-        let block_index = block_id as usize;
-        if block_index >= self.block_min_precursor_mz.len() {
+        if block_id >= self.n_blocks {
             return 0;
         }
 
@@ -1049,22 +1031,22 @@ impl<P: SpectrumFloat> SpectrumBlockProductIndex<P> {
     }
 }
 
-/// Product and neutral-loss postings grouped by precursor-m/z ordered spectra.
+/// Product and neutral-loss postings grouped by precursor-mass bins.
 ///
-/// This index is only used when a [`PepmassFilter`] is enabled. It first
-/// narrows the search to precursor-compatible spectrum blocks, then performs
-/// the usual product-m/z or neutral-loss binary searches inside those blocks.
-/// The stored entries are ids into the global product and neutral-loss posting
-/// arrays, so enabling this index adds one compact `u32` indirection per
-/// posting per axis instead of duplicating all peak values.
+/// This index is only used when a [`PepmassFilter`] is enabled. It answers the
+/// two-dimensional query "precursor m/z within the PEPMASS window and
+/// product/neutral-loss m/z within the peak window" by first selecting occupied
+/// precursor bins and then binary-searching the value-sorted posting ids inside
+/// those bins. Boundary bins may over-include spectra, so callers still apply
+/// the exact precursor check before scoring.
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(rec))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
-pub(crate) struct PrecursorBlockProductIndex<P: SpectrumFloat = f64> {
-    block_min_precursor_mz: Vec<P>,
-    block_max_precursor_mz: Vec<P>,
-    product_blocks: PostingCsr,
-    neutral_loss_blocks: PostingCsr,
+pub(crate) struct Pepmass2DPostingIndex {
+    bin_width: f64,
+    precursor_bins: Vec<i64>,
+    product_bins: PostingCsr,
+    neutral_loss_bins: PostingCsr,
 }
 
 #[derive(Clone, Copy)]
@@ -1082,42 +1064,31 @@ struct NeutralLossPostingSlices<'a, P: SpectrumFloat> {
     to_product: &'a [u32],
 }
 
-impl<P: SpectrumFloat> PrecursorBlockProductIndex<P> {
-    pub(crate) fn build<G>(
+impl Pepmass2DPostingIndex {
+    pub(crate) fn build<P, G>(
         spectrum_precursor_mz: &[P],
-        product_mz: &[P],
         product_spec_id: &[u32],
-        neutral_loss_value: &[P],
         neutral_loss_spec_id: &[u32],
-        block_size: usize,
+        filter: PepmassFilter,
         progress: &G,
     ) -> Result<Self, SimilarityComputationError>
     where
+        P: SpectrumFloat,
         G: FlashIndexBuildProgress + ?Sized,
     {
-        let block_size = block_size.max(1);
-        if product_mz.len() != product_spec_id.len()
-            || neutral_loss_value.len() != neutral_loss_spec_id.len()
-        {
-            return Err(SimilarityComputationError::InvalidParameter(
-                "precursor_block_product_index",
-            ));
-        }
-        let n_spectra_u32 = u32::try_from(spectrum_precursor_mz.len())
-            .map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let n_blocks = spectrum_precursor_mz.len().div_ceil(block_size);
-        let n_blocks_u32 =
-            u32::try_from(n_blocks).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let total_product_peaks = product_mz.len();
+        let bin_width = pepmass_precursor_bin_width(filter).ok_or(
+            SimilarityComputationError::InvalidParameter("pepmass_2d_index"),
+        )?;
+        let total_product_peaks = product_spec_id.len();
         let total_product_peaks_u32 = u32::try_from(total_product_peaks)
             .map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let total_neutral_loss_peaks = neutral_loss_value.len();
+        let total_neutral_loss_peaks = neutral_loss_spec_id.len();
         let total_neutral_loss_peaks_u32 = u32::try_from(total_neutral_loss_peaks)
             .map_err(|_| SimilarityComputationError::IndexOverflow)?;
 
         progress.start_phase(
             FlashIndexBuildPhase::BuildPrecursorIndex,
-            precursor_index_progress_len(
+            pepmass_index_progress_len(
                 spectrum_precursor_mz.len(),
                 total_product_peaks,
                 total_neutral_loss_peaks,
@@ -1125,91 +1096,68 @@ impl<P: SpectrumFloat> PrecursorBlockProductIndex<P> {
         );
         let mut progress_ticker = ProgressTicker::new(progress, PRECURSOR_INDEX_PROGRESS_BATCH);
 
-        let mut spectrum_order: Vec<u32> = Vec::with_capacity(spectrum_precursor_mz.len());
-        for spec_id in 0..n_spectra_u32 {
-            spectrum_order.push(spec_id);
+        let mut precursor_bins = Vec::with_capacity(spectrum_precursor_mz.len());
+        for &precursor_mz in spectrum_precursor_mz {
+            let precursor_mz = precursor_mz.to_f64();
+            if !precursor_mz.is_finite() {
+                return Err(SimilarityComputationError::NonFiniteValue("precursor_mz"));
+            }
+            precursor_bins.push(pepmass_precursor_bin_id(precursor_mz, bin_width));
             progress_ticker.tick_one();
         }
-        spectrum_order.sort_unstable_by(|&left, &right| {
-            spectrum_precursor_mz[left as usize]
-                .to_f64()
-                .total_cmp(&spectrum_precursor_mz[right as usize].to_f64())
-                .then_with(|| left.cmp(&right))
-        });
 
-        let mut block_min_precursor_mz = Vec::with_capacity(n_blocks);
-        let mut block_max_precursor_mz = Vec::with_capacity(n_blocks);
-        let mut spectrum_to_block = alloc::vec![0u32; spectrum_precursor_mz.len()];
+        precursor_bins.sort_unstable();
+        precursor_bins.dedup();
+        let n_rows = precursor_bins.len();
+        let n_rows_u32 =
+            u32::try_from(n_rows).map_err(|_| SimilarityComputationError::IndexOverflow)?;
 
-        for (ordered_position, &spec_id) in spectrum_order.iter().enumerate() {
-            let block_id = ordered_position / block_size;
-            spectrum_to_block[spec_id as usize] =
-                u32::try_from(block_id).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-            let precursor_mz = spectrum_precursor_mz[spec_id as usize];
-            if ordered_position % block_size == 0 {
-                block_min_precursor_mz.push(precursor_mz);
-                block_max_precursor_mz.push(precursor_mz);
-            } else if let Some(max_precursor_mz) = block_max_precursor_mz.last_mut() {
-                *max_precursor_mz = precursor_mz;
-            }
+        let mut spectrum_bin_row = Vec::with_capacity(spectrum_precursor_mz.len());
+        for &precursor_mz in spectrum_precursor_mz {
+            let bin_id = pepmass_precursor_bin_id(precursor_mz.to_f64(), bin_width);
+            let row_id = precursor_bins
+                .binary_search(&bin_id)
+                .map_err(|_| SimilarityComputationError::IndexConstructionFailed)?;
+            spectrum_bin_row.push(
+                u32::try_from(row_id).map_err(|_| SimilarityComputationError::IndexOverflow)?,
+            );
             progress_ticker.tick_one();
         }
 
         // Product posting ids are already ordered by product m/z globally, so
-        // stable block bucketing preserves the m/z order inside each precursor
-        // block while satisfying CSR insertion order.
-        let product_entries = posting_entries_by_block(
-            &spectrum_to_block,
+        // stable precursor-bin bucketing preserves the m/z order inside each
+        // row while satisfying CSR insertion order.
+        let product_entries = posting_entries_by_precursor_bin(
+            &spectrum_bin_row,
             product_spec_id,
-            n_blocks,
+            n_rows,
             &mut progress_ticker,
         )?;
 
         // Neutral-loss posting ids follow the same invariant, but sorted by
         // neutral-loss value instead of product m/z.
-        let neutral_loss_entries = posting_entries_by_block(
-            &spectrum_to_block,
+        let neutral_loss_entries = posting_entries_by_precursor_bin(
+            &spectrum_bin_row,
             neutral_loss_spec_id,
-            n_blocks,
+            n_rows,
             &mut progress_ticker,
         )?;
-
-        if n_blocks == 0 {
-            let index = Self {
-                block_min_precursor_mz,
-                block_max_precursor_mz,
-                product_blocks: posting_csr_with_progress(
-                    0,
-                    total_product_peaks_u32,
-                    product_entries,
-                    &mut progress_ticker,
-                )?,
-                neutral_loss_blocks: posting_csr_with_progress(
-                    0,
-                    total_neutral_loss_peaks_u32,
-                    neutral_loss_entries,
-                    &mut progress_ticker,
-                )?,
-            };
-            progress_ticker.flush();
-            return Ok(index);
-        }
 
         debug_assert!(u32::try_from(total_product_peaks).is_ok());
         debug_assert!(u32::try_from(total_neutral_loss_peaks).is_ok());
         debug_assert!(u32::try_from(spectrum_precursor_mz.len()).is_ok());
 
         let index = Self {
-            block_min_precursor_mz,
-            block_max_precursor_mz,
-            product_blocks: posting_csr_with_progress(
-                n_blocks_u32,
+            bin_width,
+            precursor_bins,
+            product_bins: posting_csr_with_progress(
+                n_rows_u32,
                 total_product_peaks_u32,
                 product_entries,
                 &mut progress_ticker,
             )?,
-            neutral_loss_blocks: posting_csr_with_progress(
-                n_blocks_u32,
+            neutral_loss_bins: posting_csr_with_progress(
+                n_rows_u32,
                 total_neutral_loss_peaks_u32,
                 neutral_loss_entries,
                 &mut progress_ticker,
@@ -1220,13 +1168,19 @@ impl<P: SpectrumFloat> PrecursorBlockProductIndex<P> {
     }
 
     #[inline]
-    fn matching_block_range(
+    fn matches_filter(&self, filter: PepmassFilter) -> bool {
+        pepmass_precursor_bin_width(filter)
+            .is_some_and(|bin_width| self.bin_width.to_bits() == bin_width.to_bits())
+    }
+
+    #[inline]
+    fn matching_row_range(
         &self,
         filter: PepmassFilter,
         query_precursor_mz: Option<f64>,
     ) -> Range<usize> {
         let Some(tolerance) = filter.tolerance() else {
-            return 0..self.block_min_precursor_mz.len();
+            return 0..self.precursor_bins.len();
         };
         let Some(query_precursor_mz) = query_precursor_mz else {
             return 0..0;
@@ -1234,45 +1188,42 @@ impl<P: SpectrumFloat> PrecursorBlockProductIndex<P> {
 
         let lo = query_precursor_mz - tolerance;
         let hi = query_precursor_mz + tolerance;
+        let lo_bin = pepmass_precursor_bin_id(lo, self.bin_width);
+        let hi_bin = pepmass_precursor_bin_id(hi, self.bin_width);
         let start = self
-            .block_max_precursor_mz
-            .partition_point(|&precursor_mz| precursor_mz.to_f64() < lo);
+            .precursor_bins
+            .partition_point(|&bin_id| bin_id < lo_bin);
         let end = self
-            .block_min_precursor_mz
-            .partition_point(|&precursor_mz| precursor_mz.to_f64() <= hi);
+            .precursor_bins
+            .partition_point(|&bin_id| bin_id <= hi_bin);
         start..end
     }
 
-    #[inline]
-    fn matching_block_count(
+    fn for_each_product_peak_in_window<P, Q>(
         &self,
-        filter: PepmassFilter,
-        query_precursor_mz: Option<f64>,
-    ) -> usize {
-        self.matching_block_range(filter, query_precursor_mz).len()
-    }
-
-    fn for_each_product_peak_in_window<Q: SpectrumFloat>(
-        &self,
-        blocks: Range<usize>,
+        rows: Range<usize>,
         mz: Q,
         tolerance: f64,
         postings: ProductPostingSlices<'_, P>,
         mut emit: impl FnMut(usize, u32, P),
-    ) -> usize {
+    ) -> usize
+    where
+        P: SpectrumFloat,
+        Q: SpectrumFloat,
+    {
         let query_mz = mz.to_f64();
         let lo = query_mz - tolerance;
         let hi = query_mz + tolerance;
         let mut visited = 0usize;
 
-        for block_id in blocks {
-            let block_id = block_id as u32;
-            let block_indices = self.product_blocks.sparse_row_slice(block_id);
-            let first = block_indices.partition_point(|&product_index| {
+        for row_id in rows {
+            let row_id = row_id as u32;
+            let row_indices = self.product_bins.sparse_row_slice(row_id);
+            let first = row_indices.partition_point(|&product_index| {
                 postings.mz[product_index as usize].to_f64() < lo
             });
 
-            for &product_index in &block_indices[first..] {
+            for &product_index in &row_indices[first..] {
                 let product_index = product_index as usize;
                 let indexed_mz = postings.mz[product_index].to_f64();
                 if indexed_mz > hi {
@@ -1290,25 +1241,27 @@ impl<P: SpectrumFloat> PrecursorBlockProductIndex<P> {
         visited
     }
 
-    fn for_each_neutral_loss_in_window(
+    fn for_each_neutral_loss_in_window<P>(
         &self,
-        blocks: Range<usize>,
+        rows: Range<usize>,
         neutral_loss: f64,
         tolerance: f64,
         postings: NeutralLossPostingSlices<'_, P>,
         mut emit: impl FnMut(usize, u32, P, usize),
-    ) {
+    ) where
+        P: SpectrumFloat,
+    {
         let lo = neutral_loss - tolerance;
         let hi = neutral_loss + tolerance;
 
-        for block_id in blocks {
-            let block_id = block_id as u32;
-            let block_indices = self.neutral_loss_blocks.sparse_row_slice(block_id);
-            let first = block_indices.partition_point(|&neutral_loss_index| {
+        for row_id in rows {
+            let row_id = row_id as u32;
+            let row_indices = self.neutral_loss_bins.sparse_row_slice(row_id);
+            let first = row_indices.partition_point(|&neutral_loss_index| {
                 postings.value[neutral_loss_index as usize].to_f64() < lo
             });
 
-            for &neutral_loss_index in &block_indices[first..] {
+            for &neutral_loss_index in &row_indices[first..] {
                 let neutral_loss_index = neutral_loss_index as usize;
                 let indexed_neutral_loss = postings.value[neutral_loss_index].to_f64();
                 if indexed_neutral_loss > hi {
@@ -1877,7 +1830,7 @@ pub(crate) struct FlashIndex<K: FlashKernel, P: SpectrumFloat = f64> {
     pub(crate) product_mz: Vec<P>,
     product_spec_id: Vec<u32>,
     pub(crate) product_data: Vec<P>,
-    precursor_blocks: Option<PrecursorBlockProductIndex<P>>,
+    pepmass_index: Option<Pepmass2DPostingIndex>,
 
     // Product peaks in per-spectrum order for exact candidate rescoring.
     spectrum_offsets: Vec<u32>,
@@ -2056,7 +2009,7 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
             product_mz,
             product_spec_id,
             product_data,
-            precursor_blocks: None,
+            pepmass_index: None,
             spectrum_offsets,
             spectrum_mz,
             spectrum_data,
@@ -2111,7 +2064,7 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         G: FlashIndexBuildProgress + ?Sized,
     {
         if pepmass_filter.is_enabled() {
-            if self.ensure_precursor_blocks(progress)? {
+            if self.ensure_pepmass_index(pepmass_filter, progress)? {
                 progress.finish();
             }
             self.pepmass_filter = pepmass_filter;
@@ -2122,28 +2075,31 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
     }
 
     pub(crate) fn clear_pepmass_filter(&mut self) {
-        self.precursor_blocks = None;
+        self.pepmass_index = None;
         self.pepmass_filter = PepmassFilter::disabled();
     }
 
-    fn ensure_precursor_blocks<G>(
+    fn ensure_pepmass_index<G>(
         &mut self,
+        pepmass_filter: PepmassFilter,
         progress: &G,
     ) -> Result<bool, SimilarityComputationError>
     where
         G: FlashIndexBuildProgress + ?Sized,
     {
-        if self.precursor_blocks.is_some() {
+        if self
+            .pepmass_index
+            .as_ref()
+            .is_some_and(|index| index.matches_filter(pepmass_filter))
+        {
             return Ok(false);
         }
 
-        self.precursor_blocks = Some(PrecursorBlockProductIndex::build(
+        self.pepmass_index = Some(Pepmass2DPostingIndex::build(
             &self.spectrum_precursor_mz,
-            &self.product_mz,
             &self.product_spec_id,
-            &self.nl_value,
             &self.nl_spec_id,
-            DEFAULT_PRECURSOR_BLOCK_SIZE,
+            pepmass_filter,
             progress,
         )?);
         Ok(true)
@@ -2193,39 +2149,13 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
             .ok_or(SimilarityComputationError::IndexOverflow)
     }
 
-    fn precursor_block_range(&self, query_precursor_mz: Option<f64>) -> Range<usize> {
-        self.precursor_blocks
+    fn pepmass_row_range(&self, query_precursor_mz: Option<f64>) -> Range<usize> {
+        self.pepmass_index
             .as_ref()
-            .map(|precursor_blocks| {
-                precursor_blocks.matching_block_range(self.pepmass_filter, query_precursor_mz)
+            .map(|pepmass_index| {
+                pepmass_index.matching_row_range(self.pepmass_filter, query_precursor_mz)
             })
             .unwrap_or(0..0)
-    }
-
-    #[inline]
-    fn precursor_block_count(&self, query_precursor_mz: Option<f64>) -> usize {
-        self.precursor_blocks
-            .as_ref()
-            .map(|precursor_blocks| {
-                precursor_blocks.matching_block_count(self.pepmass_filter, query_precursor_mz)
-            })
-            .unwrap_or(0)
-    }
-
-    fn should_scan_precursor_blocks_for_allowed_blocks(
-        &self,
-        query_precursor_mz: Option<f64>,
-        allowed_spectrum_blocks: usize,
-    ) -> bool {
-        if !self.pepmass_filter.is_enabled() {
-            return false;
-        }
-
-        // PEPMASS blocks and threshold-pruned spectrum blocks use different
-        // layouts. Prefer the precursor-ordered postings only when they cover
-        // fewer coarse blocks for this query; otherwise scan the threshold
-        // blocks and apply the exact precursor check at spectrum granularity.
-        self.precursor_block_count(query_precursor_mz) < allowed_spectrum_blocks
     }
 
     fn for_each_product_peak_in_window<Q: SpectrumFloat>(
@@ -2235,13 +2165,13 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         mut emit: impl FnMut(usize, u32, P),
     ) -> usize {
         if self.pepmass_filter.is_enabled() {
-            let Some(precursor_blocks) = self.precursor_blocks.as_ref() else {
-                debug_assert!(false, "PEPMASS filter enabled without precursor index");
+            let Some(pepmass_index) = self.pepmass_index.as_ref() else {
+                debug_assert!(false, "PEPMASS filter enabled without PEPMASS index");
                 return 0;
             };
-            let blocks = self.precursor_block_range(query_precursor_mz);
-            return precursor_blocks.for_each_product_peak_in_window(
-                blocks,
+            let rows = self.pepmass_row_range(query_precursor_mz);
+            return pepmass_index.for_each_product_peak_in_window(
+                rows,
                 mz,
                 self.tolerance,
                 ProductPostingSlices {
@@ -2320,12 +2250,13 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         mut emit: impl FnMut(u32, f64, usize),
     ) {
         state.acc.ensure_capacity(self.n_spectra as usize);
+        if state.n_allowed_spectrum_blocks() == 0 {
+            state.reset_allowed_spectrum_blocks();
+            return;
+        }
 
         let mut product_postings_visited = 0usize;
-        if self.should_scan_precursor_blocks_for_allowed_blocks(
-            query_precursor_mz,
-            state.n_allowed_spectrum_blocks(),
-        ) {
+        if self.pepmass_filter.is_enabled() {
             for (query_index, &mz) in query_mz.iter().enumerate() {
                 product_postings_visited =
                     product_postings_visited.saturating_add(self.for_each_product_peak_in_window(
@@ -2359,22 +2290,12 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         for (query_index, &mz) in query_mz.iter().enumerate() {
             for block_index in 0..state.n_allowed_spectrum_blocks() {
                 let block_id = state.allowed_spectrum_block_id(block_index);
-                if !block_products.block_may_match_precursor(
-                    block_id,
-                    self.pepmass_filter,
-                    query_precursor_mz,
-                ) {
-                    continue;
-                }
                 product_postings_visited = product_postings_visited.saturating_add(
                     block_products.for_each_peak_in_window(
                         block_id,
                         mz,
                         self.tolerance,
                         |spec_id, library_data| {
-                            if !self.allows_precursor(query_precursor_mz, spec_id) {
-                                return;
-                            }
                             let score = K::pair_score(
                                 query_data[query_index].to_f64(),
                                 library_data.to_f64(),
@@ -2418,14 +2339,15 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         Visit: FnMut(u32) -> f64,
     {
         state.ensure_candidate_capacity(self.n_spectra as usize);
+        if state.n_allowed_spectrum_blocks() == 0 {
+            state.reset_allowed_spectrum_blocks();
+            return;
+        }
 
         let mut product_postings_visited = 0usize;
         let mut candidates_rescored = 0usize;
         let query_order_len = state.query_order().len();
-        if self.should_scan_precursor_blocks_for_allowed_blocks(
-            query_precursor_mz,
-            state.n_allowed_spectrum_blocks(),
-        ) {
+        if self.pepmass_filter.is_enabled() {
             for order_position in 0..query_order_len {
                 let query_index = state.query_order()[order_position];
                 let query_mz = query_mz[query_index];
@@ -2465,22 +2387,12 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
 
             for block_index in 0..state.n_allowed_spectrum_blocks() {
                 let block_id = state.allowed_spectrum_block_id(block_index);
-                if !block_products.block_may_match_precursor(
-                    block_id,
-                    self.pepmass_filter,
-                    query_precursor_mz,
-                ) {
-                    continue;
-                }
                 product_postings_visited = product_postings_visited.saturating_add(
                     block_products.for_each_peak_in_window(
                         block_id,
                         query_mz,
                         self.tolerance,
                         |spec_id, _| {
-                            if !self.allows_precursor(query_precursor_mz, spec_id) {
-                                return;
-                            }
                             if state.is_candidate(spec_id) {
                                 return;
                             }
@@ -2650,13 +2562,13 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         mut emit: impl FnMut(usize, u32, P, usize),
     ) {
         if self.pepmass_filter.is_enabled() {
-            let Some(precursor_blocks) = self.precursor_blocks.as_ref() else {
-                debug_assert!(false, "PEPMASS filter enabled without precursor index");
+            let Some(pepmass_index) = self.pepmass_index.as_ref() else {
+                debug_assert!(false, "PEPMASS filter enabled without PEPMASS index");
                 return;
             };
-            let blocks = self.precursor_block_range(query_precursor_mz);
-            precursor_blocks.for_each_neutral_loss_in_window(
-                blocks,
+            let rows = self.pepmass_row_range(query_precursor_mz);
+            pepmass_index.for_each_neutral_loss_in_window(
+                rows,
                 neutral_loss,
                 self.tolerance,
                 NeutralLossPostingSlices {
@@ -3060,7 +2972,7 @@ mod tests {
         assert_eq!(index.product_mz, vec![90.0, 100.0, 110.0]);
         assert_eq!(index.product_data, vec![2.0, 1.0, 4.0]);
         assert_eq!(index.n_spectra, 2);
-        assert!(index.precursor_blocks.is_none());
+        assert!(index.pepmass_index.is_none());
 
         let state = index.new_search_state();
         assert!(state.matched_products.is_empty());
@@ -3081,7 +2993,7 @@ mod tests {
     }
 
     #[test]
-    fn pepmass_reverse_index_is_lazy_and_dropped_when_disabled() {
+    fn pepmass_2d_index_is_lazy_and_dropped_when_disabled() {
         let mut index = build_test_index(
             vec![
                 prepared(200.0, vec![100.0], vec![1.0]),
@@ -3090,15 +3002,15 @@ mod tests {
             0.1,
         );
 
-        assert!(index.precursor_blocks.is_none());
+        assert!(index.pepmass_index.is_none());
         let progress = NoopFlashIndexBuildProgress;
         index
             .set_pepmass_filter_with_progress(
                 PepmassFilter::within_tolerance(0.5).unwrap(),
                 &progress,
             )
-            .expect("PEPMASS reverse index should build");
-        assert!(index.precursor_blocks.is_some());
+            .expect("PEPMASS 2D index should build");
+        assert!(index.pepmass_index.is_some());
 
         let results = index.search_direct(&[100.0], &[1.0], &(), Some(200.0));
         assert_eq!(results.len(), 1);
@@ -3107,7 +3019,7 @@ mod tests {
         index
             .set_pepmass_filter_with_progress(PepmassFilter::disabled(), &progress)
             .expect("PEPMASS filter should be disabled");
-        assert!(index.precursor_blocks.is_none());
+        assert!(index.pepmass_index.is_none());
     }
 
     #[test]
