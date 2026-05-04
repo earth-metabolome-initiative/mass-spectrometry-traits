@@ -18,6 +18,7 @@ const PREFIX_PRUNING_MIN_THRESHOLD: f64 = 0.85;
 pub(crate) const DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE: usize = 1024;
 pub(crate) const DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE: usize = 256;
 const DEFAULT_PRECURSOR_BLOCK_SIZE: usize = 256;
+const PRECURSOR_INDEX_PROGRESS_BATCH: usize = 8192;
 
 type PostingCsr = CSR2D<u32, u32, u32>;
 type UpperBoundCsr = ValuedCSR2D<u32, u32, u32, f64>;
@@ -32,6 +33,29 @@ fn posting_csr(
     number_of_columns: u32,
     entries: Vec<(u32, u32)>,
 ) -> Result<PostingCsr, SimilarityComputationError> {
+    posting_csr_from_entries(number_of_rows, number_of_columns, entries, || {})
+}
+
+fn posting_csr_with_progress<G>(
+    number_of_rows: u32,
+    number_of_columns: u32,
+    entries: Vec<(u32, u32)>,
+    progress: &mut ProgressTicker<'_, G>,
+) -> Result<PostingCsr, SimilarityComputationError>
+where
+    G: FlashIndexBuildProgress + ?Sized,
+{
+    posting_csr_from_entries(number_of_rows, number_of_columns, entries, || {
+        progress.tick_one();
+    })
+}
+
+fn posting_csr_from_entries(
+    number_of_rows: u32,
+    number_of_columns: u32,
+    entries: Vec<(u32, u32)>,
+    mut after_insert: impl FnMut(),
+) -> Result<PostingCsr, SimilarityComputationError> {
     let number_of_entries =
         u32::try_from(entries.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
     let mut csr = PostingCsr::with_sparse_shaped_capacity(
@@ -41,6 +65,7 @@ fn posting_csr(
     for entry in entries {
         csr.add(entry)
             .map_err(|_| SimilarityComputationError::IndexConstructionFailed)?;
+        after_insert();
     }
     Ok(csr)
 }
@@ -171,6 +196,127 @@ pub(crate) fn progress_len_from_size_hint(size_hint: (usize, Option<usize>)) -> 
     upper
         .filter(|&upper| upper == lower)
         .and_then(|len| u64::try_from(len).ok())
+}
+
+/// Batches fine-grained progress ticks so large inner loops can report useful
+/// progress without calling the sink once per posting.
+struct ProgressTicker<'a, G: FlashIndexBuildProgress + ?Sized> {
+    progress: &'a G,
+    pending: usize,
+    batch_size: usize,
+}
+
+impl<'a, G> ProgressTicker<'a, G>
+where
+    G: FlashIndexBuildProgress + ?Sized,
+{
+    fn new(progress: &'a G, batch_size: usize) -> Self {
+        Self {
+            progress,
+            pending: 0,
+            batch_size: batch_size.max(1),
+        }
+    }
+
+    #[inline]
+    fn tick_one(&mut self) {
+        self.tick(1);
+    }
+
+    fn tick(&mut self, delta: usize) {
+        if delta == 0 {
+            return;
+        }
+
+        self.pending = self.pending.saturating_add(delta);
+        if self.pending >= self.batch_size {
+            self.flush();
+        }
+    }
+
+    fn flush(&mut self) {
+        if self.pending == 0 {
+            return;
+        }
+
+        self.progress
+            .inc(u64::try_from(self.pending).unwrap_or(u64::MAX));
+        self.pending = 0;
+    }
+}
+
+fn precursor_index_progress_len(
+    n_spectra: usize,
+    total_product_peaks: usize,
+    total_neutral_loss_peaks: usize,
+) -> Option<u64> {
+    let spectrum_work = n_spectra.checked_mul(2)?;
+    let product_work = total_product_peaks.checked_mul(3)?;
+    let neutral_loss_work = total_neutral_loss_peaks.checked_mul(3)?;
+    let total = spectrum_work
+        .checked_add(product_work)?
+        .checked_add(neutral_loss_work)?;
+    u64::try_from(total).ok()
+}
+
+/// Build `(block, posting)` CSR entries by counting postings per precursor
+/// block. `posting_spec_id` is already in the desired within-block order, so a
+/// stable bucket fill is enough and avoids a full tuple sort.
+fn posting_entries_by_block<G>(
+    spectrum_to_block: &[u32],
+    posting_spec_id: &[u32],
+    n_blocks: usize,
+    progress: &mut ProgressTicker<'_, G>,
+) -> Result<Vec<(u32, u32)>, SimilarityComputationError>
+where
+    G: FlashIndexBuildProgress + ?Sized,
+{
+    let mut counts = alloc::vec![0usize; n_blocks];
+    for &spec_id in posting_spec_id {
+        let &block_id = spectrum_to_block
+            .get(spec_id as usize)
+            .ok_or(SimilarityComputationError::IndexOverflow)?;
+        let count = counts
+            .get_mut(block_id as usize)
+            .ok_or(SimilarityComputationError::IndexOverflow)?;
+        *count = count
+            .checked_add(1)
+            .ok_or(SimilarityComputationError::IndexOverflow)?;
+        progress.tick_one();
+    }
+
+    let mut offsets = Vec::with_capacity(n_blocks + 1);
+    offsets.push(0usize);
+    for &count in &counts {
+        let next = offsets
+            .last()
+            .copied()
+            .and_then(|offset| offset.checked_add(count))
+            .ok_or(SimilarityComputationError::IndexOverflow)?;
+        offsets.push(next);
+    }
+
+    let mut next_offsets = offsets[..n_blocks].to_vec();
+    let mut entries = alloc::vec![(0u32, 0u32); posting_spec_id.len()];
+    for (posting_index, &spec_id) in posting_spec_id.iter().enumerate() {
+        let &block_id = spectrum_to_block
+            .get(spec_id as usize)
+            .ok_or(SimilarityComputationError::IndexOverflow)?;
+        let entry_offset = next_offsets
+            .get_mut(block_id as usize)
+            .ok_or(SimilarityComputationError::IndexOverflow)?;
+        let output_index = *entry_offset;
+        *entry_offset = entry_offset
+            .checked_add(1)
+            .ok_or(SimilarityComputationError::IndexOverflow)?;
+        entries[output_index] = (
+            block_id,
+            u32::try_from(posting_index).map_err(|_| SimilarityComputationError::IndexOverflow)?,
+        );
+        progress.tick_one();
+    }
+
+    Ok(entries)
 }
 
 /// Optional precursor-mass filter for Flash index searches.
@@ -937,14 +1083,18 @@ struct NeutralLossPostingSlices<'a, P: SpectrumFloat> {
 }
 
 impl<P: SpectrumFloat> PrecursorBlockProductIndex<P> {
-    pub(crate) fn build(
+    pub(crate) fn build<G>(
         spectrum_precursor_mz: &[P],
         product_mz: &[P],
         product_spec_id: &[u32],
         neutral_loss_value: &[P],
         neutral_loss_spec_id: &[u32],
         block_size: usize,
-    ) -> Result<Self, SimilarityComputationError> {
+        progress: &G,
+    ) -> Result<Self, SimilarityComputationError>
+    where
+        G: FlashIndexBuildProgress + ?Sized,
+    {
         let block_size = block_size.max(1);
         if product_mz.len() != product_spec_id.len()
             || neutral_loss_value.len() != neutral_loss_spec_id.len()
@@ -965,7 +1115,21 @@ impl<P: SpectrumFloat> PrecursorBlockProductIndex<P> {
         let total_neutral_loss_peaks_u32 = u32::try_from(total_neutral_loss_peaks)
             .map_err(|_| SimilarityComputationError::IndexOverflow)?;
 
-        let mut spectrum_order: Vec<u32> = (0..n_spectra_u32).collect();
+        progress.start_phase(
+            FlashIndexBuildPhase::BuildPrecursorIndex,
+            precursor_index_progress_len(
+                spectrum_precursor_mz.len(),
+                total_product_peaks,
+                total_neutral_loss_peaks,
+            ),
+        );
+        let mut progress_ticker = ProgressTicker::new(progress, PRECURSOR_INDEX_PROGRESS_BATCH);
+
+        let mut spectrum_order: Vec<u32> = Vec::with_capacity(spectrum_precursor_mz.len());
+        for spec_id in 0..n_spectra_u32 {
+            spectrum_order.push(spec_id);
+            progress_ticker.tick_one();
+        }
         spectrum_order.sort_unstable_by(|&left, &right| {
             spectrum_precursor_mz[left as usize]
                 .to_f64()
@@ -988,62 +1152,71 @@ impl<P: SpectrumFloat> PrecursorBlockProductIndex<P> {
             } else if let Some(max_precursor_mz) = block_max_precursor_mz.last_mut() {
                 *max_precursor_mz = precursor_mz;
             }
+            progress_ticker.tick_one();
         }
 
-        let mut product_entries = Vec::with_capacity(total_product_peaks);
-        for (product_index, &spec_id) in product_spec_id.iter().enumerate() {
-            let block_id = *spectrum_to_block
-                .get(spec_id as usize)
-                .ok_or(SimilarityComputationError::IndexOverflow)?;
-            let product_index = u32::try_from(product_index)
-                .map_err(|_| SimilarityComputationError::IndexOverflow)?;
-            product_entries.push((block_id, product_index));
-        }
         // Product posting ids are already ordered by product m/z globally, so
-        // sorting by `(block, posting_id)` preserves the m/z order inside each
-        // precursor block while satisfying CSR insertion order.
-        product_entries.sort_unstable();
+        // stable block bucketing preserves the m/z order inside each precursor
+        // block while satisfying CSR insertion order.
+        let product_entries = posting_entries_by_block(
+            &spectrum_to_block,
+            product_spec_id,
+            n_blocks,
+            &mut progress_ticker,
+        )?;
 
-        let mut neutral_loss_entries = Vec::with_capacity(total_neutral_loss_peaks);
-        for (neutral_loss_index, &spec_id) in neutral_loss_spec_id.iter().enumerate() {
-            let block_id = *spectrum_to_block
-                .get(spec_id as usize)
-                .ok_or(SimilarityComputationError::IndexOverflow)?;
-            let neutral_loss_index = u32::try_from(neutral_loss_index)
-                .map_err(|_| SimilarityComputationError::IndexOverflow)?;
-            neutral_loss_entries.push((block_id, neutral_loss_index));
-        }
         // Neutral-loss posting ids follow the same invariant, but sorted by
         // neutral-loss value instead of product m/z.
-        neutral_loss_entries.sort_unstable();
+        let neutral_loss_entries = posting_entries_by_block(
+            &spectrum_to_block,
+            neutral_loss_spec_id,
+            n_blocks,
+            &mut progress_ticker,
+        )?;
 
         if n_blocks == 0 {
-            return Ok(Self {
+            let index = Self {
                 block_min_precursor_mz,
                 block_max_precursor_mz,
-                product_blocks: posting_csr(0, total_product_peaks_u32, product_entries)?,
-                neutral_loss_blocks: posting_csr(
+                product_blocks: posting_csr_with_progress(
+                    0,
+                    total_product_peaks_u32,
+                    product_entries,
+                    &mut progress_ticker,
+                )?,
+                neutral_loss_blocks: posting_csr_with_progress(
                     0,
                     total_neutral_loss_peaks_u32,
                     neutral_loss_entries,
+                    &mut progress_ticker,
                 )?,
-            });
+            };
+            progress_ticker.flush();
+            return Ok(index);
         }
 
         debug_assert!(u32::try_from(total_product_peaks).is_ok());
         debug_assert!(u32::try_from(total_neutral_loss_peaks).is_ok());
         debug_assert!(u32::try_from(spectrum_precursor_mz.len()).is_ok());
 
-        Ok(Self {
+        let index = Self {
             block_min_precursor_mz,
             block_max_precursor_mz,
-            product_blocks: posting_csr(n_blocks_u32, total_product_peaks_u32, product_entries)?,
-            neutral_loss_blocks: posting_csr(
+            product_blocks: posting_csr_with_progress(
+                n_blocks_u32,
+                total_product_peaks_u32,
+                product_entries,
+                &mut progress_ticker,
+            )?,
+            neutral_loss_blocks: posting_csr_with_progress(
                 n_blocks_u32,
                 total_neutral_loss_peaks_u32,
                 neutral_loss_entries,
+                &mut progress_ticker,
             )?,
-        })
+        };
+        progress_ticker.flush();
+        Ok(index)
     }
 
     #[inline]
@@ -1964,7 +2137,6 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
             return Ok(false);
         }
 
-        progress.start_phase(FlashIndexBuildPhase::BuildPrecursorIndex, Some(1));
         self.precursor_blocks = Some(PrecursorBlockProductIndex::build(
             &self.spectrum_precursor_mz,
             &self.product_mz,
@@ -1972,8 +2144,8 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
             &self.nl_value,
             &self.nl_spec_id,
             DEFAULT_PRECURSOR_BLOCK_SIZE,
+            progress,
         )?);
-        progress.inc(1);
         Ok(true)
     }
 

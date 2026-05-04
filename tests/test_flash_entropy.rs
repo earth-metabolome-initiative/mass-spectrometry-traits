@@ -49,9 +49,14 @@ fn entropy_index_build_progress_reports_construction_phases() {
         make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
         make_spectrum_f64(501.0, &[(100.0, 10.0), (300.0, 20.0)]),
     ];
+    let precursor_progress_len = 2 * library.len() as u64
+        + 6 * library
+            .iter()
+            .map(|spectrum| spectrum.len() as u64)
+            .sum::<u64>();
     let progress = RecordingProgress::default();
 
-    FlashEntropyIndex::<f64>::weighted_with_progress(0.1, library.iter(), &progress)
+    let index = FlashEntropyIndex::<f64>::weighted_with_progress(0.1, library.iter(), &progress)
         .expect("entropy index should build");
 
     let events = progress.events();
@@ -66,6 +71,21 @@ fn entropy_index_build_progress_reports_construction_phases() {
         Some(1),
     );
     assert!(events.contains(&ProgressEvent::Finish));
+
+    let index = index
+        .with_pepmass_tolerance_and_progress(0.5, &progress)
+        .expect("pepmass filter should be valid");
+    assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
+    let events = progress.events();
+    assert_progress_reports_phase(
+        &events,
+        FlashIndexBuildPhase::BuildPrecursorIndex,
+        Some(precursor_progress_len),
+    );
+    assert!(
+        events.contains(&ProgressEvent::Inc(precursor_progress_len)),
+        "PEPMASS reverse-index progress did not advance by expected length: {events:?}"
+    );
 }
 
 impl Spectrum for RawSpectrum {
