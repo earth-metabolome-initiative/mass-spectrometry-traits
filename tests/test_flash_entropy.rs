@@ -4,11 +4,16 @@
 //! self-similarity, empty/edge cases, and modified search.
 
 use mass_spectrometry::prelude::{
-    CocaineSpectrum, FlashEntropyIndex, FlashEntropyIndexError, FlashSearchResult, GenericSpectrum,
-    GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearEntropy, PhenylalanineSpectrum,
-    SalicinSpectrum, ScalarSimilarity, SimilarityComputationError, SimilarityConfigError, Spectrum,
-    SpectrumAlloc, SpectrumMut, TopKSearchState,
+    CocaineSpectrum, FlashEntropyIndex, FlashEntropyIndexError, FlashIndexBuildPhase,
+    FlashSearchResult, GenericSpectrum, GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearEntropy,
+    PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, SimilarityComputationError,
+    SimilarityConfigError, SpectraIndex, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
 };
+
+#[path = "support/progress.rs"]
+mod progress;
+
+use progress::{ProgressEvent, RecordingProgress, assert_progress_reports_phase};
 
 fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
     let mut spectrum =
@@ -36,6 +41,31 @@ fn reference_spectra() -> Vec<(&'static str, GenericSpectrum)> {
 struct RawSpectrum {
     precursor_mz: f64,
     peaks: Vec<(f64, f64)>,
+}
+
+#[test]
+fn entropy_index_build_progress_reports_construction_phases() {
+    let library = [
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(501.0, &[(100.0, 10.0), (300.0, 20.0)]),
+    ];
+    let progress = RecordingProgress::default();
+
+    FlashEntropyIndex::<f64>::weighted_with_progress(0.1, library.iter(), &progress)
+        .expect("entropy index should build");
+
+    let events = progress.events();
+    assert_progress_reports_phase(
+        &events,
+        FlashIndexBuildPhase::BuildBlockUpperBounds,
+        Some(1),
+    );
+    assert_progress_reports_phase(
+        &events,
+        FlashIndexBuildPhase::BuildBlockProductIndex,
+        Some(1),
+    );
+    assert!(events.contains(&ProgressEvent::Finish));
 }
 
 impl Spectrum for RawSpectrum {
@@ -531,6 +561,113 @@ fn thresholded_top_k_matches_filtered_direct_search() {
             .expect("thresholded top-k should succeed");
         assert_results_close(actual, expected, "thresholded entropy top-k");
     }
+}
+
+#[test]
+fn pepmass_filter_limits_entropy_search_paths() {
+    let library = [
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.4, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(505.0, &[(100.0, 10.0), (200.0, 20.0)]),
+    ];
+    let query = make_spectrum_f64(500.2, &[(100.0, 10.0), (200.0, 20.0)]);
+
+    let index = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
+        .expect("index build should succeed")
+        .with_pepmass_tolerance(0.5)
+        .expect("pepmass filter should be valid");
+    assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
+
+    let direct_ids: Vec<_> = sorted_results(index.search(&query).expect("search should work"))
+        .into_iter()
+        .map(|hit| hit.spectrum_id)
+        .collect();
+    assert_eq!(direct_ids, vec![0, 1]);
+
+    let threshold_ids: Vec<_> = sorted_results(
+        index
+            .search_threshold(&query, 0.8)
+            .expect("threshold search should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(threshold_ids, vec![0, 1]);
+
+    let top_k_ids: Vec<_> = sorted_results(
+        index
+            .search_top_k_threshold(&query, 8, 0.8)
+            .expect("top-k search should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(top_k_ids, vec![0, 1]);
+
+    let bad_query = RawSpectrum {
+        precursor_mz: f64::NAN,
+        peaks: vec![(100.0, 10.0)],
+    };
+    assert!(matches!(
+        index.search(&bad_query),
+        Err(SimilarityComputationError::NonFiniteValue(
+            "query_precursor_mz"
+        ))
+    ));
+
+    let indexed_ids: Vec<_> =
+        sorted_results(index.search_indexed(0).expect("indexed search should work"))
+            .into_iter()
+            .map(|hit| hit.spectrum_id)
+            .collect();
+    assert_eq!(indexed_ids, vec![0, 1]);
+
+    let indexed_top_k_ids: Vec<_> = sorted_results(
+        index
+            .search_top_k_threshold_indexed(0, 8, 0.8)
+            .expect("indexed top-k should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(indexed_top_k_ids, vec![0, 1]);
+}
+
+#[test]
+fn pepmass_filter_reduces_entropy_posting_scans() {
+    let library: Vec<_> = (0..600)
+        .map(|index| make_spectrum_f64(500.0 + index as f64, &[(100.0, 10.0)]))
+        .collect();
+
+    let unfiltered = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
+        .expect("index build should succeed");
+    let mut unfiltered_state = unfiltered.new_search_state();
+    let unfiltered_hits = unfiltered
+        .search_with_state(&library[0], &mut unfiltered_state)
+        .expect("unfiltered search should work");
+    assert_eq!(unfiltered_hits.len(), library.len());
+    let unfiltered_visited = unfiltered_state.diagnostics().product_postings_visited;
+    assert_eq!(unfiltered_visited, library.len());
+
+    let filtered = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
+        .expect("index build should succeed")
+        .with_pepmass_tolerance(0.1)
+        .expect("pepmass filter should be valid");
+    let mut filtered_state = filtered.new_search_state();
+    let filtered_hits = filtered
+        .search_with_state(&library[0], &mut filtered_state)
+        .expect("filtered search should work");
+    let filtered_ids: Vec<_> = filtered_hits
+        .into_iter()
+        .map(|hit| hit.spectrum_id)
+        .collect();
+    assert_eq!(filtered_ids, vec![0]);
+
+    let filtered_visited = filtered_state.diagnostics().product_postings_visited;
+    assert!(
+        filtered_visited <= unfiltered_visited / 2,
+        "PEPMASS reverse index should reduce visited postings: {filtered_visited} vs {unfiltered_visited}"
+    );
 }
 
 #[test]

@@ -5,10 +5,16 @@
 
 use mass_spectrometry::prelude::{
     CocaineSpectrum, FlashCosineIndex, FlashCosineIndexError, FlashCosineThresholdIndex,
-    FlashSearchResult, GenericSpectrum, GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearCosine,
-    PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, SimilarityComputationError,
-    SimilarityConfigError, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
+    FlashIndexBuildPhase, FlashSearchResult, GenericSpectrum, GlucoseSpectrum,
+    HydroxyCholesterolSpectrum, LinearCosine, PhenylalanineSpectrum, SalicinSpectrum,
+    ScalarSimilarity, SimilarityComputationError, SimilarityConfigError, SpectraIndex,
+    SpectraIndexSetupError, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
 };
+
+#[path = "support/progress.rs"]
+mod progress;
+
+use progress::{ProgressEvent, RecordingProgress, assert_progress_reports_phase};
 
 fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
     let mut spectrum =
@@ -131,6 +137,106 @@ fn top_k_expected(
     });
     results.truncate(k);
     results
+}
+
+#[test]
+fn index_build_progress_reports_construction_phases() {
+    let library = [
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(501.0, &[(100.0, 10.0), (300.0, 20.0)]),
+    ];
+
+    let cosine_progress = RecordingProgress::default();
+    let cosine =
+        FlashCosineIndex::<f64>::new_with_progress(0.0, 1.0, 0.1, library.iter(), &cosine_progress)
+            .expect("cosine index should build");
+    assert_eq!(cosine.n_spectra(), 2);
+    let cosine_events = cosine_progress.events();
+    assert_progress_reports_phase(
+        &cosine_events,
+        FlashIndexBuildPhase::PrepareSpectra,
+        Some(2),
+    );
+    assert_progress_reports_phase(
+        &cosine_events,
+        FlashIndexBuildPhase::ReorderSpectra,
+        Some(1),
+    );
+    assert_progress_reports_phase(
+        &cosine_events,
+        FlashIndexBuildPhase::PackFlashPeaks,
+        Some(2),
+    );
+    assert_progress_reports_phase(
+        &cosine_events,
+        FlashIndexBuildPhase::SortProductIndex,
+        Some(1),
+    );
+    assert_progress_reports_phase(
+        &cosine_events,
+        FlashIndexBuildPhase::SortNeutralLossIndex,
+        Some(1),
+    );
+    assert!(
+        !cosine_events.iter().any(|event| matches!(
+            event,
+            ProgressEvent::Phase(FlashIndexBuildPhase::BuildPrecursorIndex, _)
+        )),
+        "PEPMASS reverse index should not be built during ordinary index construction"
+    );
+    assert!(cosine_events.contains(&ProgressEvent::Finish));
+
+    let cosine = cosine
+        .with_pepmass_tolerance_and_progress(0.5, &cosine_progress)
+        .expect("pepmass filter should be valid");
+    assert_eq!(cosine.pepmass_filter().tolerance(), Some(0.5));
+    assert_progress_reports_phase(
+        &cosine_progress.events(),
+        FlashIndexBuildPhase::BuildPrecursorIndex,
+        Some(1),
+    );
+
+    let threshold_progress = RecordingProgress::default();
+    FlashCosineThresholdIndex::<f64>::new_with_progress(
+        0.0,
+        1.0,
+        0.1,
+        0.8,
+        library.iter(),
+        &threshold_progress,
+    )
+    .expect("threshold index should build");
+    let threshold_events = threshold_progress.events();
+    assert_progress_reports_phase(
+        &threshold_events,
+        FlashIndexBuildPhase::BuildBlockUpperBounds,
+        Some(1),
+    );
+    assert_progress_reports_phase(
+        &threshold_events,
+        FlashIndexBuildPhase::BuildBlockProductIndex,
+        Some(1),
+    );
+    assert!(threshold_events.contains(&ProgressEvent::Finish));
+}
+
+#[cfg(feature = "indicatif")]
+#[test]
+fn indicatif_progress_bar_can_build_cosine_index() {
+    let library = [
+        make_spectrum_f64(500.0, &[(100.0, 10.0)]),
+        make_spectrum_f64(501.0, &[(100.0, 10.0)]),
+    ];
+    let progress = indicatif::ProgressBar::hidden();
+    let index =
+        FlashCosineIndex::<f64>::new_with_progress(0.0, 1.0, 0.1, library.iter(), &progress)
+            .expect("index should build with indicatif progress");
+    assert_eq!(index.n_spectra(), 2);
+
+    let index = index
+        .with_pepmass_tolerance_and_progress(0.5, &progress)
+        .expect("same indicatif progress bar should be reusable for lazy PEPMASS build");
+    assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
 }
 
 // ---------- self-similarity: flash score ~1.0 for each spectrum ----------
@@ -646,6 +752,146 @@ fn threshold_index_top_k_matches_thresholded_results_for_external_and_indexed_qu
             );
         }
     }
+}
+
+#[test]
+fn pepmass_filter_limits_cosine_search_paths() {
+    let library = [
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.4, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(505.0, &[(100.0, 10.0), (200.0, 20.0)]),
+    ];
+    let query = make_spectrum_f64(500.2, &[(100.0, 10.0), (200.0, 20.0)]);
+
+    let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
+        .expect("index build should succeed")
+        .with_pepmass_tolerance(0.5)
+        .expect("pepmass filter should be valid");
+    assert!(index.pepmass_filter().is_enabled());
+
+    let direct_ids: Vec<_> = sorted_results(index.search(&query).expect("search should work"))
+        .into_iter()
+        .map(|hit| hit.spectrum_id)
+        .collect();
+    assert_eq!(direct_ids, vec![0, 1]);
+
+    let top_k_ids: Vec<_> = sorted_results(
+        index
+            .search_top_k_threshold(&query, 8, 0.8)
+            .expect("top-k search should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(top_k_ids, vec![0, 1]);
+
+    let modified_ids: Vec<_> = sorted_results(
+        index
+            .search_modified(&query)
+            .expect("modified search should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(modified_ids, vec![0, 1]);
+
+    let bad_query = RawSpectrum {
+        precursor_mz: f64::NAN,
+        peaks: vec![(100.0, 10.0)],
+    };
+    assert!(matches!(
+        index.search(&bad_query),
+        Err(SimilarityComputationError::NonFiniteValue(
+            "query_precursor_mz"
+        ))
+    ));
+
+    let threshold_index = FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, library.iter())
+        .expect("threshold index should build")
+        .with_pepmass_tolerance(0.5)
+        .expect("pepmass filter should be valid");
+
+    let threshold_ids: Vec<_> = sorted_results(
+        threshold_index
+            .search(&query)
+            .expect("threshold search should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(threshold_ids, vec![0, 1]);
+
+    let indexed_top_k_ids: Vec<_> = sorted_results(
+        threshold_index
+            .search_top_k_indexed(0, 8)
+            .expect("indexed top-k should work"),
+    )
+    .into_iter()
+    .map(|hit| hit.spectrum_id)
+    .collect();
+    assert_eq!(indexed_top_k_ids, vec![0, 1]);
+}
+
+#[test]
+fn pepmass_filter_reduces_cosine_posting_scans() {
+    let library: Vec<_> = (0..600)
+        .map(|index| make_spectrum_f64(500.0 + index as f64, &[(100.0, 10.0)]))
+        .collect();
+
+    let unfiltered = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
+        .expect("index build should succeed");
+    let mut unfiltered_state = unfiltered.new_search_state();
+    let unfiltered_hits = unfiltered
+        .search_with_state(&library[0], &mut unfiltered_state)
+        .expect("unfiltered search should work");
+    assert_eq!(unfiltered_hits.len(), library.len());
+    let unfiltered_visited = unfiltered_state.diagnostics().product_postings_visited;
+    assert_eq!(unfiltered_visited, library.len());
+
+    let filtered = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
+        .expect("index build should succeed")
+        .with_pepmass_tolerance(0.1)
+        .expect("pepmass filter should be valid");
+    let mut filtered_state = filtered.new_search_state();
+    let filtered_hits = filtered
+        .search_with_state(&library[0], &mut filtered_state)
+        .expect("filtered search should work");
+    let filtered_ids: Vec<_> = filtered_hits
+        .into_iter()
+        .map(|hit| hit.spectrum_id)
+        .collect();
+    assert_eq!(filtered_ids, vec![0]);
+
+    let filtered_visited = filtered_state.diagnostics().product_postings_visited;
+    assert!(
+        filtered_visited <= unfiltered_visited / 2,
+        "PEPMASS reverse index should reduce visited postings: {filtered_visited} vs {unfiltered_visited}"
+    );
+}
+
+#[test]
+fn invalid_pepmass_filter_tolerances_are_rejected() {
+    let library = [make_spectrum_f64(500.0, &[(100.0, 10.0)])];
+
+    let nan_result = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
+        .expect("index should build")
+        .with_pepmass_tolerance(f64::NAN);
+    assert!(matches!(
+        nan_result,
+        Err(SpectraIndexSetupError::Config(
+            SimilarityConfigError::NonFiniteParameter("pepmass_tolerance")
+        ))
+    ));
+
+    let negative_result = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
+        .expect("index should build")
+        .with_pepmass_tolerance(-0.1);
+    assert!(matches!(
+        negative_result,
+        Err(SpectraIndexSetupError::Config(
+            SimilarityConfigError::InvalidParameter("pepmass_tolerance")
+        ))
+    ));
 }
 
 #[test]

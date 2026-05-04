@@ -14,13 +14,16 @@ use super::cosine_common::{
     validate_well_separated,
 };
 use super::flash_common::{
-    DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashKernel,
-    FlashSearchResult, PreparedFlashSpectra, PreparedFlashSpectrum, SearchState,
+    DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashIndexBuildPhase,
+    FlashIndexBuildProgress, FlashKernel, FlashSearchResult, NoopFlashIndexBuildProgress,
+    PepmassFilter, PreparedFlashSpectra, PreparedFlashSpectrum, SearchState,
     SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults,
     TopKSearchState, convert_flash_value, convert_flash_values, flash_values_to_f64,
-    reorder_prepared_spectra_by_signature,
+    progress_len_from_size_hint, reorder_prepared_spectra_by_signature,
 };
-use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
+use super::similarity_errors::{
+    SimilarityComputationError, SimilarityConfigError, SpectraIndexSetupError,
+};
 use crate::traits::{SpectraIndex, Spectrum, SpectrumFloat};
 
 const THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD: f64 = 0.85;
@@ -159,15 +162,23 @@ fn prepare_cosine_library<'a, P, S>(
     intensity_power: f64,
     tolerance: f64,
     spectra: impl IntoIterator<Item = &'a S>,
+    progress: &(impl FlashIndexBuildProgress + ?Sized),
 ) -> Result<PreparedFlashSpectra<P>, FlashCosineIndexError>
 where
     P: SpectrumFloat,
     S: Spectrum + 'a,
 {
+    let spectra = spectra.into_iter();
+    progress.start_phase(
+        FlashIndexBuildPhase::PrepareSpectra,
+        progress_len_from_size_hint(spectra.size_hint()),
+    );
     spectra
-        .into_iter()
         .map(|spectrum| {
-            prepare_cosine_spectrum::<P, S>(spectrum, mz_power, intensity_power, tolerance)
+            let result =
+                prepare_cosine_spectrum::<P, S>(spectrum, mz_power, intensity_power, tolerance);
+            progress.inc(1);
+            result
         })
         .collect()
 }
@@ -180,16 +191,24 @@ fn prepare_cosine_library_parallel<'a, P, S, I>(
     intensity_power: f64,
     tolerance: f64,
     spectra: I,
+    progress: &(impl FlashIndexBuildProgress + Sync + ?Sized),
 ) -> Result<PreparedFlashSpectra<P>, FlashCosineIndexError>
 where
     P: SpectrumFloat + Send,
     S: Spectrum + Sync + 'a,
     I: IntoParallelIterator<Item = &'a S>,
 {
+    let spectra = spectra.into_par_iter();
+    progress.start_phase(
+        FlashIndexBuildPhase::PrepareSpectra,
+        spectra.opt_len().and_then(|len| u64::try_from(len).ok()),
+    );
     spectra
-        .into_par_iter()
         .map(|spectrum| {
-            prepare_cosine_spectrum::<P, S>(spectrum, mz_power, intensity_power, tolerance)
+            let result =
+                prepare_cosine_spectrum::<P, S>(spectrum, mz_power, intensity_power, tolerance);
+            progress.inc(1);
+            result
         })
         .collect()
 }
@@ -259,33 +278,34 @@ fn for_each_cosine_top_k_prepared<P, Q, Emit>(
         let query_index = state.query_order()[order_position];
         let qmz = search.query_mz[query_index];
 
-        let visited = inner.for_each_product_spectrum_in_window(qmz, |spec_id| {
-            if state.is_candidate(spec_id) {
-                return;
-            }
-            state.mark_candidate(spec_id);
+        let visited =
+            inner.for_each_product_spectrum_in_window(qmz, search.query_precursor_mz, |spec_id| {
+                if state.is_candidate(spec_id) {
+                    return;
+                }
+                state.mark_candidate(spec_id);
 
-            let lib_meta = inner.spectrum_meta(spec_id);
-            if lib_meta.0 == 0.0 {
-                return;
-            }
+                let lib_meta = inner.spectrum_meta(spec_id);
+                if lib_meta.0 == 0.0 {
+                    return;
+                }
 
-            let target_raw = top_k.pruning_score() * query_norm * lib_meta.0;
-            let (raw, count) =
-                inner.direct_score_for_spectrum(search.query_mz, search.query_data, spec_id);
-            if raw < target_raw {
-                return;
-            }
+                let target_raw = top_k.pruning_score() * query_norm * lib_meta.0;
+                let (raw, count) =
+                    inner.direct_score_for_spectrum(search.query_mz, search.query_data, spec_id);
+                if raw < target_raw {
+                    return;
+                }
 
-            let score = CosineKernel::finalize(raw, count, search.query_meta, lib_meta);
-            if score > 0.0 {
-                top_k.push(FlashSearchResult {
-                    spectrum_id: inner.public_spectrum_id(spec_id),
-                    score,
-                    n_matches: count,
-                });
-            }
-        });
+                let score = CosineKernel::finalize(raw, count, search.query_meta, lib_meta);
+                if score > 0.0 {
+                    top_k.push(FlashSearchResult {
+                        spectrum_id: inner.public_spectrum_id(spec_id),
+                        score,
+                        n_matches: count,
+                    });
+                }
+            });
         state.add_product_postings_visited(visited);
 
         let processed_prefix_len = order_position + 1;
@@ -382,38 +402,70 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
     where
         S: Spectrum + 'a,
     {
+        let progress = NoopFlashIndexBuildProgress;
+        Self::new_with_progress(mz_power, intensity_power, mz_tolerance, spectra, &progress)
+    }
+
+    /// Build a new cosine flash index while reporting construction progress.
+    ///
+    /// The `progress` sink receives coarse phase changes and per-spectrum
+    /// preparation ticks. With the `indicatif` feature enabled, pass an
+    /// `indicatif::ProgressBar` to display progress during construction.
+    pub fn new_with_progress<'a, S, G>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        spectra: impl IntoIterator<Item = &'a S>,
+        progress: &G,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        S: Spectrum + 'a,
+        G: FlashIndexBuildProgress + ?Sized,
+    {
         validate_cosine_index_config(mz_power, intensity_power, mz_tolerance)?;
-        let prepared =
-            prepare_cosine_library::<P, S>(mz_power, intensity_power, mz_tolerance, spectra)?;
+        let prepared = prepare_cosine_library::<P, S>(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            spectra,
+            progress,
+        )?;
         Self::from_prepared_library_with_builder(
             mz_power,
             intensity_power,
             mz_tolerance,
             prepared,
-            FlashIndex::<CosineKernel, P>::build_with_spectrum_id_map,
+            progress,
+            FlashIndex::<CosineKernel, P>::build_with_spectrum_id_map_and_progress,
         )
     }
 
-    fn from_prepared_library_with_builder<BuildInner>(
+    fn from_prepared_library_with_builder<G, BuildInner>(
         mz_power: f64,
         intensity_power: f64,
         mz_tolerance: f64,
         prepared: PreparedFlashSpectra<P>,
+        progress: &G,
         build_inner: BuildInner,
     ) -> Result<Self, FlashCosineIndexError>
     where
+        G: FlashIndexBuildProgress + ?Sized,
         BuildInner: FnOnce(
             f64,
             PreparedFlashSpectra<P>,
             SpectrumIdMap,
+            &G,
         )
             -> Result<FlashIndex<CosineKernel, P>, SimilarityComputationError>,
     {
+        progress.start_phase(FlashIndexBuildPhase::ReorderSpectra, Some(1));
         let (prepared, spectrum_id_map) =
             reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
                 .map_err(FlashCosineIndexError::Computation)?;
-        let inner = build_inner(mz_tolerance, prepared, spectrum_id_map)
+        progress.inc(1);
+        let inner = build_inner(mz_tolerance, prepared, spectrum_id_map, progress)
             .map_err(FlashCosineIndexError::Computation)?;
+        progress.finish();
 
         Ok(Self {
             inner,
@@ -441,19 +493,47 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
         S: Spectrum + Sync + 'a,
         I: IntoParallelIterator<Item = &'a S>,
     {
+        let progress = NoopFlashIndexBuildProgress;
+        Self::new_parallel_with_progress(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            spectra,
+            &progress,
+        )
+    }
+
+    /// Build a new cosine flash index with Rayon-backed preparation and
+    /// progress reporting.
+    #[cfg(feature = "rayon")]
+    pub fn new_parallel_with_progress<'a, S, I, G>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        spectra: I,
+        progress: &G,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        P: Send,
+        S: Spectrum + Sync + 'a,
+        I: IntoParallelIterator<Item = &'a S>,
+        G: FlashIndexBuildProgress + Sync + ?Sized,
+    {
         validate_cosine_index_config(mz_power, intensity_power, mz_tolerance)?;
         let prepared = prepare_cosine_library_parallel::<P, S, I>(
             mz_power,
             intensity_power,
             mz_tolerance,
             spectra,
+            progress,
         )?;
         Self::from_prepared_library_with_builder(
             mz_power,
             intensity_power,
             mz_tolerance,
             prepared,
-            FlashIndex::<CosineKernel, P>::build_parallel_with_spectrum_id_map,
+            progress,
+            FlashIndex::<CosineKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
         )
     }
 
@@ -477,10 +557,11 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
         S: Spectrum,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
+        let query_precursor_mz = self.inner.query_precursor_mz_for_filter(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
         Ok(self
             .inner
-            .search_direct(&query_mz, &query_data, &query_meta))
+            .search_direct(&query_mz, &query_data, &query_meta, query_precursor_mz))
     }
 
     /// Direct search using a caller-provided [`SearchState`] to avoid
@@ -494,10 +575,15 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
         S: Spectrum,
     {
         let (query_mz, query_data) = self.prepare_query(query)?;
+        let query_precursor_mz = self.inner.query_precursor_mz_for_filter(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
-        Ok(self
-            .inner
-            .search_direct_with_state(&query_mz, &query_data, &query_meta, state))
+        Ok(self.inner.search_direct_with_state(
+            &query_mz,
+            &query_data,
+            &query_meta,
+            query_precursor_mz,
+            state,
+        ))
     }
 
     /// Direct search that returns the best `k` results by descending score.
@@ -630,6 +716,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
     {
         ensure_finite(score_threshold, "score_threshold")?;
         let (query_mz, query_data) = self.prepare_query(query)?;
+        let query_precursor_mz = self.inner.query_precursor_mz_for_filter(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
         for_each_cosine_top_k_prepared(
             &self.inner,
@@ -638,6 +725,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
                 query_data: &query_data,
                 query_meta: &query_meta,
                 score_threshold,
+                query_precursor_mz,
             },
             k,
             state,
@@ -710,17 +798,26 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
         ensure_finite(score_threshold, "score_threshold")?;
         if score_threshold <= 0.0 {
             let (query_mz, query_data) = self.prepare_query(query)?;
+            let query_precursor_mz = self.inner.query_precursor_mz_for_filter(query)?;
             let query_meta = CosineKernel::spectrum_meta(&query_data);
-            self.inner
-                .for_each_direct_with_state(&query_mz, &query_data, &query_meta, state, emit);
+            self.inner.for_each_direct_with_state(
+                &query_mz,
+                &query_data,
+                &query_meta,
+                query_precursor_mz,
+                state,
+                emit,
+            );
             return Ok(());
         }
         if score_threshold > 1.0 {
             let _ = self.prepare_query(query)?;
+            let _ = self.inner.query_precursor_mz_for_filter(query)?;
             return Ok(());
         }
 
         let (query_mz, query_data) = self.prepare_query(query)?;
+        let query_precursor_mz = self.inner.query_precursor_mz_for_filter(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
         let query_norm = query_meta.0;
 
@@ -730,6 +827,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
                 query_data: &query_data,
                 query_meta: &query_meta,
                 score_threshold,
+                query_precursor_mz,
             },
             state,
             emit,
@@ -844,50 +942,94 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
     where
         S: Spectrum + 'a,
     {
+        let progress = NoopFlashIndexBuildProgress;
+        Self::new_with_progress(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            score_threshold,
+            spectra,
+            &progress,
+        )
+    }
+
+    /// Build a threshold-specialized cosine index while reporting construction
+    /// progress.
+    ///
+    /// With the `indicatif` feature enabled, pass an `indicatif::ProgressBar`
+    /// to display the current construction phase.
+    pub fn new_with_progress<'a, S, G>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        score_threshold: f64,
+        spectra: impl IntoIterator<Item = &'a S>,
+        progress: &G,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        S: Spectrum + 'a,
+        G: FlashIndexBuildProgress + ?Sized,
+    {
         validate_cosine_threshold_index_config(
             mz_power,
             intensity_power,
             mz_tolerance,
             score_threshold,
         )?;
-        let prepared =
-            prepare_cosine_library::<P, S>(mz_power, intensity_power, mz_tolerance, spectra)?;
+        let prepared = prepare_cosine_library::<P, S>(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            spectra,
+            progress,
+        )?;
         Self::from_prepared_threshold_library_with_builder(
             mz_power,
             intensity_power,
             mz_tolerance,
             score_threshold,
             prepared,
-            FlashIndex::<CosineKernel, P>::build_with_spectrum_id_map,
+            progress,
+            FlashIndex::<CosineKernel, P>::build_with_spectrum_id_map_and_progress,
         )
     }
 
-    fn from_prepared_threshold_library_with_builder<BuildInner>(
+    fn from_prepared_threshold_library_with_builder<G, BuildInner>(
         mz_power: f64,
         intensity_power: f64,
         mz_tolerance: f64,
         score_threshold: f64,
         prepared: PreparedFlashSpectra<P>,
+        progress: &G,
         build_inner: BuildInner,
     ) -> Result<Self, FlashCosineIndexError>
     where
+        G: FlashIndexBuildProgress + ?Sized,
         BuildInner: FnOnce(
             f64,
             PreparedFlashSpectra<P>,
             SpectrumIdMap,
+            &G,
         )
             -> Result<FlashIndex<CosineKernel, P>, SimilarityComputationError>,
     {
+        progress.start_phase(FlashIndexBuildPhase::ReorderSpectra, Some(1));
         let (prepared, spectrum_id_map) =
             reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
                 .map_err(FlashCosineIndexError::Computation)?;
+        progress.inc(1);
+        progress.start_phase(FlashIndexBuildPhase::BuildBlockUpperBounds, Some(1));
         let block_upper_bounds = build_cosine_block_upper_bounds(&prepared, mz_tolerance)
             .map_err(FlashCosineIndexError::Computation)?;
+        progress.inc(1);
+        progress.start_phase(FlashIndexBuildPhase::BuildBlockProductIndex, Some(1));
         let block_products =
             SpectrumBlockProductIndex::build(&prepared, DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE)
                 .map_err(FlashCosineIndexError::Computation)?;
-        let inner = build_inner(mz_tolerance, prepared, spectrum_id_map)
+        progress.inc(1);
+        let inner = build_inner(mz_tolerance, prepared, spectrum_id_map, progress)
             .map_err(FlashCosineIndexError::Computation)?;
+        progress.finish();
 
         Ok(Self {
             inner,
@@ -919,6 +1061,34 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         S: Spectrum + Sync + 'a,
         I: IntoParallelIterator<Item = &'a S>,
     {
+        let progress = NoopFlashIndexBuildProgress;
+        Self::new_parallel_with_progress(
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            score_threshold,
+            spectra,
+            &progress,
+        )
+    }
+
+    /// Build a threshold-specialized cosine index with Rayon-backed
+    /// preparation and progress reporting.
+    #[cfg(feature = "rayon")]
+    pub fn new_parallel_with_progress<'a, S, I, G>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        score_threshold: f64,
+        spectra: I,
+        progress: &G,
+    ) -> Result<Self, FlashCosineIndexError>
+    where
+        P: Send,
+        S: Spectrum + Sync + 'a,
+        I: IntoParallelIterator<Item = &'a S>,
+        G: FlashIndexBuildProgress + Sync + ?Sized,
+    {
         validate_cosine_threshold_index_config(
             mz_power,
             intensity_power,
@@ -930,6 +1100,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             intensity_power,
             mz_tolerance,
             spectra,
+            progress,
         )?;
         Self::from_prepared_threshold_library_with_builder(
             mz_power,
@@ -937,7 +1108,8 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             mz_tolerance,
             score_threshold,
             prepared,
-            FlashIndex::<CosineKernel, P>::build_parallel_with_spectrum_id_map,
+            progress,
+            FlashIndex::<CosineKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
         )
     }
 
@@ -1057,6 +1229,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             self.intensity_power,
             self.inner.tolerance,
         )?;
+        let query_precursor_mz = self.inner.query_precursor_mz_for_filter(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
         state.reset_diagnostics();
         self.for_each_top_k_prepared_with_state(
@@ -1065,6 +1238,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
                 query_data: &query_data,
                 query_meta: &query_meta,
                 score_threshold: self.score_threshold,
+                query_precursor_mz,
             },
             k,
             state,
@@ -1091,9 +1265,17 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             self.intensity_power,
             self.inner.tolerance,
         )?;
+        let query_precursor_mz = self.inner.query_precursor_mz_for_filter(query)?;
         let query_meta = CosineKernel::spectrum_meta(&query_data);
         state.reset_diagnostics();
-        self.for_each_prepared_with_state(&query_mz, &query_data, &query_meta, state, emit);
+        self.for_each_prepared_with_state(
+            &query_mz,
+            &query_data,
+            &query_meta,
+            query_precursor_mz,
+            state,
+            emit,
+        );
         Ok(())
     }
 
@@ -1114,9 +1296,17 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         let internal_query_id = self.inner.internal_spectrum_id(query_id)?;
         let (query_mz, query_data) = self.inner.spectrum_slices(internal_query_id);
         let query_meta = *self.inner.spectrum_meta(internal_query_id);
+        let query_precursor_mz = Some(self.inner.spectrum_precursor_mz(internal_query_id));
 
         state.reset_diagnostics();
-        self.for_each_prepared_indexed_with_state(query_mz, query_data, &query_meta, state, emit);
+        self.for_each_prepared_with_state(
+            query_mz,
+            query_data,
+            &query_meta,
+            query_precursor_mz,
+            state,
+            emit,
+        );
         Ok(())
     }
 
@@ -1186,14 +1376,16 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         let internal_query_id = self.inner.internal_spectrum_id(query_id)?;
         let (query_mz, query_data) = self.inner.spectrum_slices(internal_query_id);
         let query_meta = *self.inner.spectrum_meta(internal_query_id);
+        let query_precursor_mz = Some(self.inner.spectrum_precursor_mz(internal_query_id));
 
         state.reset_diagnostics();
-        self.for_each_top_k_prepared_indexed_with_state(
+        self.for_each_top_k_prepared_with_state(
             DirectThresholdSearch {
                 query_mz,
                 query_data,
                 query_meta: &query_meta,
                 score_threshold: self.score_threshold,
+                query_precursor_mz,
             },
             k,
             state,
@@ -1230,21 +1422,35 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         query_mz: &[Q],
         query_data: &[Q],
         query_meta: &CosineNorm,
+        query_precursor_mz: Option<f64>,
         state: &mut SearchState,
         mut emit: Emit,
     ) where
         Emit: FnMut(FlashSearchResult),
     {
         if self.score_threshold <= 0.0 {
-            self.inner
-                .for_each_direct_with_state(query_mz, query_data, query_meta, state, emit);
+            self.inner.for_each_direct_with_state(
+                query_mz,
+                query_data,
+                query_meta,
+                query_precursor_mz,
+                state,
+                emit,
+            );
             return;
         }
         if self.score_threshold > 1.0 || self.inner.n_spectra == 0 || query_mz.is_empty() {
             return;
         }
         if self.score_threshold < THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD {
-            self.for_each_direct_threshold_prepared(query_mz, query_data, query_meta, state, emit);
+            self.for_each_direct_threshold_prepared(
+                query_mz,
+                query_data,
+                query_meta,
+                query_precursor_mz,
+                state,
+                emit,
+            );
             return;
         }
 
@@ -1255,82 +1461,17 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             self.score_threshold,
             state,
         );
-        self.emit_allowed_block_scores(query_mz, query_data, query_meta, state, &mut emit);
-    }
-
-    fn for_each_prepared_indexed_with_state<Q: SpectrumFloat, Emit>(
-        &self,
-        query_mz: &[Q],
-        query_data: &[Q],
-        query_meta: &CosineNorm,
-        state: &mut SearchState,
-        mut emit: Emit,
-    ) where
-        Emit: FnMut(FlashSearchResult),
-    {
-        if self.score_threshold <= 0.0 {
-            self.inner
-                .for_each_direct_with_state(query_mz, query_data, query_meta, state, emit);
-            return;
-        }
-        if self.score_threshold > 1.0 || self.inner.n_spectra == 0 || query_mz.is_empty() {
-            return;
-        }
-        if self.score_threshold < THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD {
-            self.for_each_direct_threshold_prepared(query_mz, query_data, query_meta, state, emit);
-            return;
-        }
-
-        self.prepare_block_pruned_candidate_blocks(
+        self.emit_allowed_block_scores(
             query_mz,
             query_data,
             query_meta,
-            self.score_threshold,
+            query_precursor_mz,
             state,
+            &mut emit,
         );
-        self.emit_allowed_block_scores(query_mz, query_data, query_meta, state, &mut emit);
     }
 
     fn for_each_top_k_prepared_with_state<Q: SpectrumFloat, Emit>(
-        &self,
-        search: DirectThresholdSearch<'_, CosineKernel, Q>,
-        k: usize,
-        state: &mut SearchState,
-        top_k_state: &mut TopKSearchState,
-        emit: Emit,
-    ) where
-        Emit: FnMut(FlashSearchResult),
-    {
-        if self.score_threshold <= 0.0
-            || self.score_threshold < THRESHOLD_INDEX_ONE_SIDED_MIN_THRESHOLD
-        {
-            for_each_cosine_top_k_prepared(&self.inner, search, k, state, top_k_state, emit);
-            return;
-        }
-
-        let mut top_k = TopKSearchResults::new(k, self.score_threshold, top_k_state);
-        if k == 0
-            || self.score_threshold > 1.0
-            || self.inner.n_spectra == 0
-            || search.query_mz.is_empty()
-        {
-            top_k.emit(emit);
-            return;
-        }
-
-        self.prepare_block_pruned_candidate_blocks(
-            search.query_mz,
-            search.query_data,
-            search.query_meta,
-            top_k.pruning_score(),
-            state,
-        );
-        self.push_allowed_block_top_k_candidates(search, state, &mut top_k);
-        state.add_results_emitted(top_k.len());
-        top_k.emit(emit);
-    }
-
-    fn for_each_top_k_prepared_indexed_with_state<Q: SpectrumFloat, Emit>(
         &self,
         search: DirectThresholdSearch<'_, CosineKernel, Q>,
         k: usize,
@@ -1374,6 +1515,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         query_mz: &[Q],
         query_data: &[Q],
         query_meta: &CosineNorm,
+        query_precursor_mz: Option<f64>,
         state: &mut SearchState,
         emit: &mut Emit,
     ) where
@@ -1383,6 +1525,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         self.inner.for_each_allowed_block_raw_score(
             query_mz,
             query_data,
+            query_precursor_mz,
             &self.block_products,
             state,
             |spec_id, raw, count| {
@@ -1416,6 +1559,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         state.prepare_threshold_order(search.query_data);
         self.inner.score_allowed_block_candidates_by_query_order(
             search.query_mz,
+            search.query_precursor_mz,
             &self.block_products,
             state,
             top_k.pruning_score() * query_norm,
@@ -1453,6 +1597,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         query_mz: &[Q],
         query_data: &[Q],
         query_meta: &CosineNorm,
+        query_precursor_mz: Option<f64>,
         state: &mut SearchState,
         emit: Emit,
     ) where
@@ -1465,6 +1610,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
                 query_data,
                 query_meta,
                 score_threshold: self.score_threshold,
+                query_precursor_mz,
             },
             state,
             emit,
@@ -1489,6 +1635,28 @@ impl<P: SpectrumFloat + Sync> SpectraIndex for FlashCosineIndex<P> {
 
     fn new_search_state(&self) -> SearchState {
         self.new_search_state()
+    }
+
+    fn pepmass_filter(&self) -> PepmassFilter {
+        self.inner.pepmass_filter()
+    }
+
+    fn with_pepmass_filter_and_progress<G>(
+        mut self,
+        filter: PepmassFilter,
+        progress: &G,
+    ) -> Result<Self, SpectraIndexSetupError>
+    where
+        G: FlashIndexBuildProgress + ?Sized,
+    {
+        self.inner
+            .set_pepmass_filter_with_progress(filter, progress)?;
+        Ok(self)
+    }
+
+    fn without_pepmass_filter(mut self) -> Self {
+        self.inner.clear_pepmass_filter();
+        self
     }
 
     fn search<S>(&self, query: &S) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
@@ -1559,6 +1727,28 @@ impl<P: SpectrumFloat + Sync> SpectraIndex for FlashCosineThresholdIndex<P> {
 
     fn new_search_state(&self) -> SearchState {
         self.new_search_state()
+    }
+
+    fn pepmass_filter(&self) -> PepmassFilter {
+        self.inner.pepmass_filter()
+    }
+
+    fn with_pepmass_filter_and_progress<G>(
+        mut self,
+        filter: PepmassFilter,
+        progress: &G,
+    ) -> Result<Self, SpectraIndexSetupError>
+    where
+        G: FlashIndexBuildProgress + ?Sized,
+    {
+        self.inner
+            .set_pepmass_filter_with_progress(filter, progress)?;
+        Ok(self)
+    }
+
+    fn without_pepmass_filter(mut self) -> Self {
+        self.inner.clear_pepmass_filter();
+        self
     }
 
     fn search<S>(&self, query: &S) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>

@@ -26,9 +26,12 @@ pub enum SimilarityComputationError {
     /// Tolerance must be zero or positive.
     #[error("value `mz_tolerance` must be >= 0")]
     NegativeTolerance,
-    /// Peak index did not fit expected matrix index type.
-    #[error("peak index overflow while building match graph")]
+    /// An index did not fit the data-structure index type.
+    #[error("index overflow while building similarity data structures")]
     IndexOverflow,
+    /// Sparse index construction failed while inserting an entry.
+    #[error("failed while building sparse index")]
+    IndexConstructionFailed,
     /// Graph construction failed while inserting a match edge.
     #[error("failed while building peak matching graph")]
     GraphConstructionFailed,
@@ -40,4 +43,15 @@ pub enum SimilarityComputationError {
         "`{0}` violates strict peak spacing precondition: consecutive peaks must be > 2 * mz_tolerance apart"
     )]
     InvalidPeakSpacing(&'static str),
+}
+
+/// Error returned when configuring an already-built spectrum index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SpectraIndexSetupError {
+    /// A configuration parameter was invalid.
+    #[error(transparent)]
+    Config(#[from] SimilarityConfigError),
+    /// Lazy setup of an auxiliary index failed.
+    #[error(transparent)]
+    Computation(#[from] SimilarityComputationError),
 }

@@ -1,8 +1,9 @@
 //! Tests for the common SpectraIndex trait across Flash index variants.
 
 use mass_spectrometry::prelude::{
-    FlashCosineIndex, FlashCosineThresholdIndex, FlashEntropyIndex, GenericSpectrum, SpectraIndex,
-    SpectrumAlloc, SpectrumMut, TopKSearchState,
+    FlashCosineIndex, FlashCosineThresholdIndex, FlashEntropyIndex, GenericSpectrum,
+    SimilarityConfigError, SpectraIndex, SpectraIndexSetupError, SpectrumAlloc, SpectrumMut,
+    TopKSearchState,
 };
 
 fn make_spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
@@ -51,6 +52,33 @@ where
     assert_eq!(streamed, top);
 }
 
+fn assert_trait_pepmass_defaults<I>(index: I)
+where
+    I: SpectraIndex,
+{
+    assert!(!index.pepmass_filter().is_enabled());
+
+    let index = index
+        .with_pepmass_tolerance(0.5)
+        .expect("valid PEPMASS tolerance should be accepted through SpectraIndex");
+    assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
+
+    let index = index.without_pepmass_filter();
+    assert!(!index.pepmass_filter().is_enabled());
+}
+
+fn assert_trait_rejects_invalid_pepmass_tolerance<I>(index: I)
+where
+    I: SpectraIndex,
+{
+    assert!(matches!(
+        index.with_pepmass_tolerance(f64::NAN),
+        Err(SpectraIndexSetupError::Config(
+            SimilarityConfigError::NonFiniteParameter("pepmass_tolerance")
+        ))
+    ));
+}
+
 #[test]
 fn spectra_index_trait_covers_all_flash_index_variants() {
     let spectra = spectra();
@@ -65,4 +93,25 @@ fn spectra_index_trait_covers_all_flash_index_variants() {
 
     let entropy = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
     assert_trait_surface(&entropy, query);
+}
+
+#[test]
+fn spectra_index_trait_covers_pepmass_filter_defaults() {
+    let spectra = spectra();
+
+    assert_trait_pepmass_defaults(FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap());
+    assert_trait_pepmass_defaults(
+        FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap(),
+    );
+    assert_trait_pepmass_defaults(FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap());
+
+    assert_trait_rejects_invalid_pepmass_tolerance(
+        FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap(),
+    );
+    assert_trait_rejects_invalid_pepmass_tolerance(
+        FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap(),
+    );
+    assert_trait_rejects_invalid_pepmass_tolerance(
+        FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap(),
+    );
 }
