@@ -16,9 +16,6 @@
 //! - `INDEX_SEARCH_TOP_K_PRECISIONS=f64`, `f32`, `f16`, or `all`
 //! - `INDEX_SEARCH_TOP_K_CLUSTER_SIZE=256`
 //! - `INDEX_SEARCH_TOP_K_SHUFFLE=1`
-//! - `MASS_SPECTROMETRY_FLASH_SPECTRUM_BLOCK_SIZE=256` with
-//!   `--features experimental_block_size_env`
-//! - `--features experimental_reordered_index` to add reordered-index variants
 //! - `INDEX_SEARCH_TOP_K_SAMPLE_SIZE=10`
 
 use std::hint::black_box;
@@ -43,9 +40,7 @@ const RANDOM_BASE_SEED: u64 = 0xDEAD_BEEF_CAFE_BABE;
 #[derive(Clone, Copy, Debug, Default)]
 struct DiagnosticTotals {
     product_postings_visited: usize,
-    prefix_postings_visited: usize,
     candidates_marked: usize,
-    secondary_candidates_marked: usize,
     candidates_rescored: usize,
     results_emitted: usize,
     spectrum_blocks_evaluated: usize,
@@ -96,15 +91,9 @@ impl DiagnosticTotals {
         self.product_postings_visited = self
             .product_postings_visited
             .saturating_add(diagnostics.product_postings_visited);
-        self.prefix_postings_visited = self
-            .prefix_postings_visited
-            .saturating_add(diagnostics.prefix_postings_visited);
         self.candidates_marked = self
             .candidates_marked
             .saturating_add(diagnostics.candidates_marked);
-        self.secondary_candidates_marked = self
-            .secondary_candidates_marked
-            .saturating_add(diagnostics.secondary_candidates_marked);
         self.candidates_rescored = self
             .candidates_rescored
             .saturating_add(diagnostics.candidates_rescored);
@@ -124,9 +113,7 @@ impl DiagnosticTotals {
 
     fn is_empty(&self) -> bool {
         self.product_postings_visited == 0
-            && self.prefix_postings_visited == 0
             && self.candidates_marked == 0
-            && self.secondary_candidates_marked == 0
             && self.candidates_rescored == 0
             && self.results_emitted == 0
             && self.spectrum_blocks_evaluated == 0
@@ -157,9 +144,7 @@ fn print_diagnostic_summary(
             "index_top_k_large diagnostics ",
             "bench={bench_name}/{threshold_label} queries={query_count} ",
             "product_postings/q={product_postings:.3} ",
-            "prefix_postings/q={prefix_postings:.3} ",
             "candidates_marked/q={candidates_marked:.3} ",
-            "secondary_candidates_marked/q={secondary_candidates_marked:.3} ",
             "candidates_rescored/q={candidates_rescored:.3} ",
             "results_emitted/q={results_emitted:.3} ",
             "spectrum_blocks_evaluated/q={spectrum_blocks_evaluated:.3} ",
@@ -170,10 +155,7 @@ fn print_diagnostic_summary(
         threshold_label = threshold_label,
         query_count = query_count,
         product_postings = per_query(diagnostics.product_postings_visited, query_count),
-        prefix_postings = per_query(diagnostics.prefix_postings_visited, query_count),
         candidates_marked = per_query(diagnostics.candidates_marked, query_count),
-        secondary_candidates_marked =
-            per_query(diagnostics.secondary_candidates_marked, query_count),
         candidates_rescored = per_query(diagnostics.candidates_rescored, query_count),
         results_emitted = per_query(diagnostics.results_emitted, query_count),
         spectrum_blocks_evaluated = per_query(diagnostics.spectrum_blocks_evaluated, query_count),
@@ -452,24 +434,6 @@ where
             return;
         }
     };
-    #[cfg(feature = "experimental_reordered_index")]
-    let flash_entropy_reordered = match FlashEntropyIndex::<P>::new_reordered_by_signature(
-        mz_power,
-        intensity_power,
-        mz_tolerance,
-        config.weighted,
-        config.library.iter(),
-    ) {
-        Ok(index) => Some(index),
-        Err(error) => {
-            eprintln!(
-                "index_top_k_large skipped reordered entropy precision={} weighted={} because index build failed: {error:?}",
-                config.precision_label, config.weighted
-            );
-            None
-        }
-    };
-
     let mut group = c.benchmark_group(format!(
         "library_search_entropy_{}_{}_top_k_large{}",
         config.variant_name,
@@ -559,53 +523,6 @@ where
             config.query_ids.len(),
             last_diagnostics,
         );
-
-        #[cfg(feature = "experimental_reordered_index")]
-        if let Some(flash_entropy_reordered) = &flash_entropy_reordered {
-            let mut state = flash_entropy_reordered.new_search_state();
-            let mut top_k_state = TopKSearchState::new();
-            let mut last_diagnostics = DiagnosticTotals::default();
-            group.bench_function(
-                BenchmarkId::new("reordered_indexed_top_k_threshold", &threshold_label),
-                |b| {
-                    b.iter(|| {
-                        let mut total_score = 0.0;
-                        let mut total_matches = 0usize;
-                        let mut diagnostics_totals = DiagnosticTotals::default();
-                        for &query_id in config.query_ids {
-                            flash_entropy_reordered
-                                .for_each_top_k_threshold_indexed_with_state(
-                                    black_box(
-                                        u32::try_from(query_id)
-                                            .expect("benchmark query id should fit in u32"),
-                                    ),
-                                    black_box(config.top_k),
-                                    black_box(threshold),
-                                    &mut state,
-                                    &mut top_k_state,
-                                    |result| {
-                                        total_score += result.score;
-                                        total_matches += result.n_matches;
-                                    },
-                                )
-                                .expect("reordered entropy indexed top-k threshold search should succeed");
-                            diagnostics_totals.add(state.diagnostics());
-                        }
-                        last_diagnostics = diagnostics_totals;
-                        black_box((total_score, total_matches, diagnostics_totals))
-                    })
-                },
-            );
-            print_diagnostic_summary(
-                &format!(
-                    "entropy_{}_reordered_indexed_top_k_threshold",
-                    config.variant_name
-                ),
-                &threshold_label,
-                config.query_ids.len(),
-                last_diagnostics,
-            );
-        }
 
         let mut state = flash_entropy.new_search_state();
         let mut last_diagnostics = DiagnosticTotals::default();
@@ -899,24 +816,6 @@ where
                 continue;
             }
         };
-        #[cfg(feature = "experimental_reordered_index")]
-        let flash_cosine_threshold_reordered =
-            match FlashCosineThresholdIndex::<P>::new_reordered_by_signature(
-                mz_power,
-                intensity_power,
-                mz_tolerance,
-                threshold,
-                config.library.iter(),
-            ) {
-                Ok(index) => Some(index),
-                Err(error) => {
-                    eprintln!(
-                        "index_top_k_large skipped reordered cosine threshold precision={} threshold={threshold:.3} because threshold index build failed: {error:?}",
-                        config.precision_label
-                    );
-                    None
-                }
-            };
         let threshold_label = format!("{threshold:.3}");
 
         let mut state = flash_cosine.new_search_state();
@@ -1031,49 +930,6 @@ where
             config.query_ids.len(),
             last_diagnostics,
         );
-
-        #[cfg(feature = "experimental_reordered_index")]
-        if let Some(flash_cosine_threshold_reordered) = &flash_cosine_threshold_reordered {
-            let mut state = flash_cosine_threshold_reordered.new_search_state();
-            let mut top_k_state = TopKSearchState::new();
-            let mut last_diagnostics = DiagnosticTotals::default();
-            group.bench_function(
-                BenchmarkId::new("reordered_threshold_index_indexed_top_k", &threshold_label),
-                |b| {
-                    b.iter(|| {
-                        let mut total_score = 0.0;
-                        let mut total_matches = 0usize;
-                        let mut diagnostics_totals = DiagnosticTotals::default();
-                        for &query_id in config.query_ids {
-                            flash_cosine_threshold_reordered
-                                .for_each_top_k_indexed_with_state(
-                                    black_box(
-                                        u32::try_from(query_id)
-                                            .expect("benchmark query id should fit in u32"),
-                                    ),
-                                    black_box(config.top_k),
-                                    &mut state,
-                                    &mut top_k_state,
-                                    |result| {
-                                        total_score += result.score;
-                                        total_matches += result.n_matches;
-                                    },
-                                )
-                                .expect("reordered indexed top-k threshold search should succeed");
-                            diagnostics_totals.add(state.diagnostics());
-                        }
-                        last_diagnostics = diagnostics_totals;
-                        black_box((total_score, total_matches, diagnostics_totals))
-                    })
-                },
-            );
-            print_diagnostic_summary(
-                "reordered_threshold_index_indexed_top_k",
-                &threshold_label,
-                config.query_ids.len(),
-                last_diagnostics,
-            );
-        }
 
         let mut state = flash_cosine_threshold.new_search_state();
         let mut last_diagnostics = DiagnosticTotals::default();

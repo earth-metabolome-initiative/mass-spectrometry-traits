@@ -424,7 +424,6 @@ fn bench_index_search(c: &mut Criterion) {
                     let mut total_score = 0.0;
                     let mut total_matches = 0usize;
                     let mut total_product_postings = 0usize;
-                    let mut total_prefix_postings = 0usize;
                     let mut total_candidates_rescored = 0usize;
                     for query_id in 0..top_k_query_count {
                         flash_cosine_threshold_top_k
@@ -441,14 +440,12 @@ fn bench_index_search(c: &mut Criterion) {
                             .expect("indexed top-k threshold search should succeed");
                         let diagnostics = state.diagnostics();
                         total_product_postings += diagnostics.product_postings_visited;
-                        total_prefix_postings += diagnostics.prefix_postings_visited;
                         total_candidates_rescored += diagnostics.candidates_rescored;
                     }
                     black_box((
                         total_score,
                         total_matches,
                         total_product_postings,
-                        total_prefix_postings,
                         total_candidates_rescored,
                     ))
                 })
@@ -463,7 +460,6 @@ fn bench_index_search(c: &mut Criterion) {
                     let mut total_score = 0.0;
                     let mut total_matches = 0usize;
                     let mut total_product_postings = 0usize;
-                    let mut total_prefix_postings = 0usize;
                     let mut total_candidates_rescored = 0usize;
                     for query_id in 0..top_k_query_count {
                         let mut results = Vec::new();
@@ -482,14 +478,12 @@ fn bench_index_search(c: &mut Criterion) {
                         total_matches += matches;
                         let diagnostics = state.diagnostics();
                         total_product_postings += diagnostics.product_postings_visited;
-                        total_prefix_postings += diagnostics.prefix_postings_visited;
                         total_candidates_rescored += diagnostics.candidates_rescored;
                     }
                     black_box((
                         total_score,
                         total_matches,
                         total_product_postings,
-                        total_prefix_postings,
                         total_candidates_rescored,
                     ))
                 })
