@@ -17,15 +17,12 @@ mem_size = ["dep:mem_dbg_crate", "mem_dbg_crate/derive", "mem_dbg_crate/half", "
 mem_dbg = ["std", "mem_size", "mem_dbg_crate/std", "geometric-traits/mem_dbg"]
 proptest = ["dep:proptest"]
 rayon = ["std", "dep:rayon"]
-experimental_block_size_env = ["std"]
-experimental_reordered_index = []
 
 [dependencies]
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", default-features = false, features = ["alloc"] }
 num-traits = { version = "0.2", default-features = false }
 half = { version = "2.7.1", default-features = false, features = ["num-traits"] }
 multi_ranged = { version = "0.1.1", default-features = false }
-bitvec = { version = "1", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.10", default-features = false }
 itoa = { version = "1", default-features = false }
 thiserror = { version = "2", default-features = false }

@@ -683,9 +683,7 @@ fn threshold_indexed_top_k_reports_dynamic_block_candidate_diagnostics() {
         "diagnostic top-k result",
     );
     assert!(top_k_diagnostics.product_postings_visited > 0);
-    assert_eq!(top_k_diagnostics.prefix_postings_visited, 0);
     assert!(top_k_diagnostics.candidates_marked > 0);
-    assert_eq!(top_k_diagnostics.secondary_candidates_marked, 0);
     assert_eq!(
         top_k_diagnostics.candidates_rescored,
         top_k_diagnostics.candidates_marked
@@ -745,47 +743,26 @@ fn threshold_index_top_k_prunes_low_bound_spectrum_blocks_without_losing_hits() 
     assert_eq!(external_diagnostics.candidates_marked, 1024);
 }
 
-#[cfg(feature = "experimental_reordered_index")]
 #[test]
-fn reordered_threshold_index_preserves_public_ids_for_indexed_queries() {
+fn threshold_index_preserves_public_ids_after_default_reordering() {
     let spectra = [
         make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
         make_spectrum_f64(500.0, &[(100.0, 10.0), (150.0, 20.0)]),
         make_spectrum_f64(500.0, &[(100.05, 11.0), (150.05, 19.0)]),
         make_spectrum_f64(700.0, &[(400.05, 11.0), (450.05, 19.0)]),
     ];
-    let baseline = FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.9, spectra.iter())
-        .expect("baseline threshold index should build");
-    let reordered = FlashCosineThresholdIndex::<f64>::new_reordered_by_signature(
-        0.0,
-        1.0,
-        0.1,
-        0.9,
-        spectra.iter(),
-    )
-    .expect("reordered threshold index should build");
+    let index = FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.9, spectra.iter())
+        .expect("threshold index should build");
 
     for query_id in 0..spectra.len() as u32 {
-        let mut baseline_state = baseline.new_search_state();
-        let mut reordered_state = reordered.new_search_state();
-        let baseline_hits = baseline
-            .search_top_k_indexed_with_state(query_id, 3, &mut baseline_state)
-            .expect("baseline indexed top-k should work");
-        let reordered_hits = reordered
-            .search_top_k_indexed_with_state(query_id, 3, &mut reordered_state)
-            .expect("reordered indexed top-k should work");
+        let mut state = index.new_search_state();
+        let hits = index
+            .search_top_k_indexed_with_state(query_id, 3, &mut state)
+            .expect("indexed top-k should work");
 
-        assert_results_close(
-            reordered_hits,
-            baseline_hits,
-            &format!("reordered indexed top-k query_id={query_id}"),
-        );
         assert!(
-            reordered
-                .search_top_k_indexed(query_id, 1)
-                .expect("single top-k should work")
-                .iter()
-                .any(|hit| hit.spectrum_id == query_id),
+            hits.iter()
+                .any(|hit| hit.spectrum_id == query_id && hit.score > 0.999),
             "query {query_id} should retain its public self id"
         );
     }
@@ -816,7 +793,6 @@ fn threshold_index_validates_threshold_and_query_id() {
         spectra.iter().map(|(_, s)| s),
     )
     .expect("threshold above one should build");
-    assert_eq!(threshold_index.n_prefix_peaks(), 0);
 
     let mut state = threshold_index.new_search_state();
     let mut emitted = Vec::new();

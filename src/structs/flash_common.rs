@@ -15,8 +15,6 @@ use crate::traits::SpectrumFloat;
 const PREFIX_PRUNING_MIN_THRESHOLD: f64 = 0.85;
 pub(crate) const DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE: usize = 1024;
 pub(crate) const DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE: usize = 256;
-#[cfg(feature = "experimental_block_size_env")]
-const SPECTRUM_BLOCK_SIZE_ENV: &str = "MASS_SPECTROMETRY_FLASH_SPECTRUM_BLOCK_SIZE";
 
 pub(crate) struct PreparedFlashSpectrum<P: SpectrumFloat> {
     pub(crate) precursor_mz: P,
@@ -40,7 +38,6 @@ impl SpectrumIdMap {
         Self::default()
     }
 
-    #[cfg(feature = "experimental_reordered_index")]
     fn from_internal_to_public(
         internal_to_public: Vec<u32>,
     ) -> Result<Self, SimilarityComputationError> {
@@ -84,7 +81,6 @@ impl SpectrumIdMap {
     }
 }
 
-#[cfg(feature = "experimental_reordered_index")]
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct SpectrumReorderKey {
     top_mz_bins: [i64; 8],
@@ -93,7 +89,6 @@ struct SpectrumReorderKey {
     public_id: u32,
 }
 
-#[cfg(feature = "experimental_reordered_index")]
 pub(crate) fn reorder_prepared_spectra_by_signature<P: SpectrumFloat>(
     spectra: PreparedFlashSpectra<P>,
     tolerance: f64,
@@ -130,7 +125,6 @@ pub(crate) fn reorder_prepared_spectra_by_signature<P: SpectrumFloat>(
     Ok((reordered, id_map))
 }
 
-#[cfg(feature = "experimental_reordered_index")]
 fn spectrum_reorder_key<P: SpectrumFloat>(
     spectrum: &PreparedFlashSpectrum<P>,
     public_id: u32,
@@ -152,28 +146,11 @@ fn spectrum_reorder_key<P: SpectrumFloat>(
     })
 }
 
-#[cfg(feature = "experimental_reordered_index")]
 fn mz_bin(mz: f64, bin_width: f64) -> Result<i64, SimilarityComputationError> {
     if !mz.is_finite() || !bin_width.is_finite() || bin_width <= 0.0 {
         return Err(SimilarityComputationError::NonFiniteValue("mz"));
     }
     Ok((mz / bin_width).floor() as i64)
-}
-
-pub(crate) fn spectrum_block_size(default_size: usize) -> usize {
-    #[cfg(feature = "experimental_block_size_env")]
-    {
-        std::env::var(SPECTRUM_BLOCK_SIZE_ENV)
-            .ok()
-            .and_then(|raw| raw.trim().parse::<usize>().ok())
-            .filter(|&value| value > 0)
-            .unwrap_or(default_size)
-    }
-
-    #[cfg(not(feature = "experimental_block_size_env"))]
-    {
-        default_size
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -227,10 +204,6 @@ where
             perm.par_sort_unstable_by(|&left, &right| compare_indexed_values(values, left, right));
         }
     }
-}
-
-fn sort_mz_values<P: SpectrumFloat>(values: &mut [P]) {
-    values.sort_unstable_by(|left, right| left.to_f64().total_cmp(&right.to_f64()));
 }
 
 struct SearchBitVec {
@@ -374,12 +347,8 @@ pub struct FlashSearchResult {
 pub struct FlashSearchDiagnostics {
     /// Product-ion postings visited while scanning m/z windows.
     pub product_postings_visited: usize,
-    /// Threshold-prefix postings visited while intersecting candidate sets.
-    pub prefix_postings_visited: usize,
     /// Unique primary candidates marked for exact scoring.
     pub candidates_marked: usize,
-    /// Unique secondary candidates retained after prefix intersection.
-    pub secondary_candidates_marked: usize,
     /// Candidates passed to exact scoring.
     pub candidates_rescored: usize,
     /// Results emitted after threshold/top-k filtering.
@@ -563,63 +532,6 @@ pub(crate) struct DirectThresholdSearch<'a, K: FlashKernel, Q: SpectrumFloat> {
     pub(crate) query_data: &'a [Q],
     pub(crate) query_meta: &'a K::SpectrumMeta,
     pub(crate) score_threshold: f64,
-}
-
-/// Library-side prefix postings for threshold-specialized direct searches.
-///
-/// A fixed-threshold index chooses how each spectrum's prefix is computed,
-/// then this shared structure stores those prefix peaks in a sorted m/z index
-/// and in per-spectrum order for indexed-query graph construction.
-#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
-#[cfg_attr(feature = "mem_size", mem_size(rec))]
-#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
-pub(crate) struct ThresholdPrefixPostings<P: SpectrumFloat = f64> {
-    spectrum_prefix_offsets: Vec<u32>,
-    spectrum_prefix_mz: Vec<P>,
-}
-
-impl<P: SpectrumFloat> ThresholdPrefixPostings<P> {
-    pub(crate) fn build(
-        spectra: &[PreparedFlashSpectrum<P>],
-        mut prefix_indices: impl FnMut(&[P]) -> Vec<usize>,
-    ) -> Result<Self, SimilarityComputationError> {
-        let mut spectrum_prefix_offsets = Vec::with_capacity(spectra.len() + 1);
-        let mut spectrum_prefix_mz = Vec::new();
-        spectrum_prefix_offsets.push(0);
-
-        for (spec_id, spectrum) in spectra.iter().enumerate() {
-            let _: u32 =
-                u32::try_from(spec_id).map_err(|_| SimilarityComputationError::IndexOverflow)?;
-            let mut prefix_mz: Vec<P> = prefix_indices(&spectrum.data)
-                .into_iter()
-                .map(|peak_index| spectrum.mz[peak_index])
-                .collect();
-            sort_mz_values(&mut prefix_mz);
-
-            for mz in prefix_mz {
-                spectrum_prefix_mz.push(mz);
-            }
-            let offset = u32::try_from(spectrum_prefix_mz.len())
-                .map_err(|_| SimilarityComputationError::IndexOverflow)?;
-            spectrum_prefix_offsets.push(offset);
-        }
-
-        Ok(Self {
-            spectrum_prefix_offsets,
-            spectrum_prefix_mz,
-        })
-    }
-
-    #[inline]
-    pub(crate) fn n_prefix_peaks(&self) -> usize {
-        self.spectrum_prefix_mz.len()
-    }
-
-    pub(crate) fn spectrum_prefix_mz(&self, spec_id: u32) -> &[P] {
-        let prefix_start = self.spectrum_prefix_offsets[spec_id as usize] as usize;
-        let prefix_end = self.spectrum_prefix_offsets[spec_id as usize + 1] as usize;
-        &self.spectrum_prefix_mz[prefix_start..prefix_end]
-    }
 }
 
 /// Product-ion postings partitioned by contiguous spectrum-id blocks.
@@ -906,60 +818,6 @@ impl SpectrumBlockUpperBoundIndex {
     }
 }
 
-/// Prefix indices for score bounds that can be represented as an L2 suffix
-/// norm over per-peak weights.
-pub(crate) fn l2_threshold_prefix_indices<P: SpectrumFloat>(
-    peak_weights: &[P],
-    score_threshold: f64,
-) -> Vec<usize> {
-    if peak_weights.is_empty() || score_threshold > 1.0 {
-        return Vec::new();
-    }
-
-    let mut order: Vec<usize> = (0..peak_weights.len()).collect();
-    order.sort_unstable_by(|&left, &right| {
-        peak_weights[right]
-            .to_f64()
-            .abs()
-            .total_cmp(&peak_weights[left].to_f64().abs())
-            .then_with(|| left.cmp(&right))
-    });
-
-    if score_threshold <= 0.0 {
-        return order;
-    }
-
-    let norm = peak_weights
-        .iter()
-        .map(|&value| {
-            let value = value.to_f64();
-            value * value
-        })
-        .sum::<f64>()
-        .sqrt();
-    if norm == 0.0 {
-        return Vec::new();
-    }
-
-    let mut suffix_norm = alloc::vec![0.0_f64; order.len() + 1];
-    for order_index in (0..order.len()).rev() {
-        let peak_index = order[order_index];
-        let peak_weight = peak_weights[peak_index].to_f64();
-        suffix_norm[order_index] = suffix_norm[order_index + 1] + peak_weight * peak_weight;
-    }
-    for value in &mut suffix_norm {
-        *value = value.sqrt();
-    }
-
-    let target_norm = score_threshold * norm;
-    let prefix_len = suffix_norm
-        .iter()
-        .position(|&remaining_norm| remaining_norm < target_norm)
-        .unwrap_or(order.len());
-    order.truncate(prefix_len);
-    order
-}
-
 // ---------------------------------------------------------------------------
 // DenseAccumulator
 // ---------------------------------------------------------------------------
@@ -1060,9 +918,8 @@ pub struct SearchState {
 }
 
 impl SearchState {
-    /// Create a new `SearchState` sized for the given index.
-    fn new(n_spectra: usize, n_products: usize) -> Self {
-        let _ = (n_spectra, n_products);
+    /// Create a new lazily-sized `SearchState`.
+    fn new() -> Self {
         Self {
             acc: DenseAccumulator::new(),
             matched_products: SearchBitVec::new(),
@@ -1350,28 +1207,6 @@ pub(crate) struct FlashIndex<K: FlashKernel, P: SpectrumFloat = f64> {
 }
 
 impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
-    /// Build the index from prepared spectrum data.
-    ///
-    /// Each element of `spectra` is `(precursor_mz, mz_values, peak_data_values)`.
-    /// The caller is responsible for preparing peak data via the kernel's
-    /// scoring function and validating well-separated preconditions.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SimilarityComputationError::IndexOverflow`] if the number of
-    /// spectra or total peaks exceeds `u32::MAX`.
-    pub(crate) fn build(
-        tolerance: f64,
-        spectra: PreparedFlashSpectra<P>,
-    ) -> Result<Self, SimilarityComputationError> {
-        Self::build_with_sort(
-            tolerance,
-            spectra,
-            SpectrumIdMap::identity(),
-            SortBackend::Sequential,
-        )
-    }
-
     pub(crate) fn build_with_spectrum_id_map(
         tolerance: f64,
         spectra: PreparedFlashSpectra<P>,
@@ -1380,21 +1215,7 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         Self::build_with_sort(tolerance, spectra, spectrum_id_map, SortBackend::Sequential)
     }
 
-    /// Build the index from prepared spectrum data using Rayon-backed sorting.
     #[cfg(feature = "rayon")]
-    pub(crate) fn build_parallel(
-        tolerance: f64,
-        spectra: PreparedFlashSpectra<P>,
-    ) -> Result<Self, SimilarityComputationError> {
-        Self::build_with_sort(
-            tolerance,
-            spectra,
-            SpectrumIdMap::identity(),
-            SortBackend::Parallel,
-        )
-    }
-
-    #[cfg(all(feature = "rayon", feature = "experimental_reordered_index"))]
     pub(crate) fn build_parallel_with_spectrum_id_map(
         tolerance: f64,
         spectra: PreparedFlashSpectra<P>,
@@ -1506,7 +1327,7 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
     /// Create a [`SearchState`] sized for this index, suitable for reuse
     /// across multiple queries.
     pub(crate) fn new_search_state(&self) -> SearchState {
-        SearchState::new(self.n_spectra as usize, self.product_mz.len())
+        SearchState::new()
     }
 
     pub(crate) fn spectrum_slices(&self, spec_id: u32) -> (&[P], &[P]) {
@@ -2078,7 +1899,7 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
             }
         }
 
-        // Reset the bitvec and direct scores for reuse.
+        // Reset the matched-product bitset and direct scores for reuse.
         for &idx in &set_indices {
             matched_products.set(idx, false);
             direct_scores[idx] = 0.0;
@@ -2145,7 +1966,12 @@ mod tests {
         spectra: PreparedFlashSpectra<f64>,
         tolerance: f64,
     ) -> FlashIndex<TestKernel> {
-        FlashIndex::<TestKernel>::build(tolerance, spectra).expect("test index should build")
+        FlashIndex::<TestKernel>::build_with_spectrum_id_map(
+            tolerance,
+            spectra,
+            SpectrumIdMap::identity(),
+        )
+        .expect("test index should build")
     }
 
     #[test]
@@ -2212,39 +2038,6 @@ mod tests {
         assert_eq!(modified_state.acc.scores.len(), 2);
         assert_eq!(modified_state.matched_products.len(), 3);
         assert_eq!(modified_state.direct_scores.len(), 3);
-    }
-
-    #[test]
-    fn l2_threshold_prefix_indices_stop_when_suffix_bound_is_below_threshold() {
-        let prefix = l2_threshold_prefix_indices(&[1.0, 4.0, 0.5], 0.9);
-        assert_eq!(prefix, vec![1]);
-
-        let all = l2_threshold_prefix_indices(&[1.0, 4.0, 0.5], 0.0);
-        assert_eq!(all, vec![1, 0, 2]);
-
-        let empty = l2_threshold_prefix_indices(&[1.0, 4.0, 0.5], 1.1);
-        assert!(empty.is_empty());
-    }
-
-    #[test]
-    fn threshold_prefix_postings_store_sorted_per_spectrum_prefixes() {
-        let spectra = vec![
-            prepared(200.0, vec![100.0, 150.0], vec![4.0, 1.0]),
-            prepared(300.0, vec![100.05, 250.0], vec![1.0, 5.0]),
-        ];
-        let prefixes =
-            ThresholdPrefixPostings::build(&spectra, |data| l2_threshold_prefix_indices(data, 0.9))
-                .expect("prefix postings should build");
-        assert_eq!(prefixes.n_prefix_peaks(), 2);
-        assert_eq!(prefixes.spectrum_prefix_mz(0), &[100.0]);
-        assert_eq!(prefixes.spectrum_prefix_mz(1), &[250.0]);
-
-        let sorted_prefixes = ThresholdPrefixPostings::build(
-            &[prepared(200.0, vec![100.0, 150.0], vec![1.0, 4.0])],
-            |_| vec![1, 0],
-        )
-        .expect("prefix postings should build");
-        assert_eq!(sorted_prefixes.spectrum_prefix_mz(0), &[100.0, 150.0]);
     }
 
     #[test]

@@ -19,13 +19,10 @@ use super::flash_common::{
     FlashSearchResult, PreparedFlashSpectra, PreparedFlashSpectrum, SearchState,
     SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults,
     TopKSearchState, convert_flash_value, convert_flash_values, flash_values_to_f64,
-    spectrum_block_size,
+    reorder_prepared_spectra_by_signature,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{SpectraIndex, Spectrum, SpectrumFloat};
-
-#[cfg(feature = "experimental_reordered_index")]
-use super::flash_common::reorder_prepared_spectra_by_signature;
 
 const ENTROPY_BLOCK_PRUNING_MIN_THRESHOLD: f64 = 0.75;
 
@@ -183,7 +180,7 @@ fn build_entropy_block_upper_bounds<P: SpectrumFloat>(
     SpectrumBlockUpperBoundIndex::build(
         prepared,
         mz_tolerance,
-        spectrum_block_size(DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE),
+        DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE,
         |_, spectrum| Ok(spectrum.data.iter().map(|&value| value.to_f64()).collect()),
     )
 }
@@ -526,6 +523,9 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
     ///
     /// Each library spectrum must satisfy the well-separated precondition:
     /// consecutive peaks must be more than `2 * mz_tolerance` apart.
+    /// Spectra are reordered internally by a deterministic peak-signature
+    /// heuristic; returned spectrum ids and indexed query ids remain in the
+    /// original insertion order.
     ///
     /// # Errors
     ///
@@ -553,76 +553,42 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             spectra,
         )?;
 
-        Self::from_prepared_library(
+        Self::from_prepared_library_with_builder(
             mz_power,
             intensity_power,
             mz_tolerance,
             weighted,
             prepared,
-            SpectrumIdMap::identity(),
+            FlashIndex::<EntropyKernel, P>::build_with_spectrum_id_map,
         )
     }
 
-    /// Build a new entropy flash index after internally reordering spectra by
-    /// a deterministic peak-signature heuristic.
-    ///
-    /// This constructor is experimental. It preserves public spectrum ids and
-    /// indexed-query ids while changing only the internal spectrum-block order.
-    #[cfg(feature = "experimental_reordered_index")]
-    pub fn new_reordered_by_signature<'a, S>(
-        mz_power: f64,
-        intensity_power: f64,
-        mz_tolerance: f64,
-        weighted: bool,
-        spectra: impl IntoIterator<Item = &'a S>,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        S: Spectrum + 'a,
-    {
-        validate_entropy_index_config(mz_power, intensity_power, mz_tolerance)?;
-
-        let prepared = prepare_entropy_library::<P, S>(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            weighted,
-            spectra,
-        )?;
-        let (prepared, spectrum_id_map) =
-            reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
-                .map_err(FlashEntropyIndexError::Computation)?;
-
-        Self::from_prepared_library(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            weighted,
-            prepared,
-            spectrum_id_map,
-        )
-    }
-
-    fn from_prepared_library(
+    fn from_prepared_library_with_builder<BuildInner>(
         mz_power: f64,
         intensity_power: f64,
         mz_tolerance: f64,
         weighted: bool,
         prepared: PreparedFlashSpectra<P>,
-        spectrum_id_map: SpectrumIdMap,
-    ) -> Result<Self, FlashEntropyIndexError> {
+        build_inner: BuildInner,
+    ) -> Result<Self, FlashEntropyIndexError>
+    where
+        BuildInner: FnOnce(
+            f64,
+            PreparedFlashSpectra<P>,
+            SpectrumIdMap,
+        )
+            -> Result<FlashIndex<EntropyKernel, P>, SimilarityComputationError>,
+    {
+        let (prepared, spectrum_id_map) =
+            reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
+                .map_err(FlashEntropyIndexError::Computation)?;
         let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, mz_tolerance)
             .map_err(FlashEntropyIndexError::Computation)?;
-        let block_products = SpectrumBlockProductIndex::build(
-            &prepared,
-            spectrum_block_size(DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE),
-        )
-        .map_err(FlashEntropyIndexError::Computation)?;
-        let inner = FlashIndex::<EntropyKernel, P>::build_with_spectrum_id_map(
-            mz_tolerance,
-            prepared,
-            spectrum_id_map,
-        )
-        .map_err(FlashEntropyIndexError::Computation)?;
+        let block_products =
+            SpectrumBlockProductIndex::build(&prepared, DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE)
+                .map_err(FlashEntropyIndexError::Computation)?;
+        let inner = build_inner(mz_tolerance, prepared, spectrum_id_map)
+            .map_err(FlashEntropyIndexError::Computation)?;
 
         Ok(Self {
             inner,
@@ -636,6 +602,7 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
 
     /// Build a new entropy flash index with Rayon-backed library preparation
     /// and internal index sorting.
+    /// Uses the same internal spectrum reordering as [`Self::new`].
     ///
     /// This constructor is available with the `rayon` feature. It accepts any
     /// Rayon-compatible collection yielding borrowed spectra, such as `&[S]`
@@ -662,77 +629,14 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             weighted,
             spectra,
         )?;
-
-        let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, mz_tolerance)
-            .map_err(FlashEntropyIndexError::Computation)?;
-        let block_products = SpectrumBlockProductIndex::build(
-            &prepared,
-            spectrum_block_size(DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE),
-        )
-        .map_err(FlashEntropyIndexError::Computation)?;
-        let inner = FlashIndex::<EntropyKernel, P>::build_parallel(mz_tolerance, prepared)
-            .map_err(FlashEntropyIndexError::Computation)?;
-
-        Ok(Self {
-            inner,
-            block_upper_bounds,
-            block_products,
-            weighted,
-            mz_power_f64: mz_power,
-            intensity_power_f64: intensity_power,
-        })
-    }
-
-    /// Build a reordered entropy flash index with Rayon-backed library
-    /// preparation and index sorting.
-    #[cfg(all(feature = "rayon", feature = "experimental_reordered_index"))]
-    pub fn new_parallel_reordered_by_signature<'a, S, I>(
-        mz_power: f64,
-        intensity_power: f64,
-        mz_tolerance: f64,
-        weighted: bool,
-        spectra: I,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        P: Send,
-        S: Spectrum + Sync + 'a,
-        I: IntoParallelIterator<Item = &'a S>,
-    {
-        validate_entropy_index_config(mz_power, intensity_power, mz_tolerance)?;
-
-        let prepared = prepare_entropy_library_parallel::<P, S, I>(
+        Self::from_prepared_library_with_builder(
             mz_power,
             intensity_power,
             mz_tolerance,
             weighted,
-            spectra,
-        )?;
-        let (prepared, spectrum_id_map) =
-            reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
-                .map_err(FlashEntropyIndexError::Computation)?;
-
-        let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, mz_tolerance)
-            .map_err(FlashEntropyIndexError::Computation)?;
-        let block_products = SpectrumBlockProductIndex::build(
-            &prepared,
-            spectrum_block_size(DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE),
-        )
-        .map_err(FlashEntropyIndexError::Computation)?;
-        let inner = FlashIndex::<EntropyKernel, P>::build_parallel_with_spectrum_id_map(
-            mz_tolerance,
             prepared,
-            spectrum_id_map,
+            FlashIndex::<EntropyKernel, P>::build_parallel_with_spectrum_id_map,
         )
-        .map_err(FlashEntropyIndexError::Computation)?;
-
-        Ok(Self {
-            inner,
-            block_upper_bounds,
-            block_products,
-            weighted,
-            mz_power_f64: mz_power,
-            intensity_power_f64: intensity_power,
-        })
     }
 
     /// Create a [`SearchState`] sized for this index, suitable for reuse

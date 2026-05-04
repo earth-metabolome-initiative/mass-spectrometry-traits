@@ -589,7 +589,6 @@ name = "mass_spectrometry"
 version = "0.1.0"
 dependencies = [
  "arbitrary",
- "bitvec",
  "criterion",
  "csv",
  "geometric-traits",
