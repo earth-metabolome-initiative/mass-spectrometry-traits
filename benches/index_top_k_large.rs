@@ -1,4 +1,4 @@
-//! Large Criterion benchmark for exact thresholded cosine top-k queries.
+//! Large Criterion benchmark for exact thresholded index top-k queries.
 //!
 //! This target is intentionally focused on the self-similarity workload where
 //! the query spectrum is already present in the indexed library. It defaults to
@@ -17,6 +17,7 @@
 //! - `INDEX_SEARCH_TOP_K_CLUSTER_SIZE=256`
 //! - `INDEX_SEARCH_TOP_K_SHUFFLE=1`
 //! - `INDEX_SEARCH_TOP_K_SAMPLE_SIZE=10`
+//! - `INDEX_SEARCH_TOP_K_PEPMASS_TOLERANCE=0.5`
 
 use std::hint::black_box;
 
@@ -24,8 +25,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use half::f16;
 use mass_spectrometry::prelude::{
     FlashCosineIndex, FlashCosineThresholdIndex, FlashEntropyIndex, FlashSearchDiagnostics,
-    FlashSearchResult, RandomSpectrumConfig, Spectrum, SpectrumAlloc, SpectrumFloat, SpectrumMut,
-    TopKSearchState,
+    FlashSearchResult, RandomSpectrumConfig, SpectraIndex, Spectrum, SpectrumAlloc, SpectrumFloat,
+    SpectrumMut, TopKSearchState,
 };
 
 type BenchSpectrum = mass_spectrometry::prelude::GenericSpectrum;
@@ -69,6 +70,7 @@ struct EntropyTopKBenchConfig<'a> {
     top_k: usize,
     sample_size: usize,
     thresholds: &'a [f64],
+    pepmass_tolerance: Option<f64>,
     weighted: bool,
     variant_name: &'a str,
     precision_label: &'a str,
@@ -82,6 +84,7 @@ struct CosineTopKBenchConfig<'a> {
     top_k: usize,
     sample_size: usize,
     thresholds: &'a [f64],
+    pepmass_tolerance: Option<f64>,
     precision_label: &'a str,
     order_label: &'a str,
 }
@@ -177,6 +180,13 @@ fn parse_bool_env(name: &str) -> bool {
         .ok()
         .map(|raw| matches!(raw.trim(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false)
+}
+
+fn parse_optional_f64_env(name: &str) -> Option<f64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 fn order_group_suffix(order_label: &str) -> String {
@@ -434,6 +444,19 @@ where
             return;
         }
     };
+    let flash_entropy = match config.pepmass_tolerance {
+        Some(tolerance) => match flash_entropy.with_pepmass_tolerance(tolerance) {
+            Ok(index) => index,
+            Err(error) => {
+                eprintln!(
+                    "index_top_k_large skipped entropy precision={} weighted={} because pepmass filter failed: {error:?}",
+                    config.precision_label, config.weighted
+                );
+                return;
+            }
+        },
+        None => flash_entropy,
+    };
     let mut group = c.benchmark_group(format!(
         "library_search_entropy_{}_{}_top_k_large{}",
         config.variant_name,
@@ -603,7 +626,7 @@ where
     group.finish();
 }
 
-fn bench_large_cosine_top_k(c: &mut Criterion) {
+fn bench_large_index_top_k(c: &mut Criterion) {
     let library_size = parse_usize_env("INDEX_SEARCH_TOP_K_LIBRARY_SIZE", DEFAULT_LIBRARY_SIZE);
     let query_count = parse_usize_env("INDEX_SEARCH_TOP_K_QUERY_COUNT", DEFAULT_QUERY_COUNT);
     let top_k = parse_usize_env("INDEX_SEARCH_TOP_K", DEFAULT_TOP_K);
@@ -614,6 +637,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
     let entropy_thresholds = parse_entropy_thresholds_env();
     let metrics = parse_metrics_env();
     let precisions = parse_precisions_env();
+    let pepmass_tolerance = parse_optional_f64_env("INDEX_SEARCH_TOP_K_PEPMASS_TOLERANCE");
 
     let mut library =
         build_clustered_spectra(library_size, cluster_size, RANDOM_BASE_SEED ^ 0xC05E_C05E);
@@ -644,6 +668,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &entropy_thresholds,
+                        pepmass_tolerance,
                         weighted: true,
                         variant_name: "weighted",
                         precision_label,
@@ -658,6 +683,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &entropy_thresholds,
+                        pepmass_tolerance,
                         weighted: true,
                         variant_name: "weighted",
                         precision_label,
@@ -672,6 +698,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &entropy_thresholds,
+                        pepmass_tolerance,
                         weighted: true,
                         variant_name: "weighted",
                         precision_label,
@@ -690,6 +717,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &entropy_thresholds,
+                        pepmass_tolerance,
                         weighted: false,
                         variant_name: "unweighted",
                         precision_label,
@@ -704,6 +732,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &entropy_thresholds,
+                        pepmass_tolerance,
                         weighted: false,
                         variant_name: "unweighted",
                         precision_label,
@@ -718,6 +747,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &entropy_thresholds,
+                        pepmass_tolerance,
                         weighted: false,
                         variant_name: "unweighted",
                         precision_label,
@@ -736,6 +766,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &thresholds,
+                        pepmass_tolerance,
                         precision_label,
                         order_label,
                     },
@@ -748,6 +779,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &thresholds,
+                        pepmass_tolerance,
                         precision_label,
                         order_label,
                     },
@@ -760,6 +792,7 @@ fn bench_large_cosine_top_k(c: &mut Criterion) {
                         top_k,
                         sample_size,
                         thresholds: &thresholds,
+                        pepmass_tolerance,
                         precision_label,
                         order_label,
                     },
@@ -791,6 +824,19 @@ where
             return;
         }
     };
+    let flash_cosine = match config.pepmass_tolerance {
+        Some(tolerance) => match flash_cosine.with_pepmass_tolerance(tolerance) {
+            Ok(index) => index,
+            Err(error) => {
+                eprintln!(
+                    "index_top_k_large skipped cosine precision={} because pepmass filter failed: {error:?}",
+                    config.precision_label
+                );
+                return;
+            }
+        },
+        None => flash_cosine,
+    };
 
     let mut group = c.benchmark_group(format!(
         "library_search_cosine_{}_top_k_large{}",
@@ -815,6 +861,19 @@ where
                 );
                 continue;
             }
+        };
+        let flash_cosine_threshold = match config.pepmass_tolerance {
+            Some(tolerance) => match flash_cosine_threshold.with_pepmass_tolerance(tolerance) {
+                Ok(index) => index,
+                Err(error) => {
+                    eprintln!(
+                        "index_top_k_large skipped cosine threshold precision={} threshold={threshold:.3} because pepmass filter failed: {error:?}",
+                        config.precision_label
+                    );
+                    continue;
+                }
+            },
+            None => flash_cosine_threshold,
         };
         let threshold_label = format!("{threshold:.3}");
 
@@ -975,5 +1034,5 @@ where
     group.finish();
 }
 
-criterion_group!(benches, bench_large_cosine_top_k);
+criterion_group!(benches, bench_large_index_top_k);
 criterion_main!(benches);
