@@ -2,7 +2,7 @@
 
 use mass_spectrometry::prelude::{
     FlashCosineIndex, FlashCosineThresholdIndex, FlashEntropyIndex, GenericSpectrum,
-    SimilarityConfigError, SpectraIndex, SpectraIndexSetupError, SpectrumAlloc, SpectrumMut,
+    SimilarityConfigError, SpectraIndex, SpectraIndexBuilder, SpectrumAlloc, SpectrumMut,
     TopKSearchState,
 };
 
@@ -57,26 +57,6 @@ where
     I: SpectraIndex,
 {
     assert!(!index.pepmass_filter().is_enabled());
-
-    let index = index
-        .with_pepmass_tolerance(0.5)
-        .expect("valid PEPMASS tolerance should be accepted through SpectraIndex");
-    assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
-
-    let index = index.without_pepmass_filter();
-    assert!(!index.pepmass_filter().is_enabled());
-}
-
-fn assert_trait_rejects_invalid_pepmass_tolerance<I>(index: I)
-where
-    I: SpectraIndex,
-{
-    assert!(matches!(
-        index.with_pepmass_tolerance(f64::NAN),
-        Err(SpectraIndexSetupError::Config(
-            SimilarityConfigError::NonFiniteParameter("pepmass_tolerance")
-        ))
-    ));
 }
 
 #[test]
@@ -84,14 +64,27 @@ fn spectra_index_trait_covers_all_flash_index_variants() {
     let spectra = spectra();
     let query = &spectra[0];
 
-    let cosine = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap();
+    let cosine = FlashCosineIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .build(&spectra)
+        .unwrap();
     assert_trait_surface(&cosine, query);
 
-    let threshold_cosine =
-        FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
+    let threshold_cosine = FlashCosineThresholdIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(0.8)
+        .build(&spectra)
+        .unwrap();
     assert_trait_surface(&threshold_cosine, query);
 
-    let entropy = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
+    let entropy = FlashEntropyIndex::<f64>::builder()
+        .mz_tolerance(0.1)
+        .build(&spectra)
+        .unwrap();
     assert_trait_surface(&entropy, query);
 }
 
@@ -99,19 +92,43 @@ fn spectra_index_trait_covers_all_flash_index_variants() {
 fn spectra_index_trait_covers_pepmass_filter_defaults() {
     let spectra = spectra();
 
-    assert_trait_pepmass_defaults(FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap());
     assert_trait_pepmass_defaults(
-        FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap(),
+        FlashCosineIndex::<f64>::builder()
+            .mz_tolerance(0.1)
+            .build(&spectra)
+            .unwrap(),
     );
-    assert_trait_pepmass_defaults(FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap());
+    assert_trait_pepmass_defaults(
+        FlashCosineThresholdIndex::<f64>::builder()
+            .mz_tolerance(0.1)
+            .score_threshold(0.8)
+            .build(&spectra)
+            .unwrap(),
+    );
+    assert_trait_pepmass_defaults(
+        FlashEntropyIndex::<f64>::builder()
+            .mz_tolerance(0.1)
+            .build(&spectra)
+            .unwrap(),
+    );
 
-    assert_trait_rejects_invalid_pepmass_tolerance(
-        FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap(),
-    );
-    assert_trait_rejects_invalid_pepmass_tolerance(
-        FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap(),
-    );
-    assert_trait_rejects_invalid_pepmass_tolerance(
-        FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap(),
-    );
+    assert!(matches!(
+        FlashCosineIndex::<f64>::builder().pepmass_tolerance(f64::NAN),
+        Err(SimilarityConfigError::NonFiniteParameter(
+            "pepmass_tolerance"
+        ))
+    ));
+}
+
+#[test]
+fn index_builders_configure_pepmass_filters() {
+    let spectra = spectra();
+
+    let cosine = FlashCosineIndex::<f64>::builder()
+        .mz_tolerance(0.1)
+        .pepmass_tolerance(0.5)
+        .unwrap()
+        .build(&spectra)
+        .unwrap();
+    assert_eq!(cosine.pepmass_filter().tolerance(), Some(0.5));
 }

@@ -27,8 +27,8 @@ use half::f16;
 use mass_spectrometry::prelude::FlashCosineSelfSimilarityIndex;
 use mass_spectrometry::prelude::{
     FlashCosineIndex, FlashCosineThresholdIndex, FlashEntropyIndex, FlashSearchDiagnostics,
-    FlashSearchResult, RandomSpectrumConfig, SpectraIndex, Spectrum, SpectrumAlloc, SpectrumFloat,
-    SpectrumMut, TopKSearchState,
+    FlashSearchResult, RandomSpectrumConfig, SpectraIndexBuilder, Spectrum, SpectrumAlloc,
+    SpectrumFloat, SpectrumMut, TopKSearchState,
 };
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -427,18 +427,29 @@ fn summarize_results(results: &[FlashSearchResult]) -> (f64, usize) {
 
 fn bench_large_entropy_top_k<P>(c: &mut Criterion, config: EntropyTopKBenchConfig<'_>)
 where
-    P: SpectrumFloat + Sync,
+    P: SpectrumFloat + Send + Sync,
 {
     let mz_power = 0.0_f64;
     let intensity_power = 1.0_f64;
     let mz_tolerance = 0.1_f64;
-    let flash_entropy = match FlashEntropyIndex::<P>::new(
-        mz_power,
-        intensity_power,
-        mz_tolerance,
-        config.weighted,
-        config.library.iter(),
-    ) {
+    let mut builder = FlashEntropyIndex::<P>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .weighted(config.weighted);
+    if let Some(tolerance) = config.pepmass_tolerance {
+        builder = match builder.pepmass_tolerance(tolerance) {
+            Ok(builder) => builder,
+            Err(error) => {
+                eprintln!(
+                    "index_top_k_large skipped entropy precision={} weighted={} because pepmass filter failed: {error:?}",
+                    config.precision_label, config.weighted
+                );
+                return;
+            }
+        };
+    }
+    let flash_entropy = match builder.build(config.library) {
         Ok(index) => index,
         Err(error) => {
             eprintln!(
@@ -447,19 +458,6 @@ where
             );
             return;
         }
-    };
-    let flash_entropy = match config.pepmass_tolerance {
-        Some(tolerance) => match flash_entropy.with_pepmass_tolerance(tolerance) {
-            Ok(index) => index,
-            Err(error) => {
-                eprintln!(
-                    "index_top_k_large skipped entropy precision={} weighted={} because pepmass filter failed: {error:?}",
-                    config.precision_label, config.weighted
-                );
-                return;
-            }
-        },
-        None => flash_entropy,
     };
     let mut group = c.benchmark_group(format!(
         "library_search_entropy_{}_{}_top_k_large{}",
@@ -813,12 +811,23 @@ where
     let mz_power = 1.0_f64;
     let intensity_power = 1.0_f64;
     let mz_tolerance = 0.1_f64;
-    let flash_cosine = match FlashCosineIndex::<P>::new(
-        mz_power,
-        intensity_power,
-        mz_tolerance,
-        config.library.iter(),
-    ) {
+    let mut builder = FlashCosineIndex::<P>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance);
+    if let Some(tolerance) = config.pepmass_tolerance {
+        builder = match builder.pepmass_tolerance(tolerance) {
+            Ok(builder) => builder,
+            Err(error) => {
+                eprintln!(
+                    "index_top_k_large skipped cosine precision={} because pepmass filter failed: {error:?}",
+                    config.precision_label
+                );
+                return;
+            }
+        };
+    }
+    let flash_cosine = match builder.build(config.library) {
         Ok(index) => index,
         Err(error) => {
             eprintln!(
@@ -827,19 +836,6 @@ where
             );
             return;
         }
-    };
-    let flash_cosine = match config.pepmass_tolerance {
-        Some(tolerance) => match flash_cosine.with_pepmass_tolerance(tolerance) {
-            Ok(index) => index,
-            Err(error) => {
-                eprintln!(
-                    "index_top_k_large skipped cosine precision={} because pepmass filter failed: {error:?}",
-                    config.precision_label
-                );
-                return;
-            }
-        },
-        None => flash_cosine,
     };
 
     let mut group = c.benchmark_group(format!(
@@ -850,13 +846,24 @@ where
     group.sample_size(config.sample_size.max(10));
 
     for &threshold in config.thresholds {
-        let flash_cosine_threshold = match FlashCosineThresholdIndex::<P>::new(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            threshold,
-            config.library.iter(),
-        ) {
+        let mut threshold_builder = FlashCosineThresholdIndex::<P>::builder()
+            .mz_power(mz_power)
+            .intensity_power(intensity_power)
+            .mz_tolerance(mz_tolerance)
+            .score_threshold(threshold);
+        if let Some(tolerance) = config.pepmass_tolerance {
+            threshold_builder = match threshold_builder.pepmass_tolerance(tolerance) {
+                Ok(builder) => builder,
+                Err(error) => {
+                    eprintln!(
+                        "index_top_k_large skipped cosine threshold precision={} threshold={threshold:.3} because pepmass filter failed: {error:?}",
+                        config.precision_label
+                    );
+                    continue;
+                }
+            };
+        }
+        let flash_cosine_threshold = match threshold_builder.build(config.library) {
             Ok(index) => index,
             Err(error) => {
                 eprintln!(
@@ -865,19 +872,6 @@ where
                 );
                 continue;
             }
-        };
-        let flash_cosine_threshold = match config.pepmass_tolerance {
-            Some(tolerance) => match flash_cosine_threshold.with_pepmass_tolerance(tolerance) {
-                Ok(index) => index,
-                Err(error) => {
-                    eprintln!(
-                        "index_top_k_large skipped cosine threshold precision={} threshold={threshold:.3} because pepmass filter failed: {error:?}",
-                        config.precision_label
-                    );
-                    continue;
-                }
-            },
-            None => flash_cosine_threshold,
         };
         let threshold_label = format!("{threshold:.3}");
         #[cfg(feature = "rayon")]
@@ -1110,15 +1104,24 @@ where
 
         #[cfg(feature = "rayon")]
         if let Some(pepmass_tolerance) = config.pepmass_tolerance {
-            let self_similarity = match FlashCosineSelfSimilarityIndex::<P>::with_pepmass_tolerance(
-                mz_power,
-                intensity_power,
-                mz_tolerance,
-                threshold,
-                config.top_k,
-                pepmass_tolerance,
-                config.library,
-            ) {
+            let self_similarity_builder = match FlashCosineSelfSimilarityIndex::<P>::builder()
+                .mz_power(mz_power)
+                .intensity_power(intensity_power)
+                .mz_tolerance(mz_tolerance)
+                .score_threshold(threshold)
+                .top_k(config.top_k)
+                .pepmass_tolerance(pepmass_tolerance)
+            {
+                Ok(builder) => builder.parallel(),
+                Err(error) => {
+                    eprintln!(
+                        "index_top_k_large skipped cosine self-similarity precision={} threshold={threshold:.3} because pepmass filter failed: {error:?}",
+                        config.precision_label
+                    );
+                    continue;
+                }
+            };
+            let self_similarity = match self_similarity_builder.build(config.library) {
                 Ok(index) => index,
                 Err(error) => {
                     eprintln!(
@@ -1132,8 +1135,11 @@ where
                 BenchmarkId::new("one_shot_self_similarity_top_k_rows", &threshold_label),
                 |b| {
                     b.iter(|| {
+                        let query_ids = black_box(query_ids_u32.as_slice());
                         let (total_score, total_matches) = self_similarity
-                            .par_top_k_rows_for(black_box(query_ids_u32.as_slice()))
+                            .rows()
+                            .ids(query_ids)
+                            .into_par_iter()
                             .map(|row| {
                                 let (_, hits) = row.expect("one-shot self row should score");
                                 hits.iter().fold((0.0_f64, 0usize), |acc, hit| {

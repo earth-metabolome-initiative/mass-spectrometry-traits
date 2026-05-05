@@ -1,7 +1,7 @@
 //! Criterion benchmarks for Flash index construction.
 //!
-//! These benchmarks compare the sequential constructors with the Rayon-backed
-//! constructors for the three index types that can be built today:
+//! These benchmarks compare sequential builders with Rayon-backed builders for
+//! the three index types that can be built today:
 //! `FlashCosineIndex`, `FlashCosineThresholdIndex`, and `FlashEntropyIndex`.
 //!
 //! Environment knobs:
@@ -22,7 +22,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 #[cfg(feature = "rayon")]
 use mass_spectrometry::prelude::{
     FlashCosineIndex, FlashCosineThresholdIndex, FlashEntropyIndex, GenericSpectrum,
-    RandomSpectrumConfig, SpectrumAlloc,
+    RandomSpectrumConfig, SpectraIndexBuilder, SpectrumAlloc,
 };
 
 #[cfg(feature = "rayon")]
@@ -168,13 +168,12 @@ fn bench_index_construction(c: &mut Criterion) {
                     &spectra,
                     |b, spectra| {
                         b.iter(|| {
-                            let index = FlashCosineIndex::<$precision_ty>::new(
-                                black_box(MZ_POWER),
-                                black_box(INTENSITY_POWER),
-                                black_box(MZ_TOLERANCE),
-                                black_box(spectra).iter(),
-                            )
-                            .expect("sequential cosine index should build");
+                            let index = FlashCosineIndex::<$precision_ty>::builder()
+                                .mz_power(black_box(MZ_POWER))
+                                .intensity_power(black_box(INTENSITY_POWER))
+                                .mz_tolerance(black_box(MZ_TOLERANCE))
+                                .build(black_box(spectra.as_slice()))
+                                .expect("sequential cosine index should build");
                             black_box(index)
                         });
                     },
@@ -184,13 +183,13 @@ fn bench_index_construction(c: &mut Criterion) {
                     &spectra,
                     |b, spectra| {
                         b.iter(|| {
-                            let index = FlashCosineIndex::<$precision_ty>::new_parallel(
-                                black_box(MZ_POWER),
-                                black_box(INTENSITY_POWER),
-                                black_box(MZ_TOLERANCE),
-                                black_box(spectra.as_slice()),
-                            )
-                            .expect("parallel cosine index should build");
+                            let index = FlashCosineIndex::<$precision_ty>::builder()
+                                .mz_power(black_box(MZ_POWER))
+                                .intensity_power(black_box(INTENSITY_POWER))
+                                .mz_tolerance(black_box(MZ_TOLERANCE))
+                                .parallel()
+                                .build(black_box(spectra.as_slice()))
+                                .expect("parallel cosine index should build");
                             black_box(index)
                         });
                     },
@@ -204,14 +203,13 @@ fn bench_index_construction(c: &mut Criterion) {
                     &spectra,
                     |b, spectra| {
                         b.iter(|| {
-                            let index = FlashCosineThresholdIndex::<$precision_ty>::new(
-                                black_box(MZ_POWER),
-                                black_box(INTENSITY_POWER),
-                                black_box(MZ_TOLERANCE),
-                                black_box(score_threshold),
-                                black_box(spectra).iter(),
-                            )
-                            .expect("sequential threshold cosine index should build");
+                            let index = FlashCosineThresholdIndex::<$precision_ty>::builder()
+                                .mz_power(black_box(MZ_POWER))
+                                .intensity_power(black_box(INTENSITY_POWER))
+                                .mz_tolerance(black_box(MZ_TOLERANCE))
+                                .score_threshold(black_box(score_threshold))
+                                .build(black_box(spectra.as_slice()))
+                                .expect("sequential threshold cosine index should build");
                             black_box(index)
                         });
                     },
@@ -224,14 +222,14 @@ fn bench_index_construction(c: &mut Criterion) {
                     &spectra,
                     |b, spectra| {
                         b.iter(|| {
-                            let index = FlashCosineThresholdIndex::<$precision_ty>::new_parallel(
-                                black_box(MZ_POWER),
-                                black_box(INTENSITY_POWER),
-                                black_box(MZ_TOLERANCE),
-                                black_box(score_threshold),
-                                black_box(spectra.as_slice()),
-                            )
-                            .expect("parallel threshold cosine index should build");
+                            let index = FlashCosineThresholdIndex::<$precision_ty>::builder()
+                                .mz_power(black_box(MZ_POWER))
+                                .intensity_power(black_box(INTENSITY_POWER))
+                                .mz_tolerance(black_box(MZ_TOLERANCE))
+                                .score_threshold(black_box(score_threshold))
+                                .parallel()
+                                .build(black_box(spectra.as_slice()))
+                                .expect("parallel threshold cosine index should build");
                             black_box(index)
                         });
                     },
@@ -245,14 +243,13 @@ fn bench_index_construction(c: &mut Criterion) {
                     &spectra,
                     |b, spectra| {
                         b.iter(|| {
-                            let index = FlashEntropyIndex::<$precision_ty>::new(
-                                black_box(0.0),
-                                black_box(1.0),
-                                black_box(MZ_TOLERANCE),
-                                black_box(true),
-                                black_box(spectra).iter(),
-                            )
-                            .expect("sequential entropy index should build");
+                            let index = FlashEntropyIndex::<$precision_ty>::builder()
+                                .mz_power(black_box(0.0))
+                                .intensity_power(black_box(1.0))
+                                .mz_tolerance(black_box(MZ_TOLERANCE))
+                                .weighted(black_box(true))
+                                .build(black_box(spectra.as_slice()))
+                                .expect("sequential entropy index should build");
                             black_box(index)
                         });
                     },
@@ -265,14 +262,14 @@ fn bench_index_construction(c: &mut Criterion) {
                     &spectra,
                     |b, spectra| {
                         b.iter(|| {
-                            let index = FlashEntropyIndex::<$precision_ty>::new_parallel(
-                                black_box(0.0),
-                                black_box(1.0),
-                                black_box(MZ_TOLERANCE),
-                                black_box(true),
-                                black_box(spectra.as_slice()),
-                            )
-                            .expect("parallel entropy index should build");
+                            let index = FlashEntropyIndex::<$precision_ty>::builder()
+                                .mz_power(black_box(0.0))
+                                .intensity_power(black_box(1.0))
+                                .mz_tolerance(black_box(MZ_TOLERANCE))
+                                .weighted(black_box(true))
+                                .parallel()
+                                .build(black_box(spectra.as_slice()))
+                                .expect("parallel entropy index should build");
                             black_box(index)
                         });
                     },

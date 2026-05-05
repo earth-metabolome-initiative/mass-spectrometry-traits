@@ -3,8 +3,7 @@
 use alloc::vec::Vec;
 
 use crate::structs::{
-    FlashIndexBuildProgress, FlashSearchResult, NoopFlashIndexBuildProgress, PepmassFilter,
-    SearchState, SimilarityComputationError, SpectraIndexSetupError, TopKSearchState,
+    FlashSearchResult, PepmassFilter, SearchState, SimilarityComputationError, TopKSearchState,
 };
 use crate::traits::Spectrum;
 
@@ -13,7 +12,7 @@ use crate::traits::Spectrum;
 /// Implementations may represent all results, a fixed score threshold, or a
 /// different scoring kernel, but they all expose the same index metadata,
 /// reusable per-query scratch state, external-query search methods, top-k
-/// search methods, and optional precursor-mass filtering.
+/// search methods, and precursor-mass filter introspection.
 pub trait SpectraIndex {
     /// Returns the number of spectra stored in the index.
     fn n_spectra(&self) -> u32;
@@ -26,75 +25,6 @@ pub trait SpectraIndex {
 
     /// Returns the optional precursor-mass filter used by this index.
     fn pepmass_filter(&self) -> PepmassFilter;
-
-    /// Enable precursor-mass filtering while reporting the lazy PEPMASS index
-    /// build, if one is needed.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SpectraIndexSetupError::Computation`] if the lazy PEPMASS
-    /// index cannot be built.
-    fn with_pepmass_filter_and_progress<G>(
-        self,
-        filter: PepmassFilter,
-        progress: &G,
-    ) -> Result<Self, SpectraIndexSetupError>
-    where
-        Self: Sized,
-        G: FlashIndexBuildProgress + ?Sized;
-
-    /// Enable precursor-mass filtering with the provided filter.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SpectraIndexSetupError::Computation`] if the lazy PEPMASS
-    /// index cannot be built.
-    fn with_pepmass_filter(self, filter: PepmassFilter) -> Result<Self, SpectraIndexSetupError>
-    where
-        Self: Sized,
-    {
-        let progress = NoopFlashIndexBuildProgress;
-        self.with_pepmass_filter_and_progress(filter, &progress)
-    }
-
-    /// Enable precursor-mass filtering with an absolute Da tolerance.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SpectraIndexSetupError::Config`] if `tolerance` is invalid.
-    /// Returns [`SpectraIndexSetupError::Computation`] if the lazy PEPMASS
-    /// index cannot be built.
-    fn with_pepmass_tolerance(self, tolerance: f64) -> Result<Self, SpectraIndexSetupError>
-    where
-        Self: Sized,
-    {
-        self.with_pepmass_filter(PepmassFilter::within_tolerance(tolerance)?)
-    }
-
-    /// Enable precursor-mass filtering with an absolute Da tolerance while
-    /// reporting the lazy PEPMASS index build.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SpectraIndexSetupError::Config`] if `tolerance` is invalid.
-    /// Returns [`SpectraIndexSetupError::Computation`] if the lazy PEPMASS
-    /// index cannot be built.
-    fn with_pepmass_tolerance_and_progress<G>(
-        self,
-        tolerance: f64,
-        progress: &G,
-    ) -> Result<Self, SpectraIndexSetupError>
-    where
-        Self: Sized,
-        G: FlashIndexBuildProgress + ?Sized,
-    {
-        self.with_pepmass_filter_and_progress(PepmassFilter::within_tolerance(tolerance)?, progress)
-    }
-
-    /// Disable precursor-mass filtering.
-    fn without_pepmass_filter(self) -> Self
-    where
-        Self: Sized;
 
     /// Search an external query spectrum.
     ///

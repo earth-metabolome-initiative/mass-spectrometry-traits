@@ -137,11 +137,11 @@ impl FlashIndexBuildPhase {
     }
 }
 
-/// Progress sink used by Flash index constructors.
+/// Progress sink used by Flash index builders.
 ///
 /// Implement this trait to receive coarse build phases and per-item ticks. With
 /// the `indicatif` feature enabled, [`indicatif::ProgressBar`] implements this
-/// trait directly and can be passed to `*_with_progress` constructors.
+/// trait directly and can be passed to [`crate::traits::SpectraIndexBuilder::progress`].
 pub trait FlashIndexBuildProgress {
     /// Start a new build phase. `len` is present when the phase has a known
     /// number of ticks.
@@ -154,13 +154,110 @@ pub trait FlashIndexBuildProgress {
     fn finish(&self);
 }
 
+/// Shared construction options used by Flash index builders.
+///
+/// This keeps execution mode, construction progress, and optional precursor
+/// filtering in one place instead of multiplying public construction APIs for
+/// every combination of those choices.
+#[derive(Clone, Copy)]
+pub struct FlashIndexBuildOptions<'a> {
+    parallel: bool,
+    progress: Option<&'a (dyn FlashIndexBuildProgress + Sync + 'a)>,
+    pepmass_filter: PepmassFilter,
+}
+
+impl<'a> Default for FlashIndexBuildOptions<'a> {
+    fn default() -> Self {
+        Self {
+            parallel: false,
+            progress: None,
+            pepmass_filter: PepmassFilter::disabled(),
+        }
+    }
+}
+
+impl<'a> FlashIndexBuildOptions<'a> {
+    /// Returns whether construction should use Rayon-backed preparation and
+    /// sorting where available.
+    #[inline]
+    #[must_use]
+    pub const fn parallel(&self) -> bool {
+        self.parallel
+    }
+
+    /// Sets whether construction should use Rayon-backed preparation and
+    /// sorting where available.
+    #[inline]
+    pub(crate) const fn set_parallel(&mut self, parallel: bool) {
+        self.parallel = parallel;
+    }
+
+    /// Returns the progress sink configured for index construction.
+    #[inline]
+    pub(crate) fn progress(&self) -> &(dyn FlashIndexBuildProgress + Sync + 'a) {
+        static NOOP_PROGRESS: NoopFlashIndexBuildProgress = NoopFlashIndexBuildProgress;
+        self.progress.unwrap_or(&NOOP_PROGRESS)
+    }
+
+    /// Sets the progress sink used during construction.
+    #[inline]
+    pub(crate) fn set_progress(&mut self, progress: &'a (dyn FlashIndexBuildProgress + Sync + 'a)) {
+        self.progress = Some(progress);
+    }
+
+    /// Returns the precursor-mass filter requested at construction time.
+    #[inline]
+    #[must_use]
+    pub const fn pepmass_filter(&self) -> PepmassFilter {
+        self.pepmass_filter
+    }
+
+    /// Sets the precursor-mass filter requested at construction time.
+    #[inline]
+    pub(crate) const fn set_pepmass_filter(&mut self, pepmass_filter: PepmassFilter) {
+        self.pepmass_filter = pepmass_filter;
+    }
+}
+
+/// Progress sink used by row-oriented Flash searches.
+///
+/// Implement this trait to receive one tick per completed query row. With the
+/// `indicatif` feature enabled, [`indicatif::ProgressBar`] implements this
+/// trait directly and can be passed to row selections through
+/// `FlashCosineSelfSimilarityIndex::rows().progress(...)`.
+pub trait FlashRowSearchProgress {
+    /// Start row search over `len` known rows.
+    fn start(&self, len: u64);
+
+    /// Advance the row search progress by `delta` completed rows.
+    fn inc(&self, delta: u64);
+
+    /// Mark row search as complete.
+    fn finish(&self);
+}
+
 /// Progress sink that deliberately ignores all build progress events.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopFlashIndexBuildProgress;
 
+/// Progress sink that deliberately ignores all row search progress events.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopFlashRowSearchProgress;
+
 impl FlashIndexBuildProgress for NoopFlashIndexBuildProgress {
     #[inline]
     fn start_phase(&self, _phase: FlashIndexBuildPhase, _len: Option<u64>) {}
+
+    #[inline]
+    fn inc(&self, _delta: u64) {}
+
+    #[inline]
+    fn finish(&self) {}
+}
+
+impl FlashRowSearchProgress for NoopFlashRowSearchProgress {
+    #[inline]
+    fn start(&self, _len: u64) {}
 
     #[inline]
     fn inc(&self, _delta: u64) {}
@@ -187,6 +284,25 @@ impl FlashIndexBuildProgress for indicatif::ProgressBar {
 
     fn finish(&self) {
         self.finish_with_message(FlashIndexBuildPhase::Finish.message());
+    }
+}
+
+#[cfg(feature = "indicatif")]
+impl FlashRowSearchProgress for indicatif::ProgressBar {
+    fn start(&self, len: u64) {
+        self.reset();
+        self.set_message("searching rows");
+        self.set_position(0);
+        self.set_length(len);
+    }
+
+    #[inline]
+    fn inc(&self, delta: u64) {
+        self.inc(delta);
+    }
+
+    fn finish(&self) {
+        self.finish_with_message("rows ready");
     }
 }
 
@@ -773,7 +889,12 @@ pub(crate) fn compare_search_results_by_rank(
 /// right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
 ///
 /// let spectra = vec![left, right];
-/// let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap();
+/// let index = FlashCosineIndex::<f64>::builder()
+///     .mz_power(0.0)
+///     .intensity_power(1.0)
+///     .mz_tolerance(0.1)
+///     .build(&spectra)
+///     .unwrap();
 /// let mut search_state = index.new_search_state();
 /// let mut top_k_state = TopKSearchState::new();
 /// let mut hits = Vec::new();
@@ -2064,9 +2185,7 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         G: FlashIndexBuildProgress + ?Sized,
     {
         if pepmass_filter.is_enabled() {
-            if self.ensure_pepmass_index(pepmass_filter, progress)? {
-                progress.finish();
-            }
+            self.ensure_pepmass_index(pepmass_filter, progress)?;
             self.pepmass_filter = pepmass_filter;
         } else {
             self.clear_pepmass_filter();

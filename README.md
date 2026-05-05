@@ -56,7 +56,7 @@ The regular cosine and entropy indices accept a cutoff at query time. `FlashCosi
 
 Flash indices are generic over their stored peak precision, so the default `f64` examples below can be switched to `FlashCosineIndex::<f32>`, `FlashCosineThresholdIndex::<f32>`, or `FlashEntropyIndex::<f32>` when index memory is the limiting factor; half precision is also available for spectra whose m/z and intensity values remain representable at that precision.
 
-Index construction can report progress through `new_with_progress` constructors. The crate provides a small `FlashIndexBuildProgress` trait for custom reporters, and with the `indicatif` feature enabled an `indicatif::ProgressBar` can be passed directly. The PEPMASS reverse index is only built when a PEPMASS filter is enabled; use the `with_pepmass_tolerance_and_progress` variants if that lazy build should also report progress.
+Index construction uses builders so parallel construction, progress reporting, and optional PEPMASS filtering stay on one API path. The crate provides small `FlashIndexBuildProgress` and `FlashRowSearchProgress` traits for custom reporters, and with the `indicatif` feature enabled an `indicatif::ProgressBar` can be passed directly. The PEPMASS precursor index is only built when a PEPMASS filter is enabled on the builder. The one-shot self-similarity index can be consumed as a Rayon parallel iterator, and row selections can attach progress that reports one tick per completed query row.
 
 ```rust
 use mass_spectrometry::prelude::*;
@@ -72,13 +72,22 @@ c.add_peaks([(300.0, 10.0), (400.0, 20.0)]).unwrap();
 
 let spectra = vec![a, b, c];
 
-let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra).unwrap();
+let index = FlashCosineIndex::<f64>::builder()
+    .mz_power(0.0)
+    .intensity_power(1.0)
+    .mz_tolerance(0.1)
+    .build(&spectra)
+    .unwrap();
 let hits = index.search_threshold(&spectra[0], 0.8).unwrap();
 assert!(hits.iter().any(|hit| hit.spectrum_id == 1));
 
-let pepmass_index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, &spectra)
+let pepmass_index = FlashCosineIndex::<f64>::builder()
+    .mz_power(0.0)
+    .intensity_power(1.0)
+    .mz_tolerance(0.1)
+    .pepmass_tolerance(0.5)
     .unwrap()
-    .with_pepmass_tolerance(0.5)
+    .build(&spectra)
     .unwrap();
 assert_eq!(pepmass_index.pepmass_filter().tolerance(), Some(0.5));
 
@@ -86,8 +95,13 @@ let best = index.search_top_k_threshold(&spectra[0], 2, 0.8).unwrap();
 assert_eq!(best[0].spectrum_id, 0);
 assert!(best.iter().any(|hit| hit.spectrum_id == 1));
 
-let threshold_index =
-    FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, &spectra).unwrap();
+let threshold_index = FlashCosineThresholdIndex::<f64>::builder()
+    .mz_power(0.0)
+    .intensity_power(1.0)
+    .mz_tolerance(0.1)
+    .score_threshold(0.8)
+    .build(&spectra)
+    .unwrap();
 let indexed_best = threshold_index.search_top_k_indexed(0, 2).unwrap();
 assert_eq!(indexed_best[0].spectrum_id, 0);
 assert!(indexed_best.iter().any(|hit| hit.spectrum_id == 1));
@@ -124,11 +138,18 @@ assert!(edges[0].2 > 0.99);
 {
     use rayon::prelude::*;
 
-    let one_shot = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
-        0.0, 1.0, 0.1, 0.8, 2, 0.5, &spectra,
-    )
+    let one_shot = FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(0.8)
+        .top_k(2)
+        .pepmass_tolerance(0.5)
+        .unwrap()
+        .parallel()
+        .build(&spectra)
     .unwrap();
-    let mut rows: Vec<_> = one_shot.par_top_k_rows().map(Result::unwrap).collect();
+    let mut rows: Vec<_> = (&one_shot).into_par_iter().map(Result::unwrap).collect();
     rows.sort_by_key(|row| row.0);
     assert_eq!(rows[0].0, 0);
     assert!(rows[0].1.iter().all(|hit| hit.spectrum_id != 0));
@@ -136,13 +157,48 @@ assert!(edges[0].2 > 0.99);
 
     let shard_ids = [0, 2];
     let shard_rows: Vec<_> = one_shot
-        .par_top_k_rows_for(&shard_ids)
+        .rows()
+        .ids(&shard_ids)
+        .into_par_iter()
         .map(Result::unwrap)
         .collect();
     assert_eq!(shard_rows.len(), shard_ids.len());
 }
 
-let entropy_index = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
+#[cfg(all(feature = "rayon", feature = "indicatif"))]
+{
+    use rayon::prelude::*;
+
+    let build_progress = indicatif::ProgressBar::hidden();
+    let row_progress = indicatif::ProgressBar::hidden();
+    let one_shot = FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(0.8)
+        .top_k(2)
+        .progress(&build_progress)
+        .pepmass_tolerance(0.5)
+        .unwrap()
+        .parallel()
+        .build(&spectra)
+    .unwrap();
+    let selected_rows = [0, 2];
+    let rows: Vec<_> = one_shot
+        .rows()
+        .ids(&selected_rows)
+        .progress(&row_progress)
+        .into_par_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(rows.len(), 2);
+}
+
+let entropy_index = FlashEntropyIndex::<f64>::builder()
+    .mz_tolerance(0.1)
+    .weighted(true)
+    .build(&spectra)
+    .unwrap();
 let entropy_best = entropy_index.search_top_k_threshold(&spectra[0], 2, 0.8).unwrap();
 assert_eq!(entropy_best[0].spectrum_id, 0);
 assert!(entropy_best.iter().any(|hit| hit.spectrum_id == 1));
@@ -150,10 +206,14 @@ assert!(entropy_best.iter().any(|hit| hit.spectrum_id == 1));
 #[cfg(feature = "indicatif")]
 {
     let progress = indicatif::ProgressBar::new(0);
-    let _index =
-        FlashCosineIndex::<f64>::new_with_progress(0.0, 1.0, 0.1, &spectra, &progress)
-            .unwrap()
-            .with_pepmass_tolerance_and_progress(0.5, &progress)
-            .unwrap();
+    let _index = FlashCosineIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .progress(&progress)
+        .pepmass_tolerance(0.5)
+        .unwrap()
+        .build(&spectra)
+        .unwrap();
 }
 ```

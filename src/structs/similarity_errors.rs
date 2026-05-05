@@ -44,14 +44,3 @@ pub enum SimilarityComputationError {
     )]
     InvalidPeakSpacing(&'static str),
 }
-
-/// Error returned when configuring an already-built spectrum index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SpectraIndexSetupError {
-    /// A configuration parameter was invalid.
-    #[error(transparent)]
-    Config(#[from] SimilarityConfigError),
-    /// Lazy setup of an auxiliary index failed.
-    #[error(transparent)]
-    Computation(#[from] SimilarityComputationError),
-}

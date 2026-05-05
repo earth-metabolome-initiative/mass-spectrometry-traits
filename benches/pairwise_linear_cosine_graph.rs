@@ -17,7 +17,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mass_spectrometry::prelude::{
     FlashCosineIndex, FlashCosineThresholdIndex, GenericSpectrum, LinearCosine, LinearEntropy,
-    ScalarSimilarity, Spectrum, SpectrumMut,
+    ScalarSimilarity, SpectraIndexBuilder, Spectrum, SpectrumMut,
 };
 
 const DEFAULT_NODE_COUNTS: &[usize] = &[1_024, 4_096];
@@ -407,9 +407,12 @@ fn bench_pairwise_linear_cosine_graph(c: &mut Criterion) {
         let prepared = prepare_spectra(&spectra);
         let logical_pairs = upper_triangle_pairs(node_count);
 
-        let index =
-            FlashCosineIndex::<f64>::new(MZ_POWER, INTENSITY_POWER, MZ_TOLERANCE, spectra.iter())
-                .expect("benchmark spectra should build a flash cosine index");
+        let index = FlashCosineIndex::<f64>::builder()
+            .mz_power(MZ_POWER)
+            .intensity_power(INTENSITY_POWER)
+            .mz_tolerance(MZ_TOLERANCE)
+            .build(&spectra)
+            .expect("benchmark spectra should build a flash cosine index");
 
         for &score_threshold in &score_thresholds {
             group.throughput(Throughput::Elements(logical_pairs));
@@ -449,14 +452,13 @@ fn bench_pairwise_linear_cosine_graph(c: &mut Criterion) {
                 },
             );
 
-            let threshold_index = FlashCosineThresholdIndex::<f64>::new(
-                MZ_POWER,
-                INTENSITY_POWER,
-                MZ_TOLERANCE,
-                score_threshold,
-                spectra.iter(),
-            )
-            .expect("benchmark spectra should build a threshold flash cosine index");
+            let threshold_index = FlashCosineThresholdIndex::<f64>::builder()
+                .mz_power(MZ_POWER)
+                .intensity_power(INTENSITY_POWER)
+                .mz_tolerance(MZ_TOLERANCE)
+                .score_threshold(score_threshold)
+                .build(&spectra)
+                .expect("benchmark spectra should build a threshold flash cosine index");
             group.throughput(Throughput::Elements(logical_pairs));
             group.bench_with_input(
                 BenchmarkId::new(

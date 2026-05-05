@@ -19,13 +19,22 @@ pub mod sirius_merge_close_peaks;
 pub mod splash;
 
 pub use flash_common::{
-    FlashIndexBuildPhase, FlashIndexBuildProgress, FlashSearchDiagnostics, FlashSearchResult,
-    NoopFlashIndexBuildProgress, PepmassFilter, SearchState, TopKSearchState,
+    FlashIndexBuildOptions, FlashIndexBuildPhase, FlashIndexBuildProgress, FlashRowSearchProgress,
+    FlashSearchDiagnostics, FlashSearchResult, NoopFlashIndexBuildProgress,
+    NoopFlashRowSearchProgress, PepmassFilter, SearchState, TopKSearchState,
+};
+pub use flash_cosine_index::{
+    FlashCosineIndex, FlashCosineIndexBuilder, FlashCosineIndexError, FlashCosineThresholdIndex,
+    FlashCosineThresholdIndexBuilder,
 };
 #[cfg(feature = "rayon")]
-pub use flash_cosine_index::FlashCosineSelfSimilarityIndex;
-pub use flash_cosine_index::{FlashCosineIndex, FlashCosineIndexError, FlashCosineThresholdIndex};
-pub use flash_entropy_index::{FlashEntropyIndex, FlashEntropyIndexError};
+pub use flash_cosine_index::{
+    FlashCosineSelfSimilarityIndex, FlashCosineSelfSimilarityIndexBuilder,
+    FlashCosineSelfSimilarityParRows, FlashCosineSelfSimilarityRows,
+};
+pub use flash_entropy_index::{
+    FlashEntropyIndex, FlashEntropyIndexBuilder, FlashEntropyIndexError,
+};
 pub use generic_spectrum::{GenericSpectrum, GenericSpectrumMutationError};
 pub use hungarian_cosine::HungarianCosine;
 pub use iterators::GreedySharedPeaks;
@@ -35,8 +44,6 @@ pub use modified_hungarian_cosine::ModifiedHungarianCosine;
 pub use modified_linear_cosine::ModifiedLinearCosine;
 pub use modified_linear_entropy::ModifiedLinearEntropy;
 pub use ms_entropy_clean_spectrum::{MsEntropyCleanSpectrum, MsEntropyCleanSpectrumBuilder};
-pub use similarity_errors::{
-    SimilarityComputationError, SimilarityConfigError, SpectraIndexSetupError,
-};
+pub use similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 pub use sirius_merge_close_peaks::SiriusMergeClosePeaks;
 pub use splash::{SpectrumSplash, SplashError, SplashSpectrumType};

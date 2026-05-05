@@ -5,9 +5,10 @@
 
 use mass_spectrometry::prelude::{
     CocaineSpectrum, FlashEntropyIndex, FlashEntropyIndexError, FlashIndexBuildPhase,
-    FlashSearchResult, GenericSpectrum, GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearEntropy,
-    PhenylalanineSpectrum, SalicinSpectrum, ScalarSimilarity, SimilarityComputationError,
-    SimilarityConfigError, SpectraIndex, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
+    FlashIndexBuildProgress, FlashSearchResult, GenericSpectrum, GlucoseSpectrum,
+    HydroxyCholesterolSpectrum, LinearEntropy, PhenylalanineSpectrum, SalicinSpectrum,
+    ScalarSimilarity, SimilarityComputationError, SimilarityConfigError, SpectraIndex,
+    SpectraIndexBuilder, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
 };
 
 #[path = "support/progress.rs"]
@@ -22,6 +23,96 @@ fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
         spectrum.add_peak(mz, intensity).expect("valid sorted peak");
     }
     spectrum
+}
+
+fn build_entropy_index<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    weighted: bool,
+    spectra: I,
+) -> Result<FlashEntropyIndex<f64>, FlashEntropyIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashEntropyIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .weighted(weighted)
+        .build(&spectra)
+}
+
+fn build_entropy_index_with_progress<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    weighted: bool,
+    spectra: I,
+    progress: &(dyn FlashIndexBuildProgress + Sync),
+) -> Result<FlashEntropyIndex<f64>, FlashEntropyIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashEntropyIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .weighted(weighted)
+        .progress(progress)
+        .build(&spectra)
+}
+
+fn build_entropy_index_with_pepmass<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    weighted: bool,
+    pepmass_tolerance: f64,
+    spectra: I,
+) -> Result<FlashEntropyIndex<f64>, FlashEntropyIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashEntropyIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .weighted(weighted)
+        .pepmass_tolerance(pepmass_tolerance)
+        .map_err(FlashEntropyIndexError::Config)?
+        .build(&spectra)
+}
+
+fn build_entropy_index_with_pepmass_progress<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    weighted: bool,
+    pepmass_tolerance: f64,
+    spectra: I,
+    progress: &(dyn FlashIndexBuildProgress + Sync),
+) -> Result<FlashEntropyIndex<f64>, FlashEntropyIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashEntropyIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .weighted(weighted)
+        .pepmass_tolerance(pepmass_tolerance)
+        .map_err(FlashEntropyIndexError::Config)?
+        .progress(progress)
+        .build(&spectra)
 }
 
 fn reference_spectra() -> Vec<(&'static str, GenericSpectrum)> {
@@ -56,8 +147,9 @@ fn entropy_index_build_progress_reports_construction_phases() {
             .sum::<u64>();
     let progress = RecordingProgress::default();
 
-    let index = FlashEntropyIndex::<f64>::weighted_with_progress(0.1, library.iter(), &progress)
+    let index = build_entropy_index_with_progress(0.0, 1.0, 0.1, true, library.iter(), &progress)
         .expect("entropy index should build");
+    assert_eq!(index.n_spectra(), 2);
 
     let events = progress.events();
     assert_progress_reports_phase(
@@ -72,9 +164,16 @@ fn entropy_index_build_progress_reports_construction_phases() {
     );
     assert!(events.contains(&ProgressEvent::Finish));
 
-    let index = index
-        .with_pepmass_tolerance_and_progress(0.5, &progress)
-        .expect("pepmass filter should be valid");
+    let index = build_entropy_index_with_pepmass_progress(
+        0.0,
+        1.0,
+        0.1,
+        true,
+        0.5,
+        library.iter(),
+        &progress,
+    )
+    .expect("pepmass filter should be valid");
     assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
     let events = progress.events();
     assert_progress_reports_phase(
@@ -192,7 +291,7 @@ fn assert_results_close(
 #[test]
 fn self_similarity_weighted() {
     let spectra = reference_spectra();
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -221,7 +320,7 @@ fn self_similarity_weighted() {
 #[test]
 fn self_similarity_unweighted() {
     let spectra = reference_spectra();
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -250,7 +349,7 @@ fn self_similarity_unweighted() {
 fn equivalence_with_linear_entropy_weighted() {
     let spectra = reference_spectra();
     let linear = LinearEntropy::weighted(0.1_f64).expect("valid scorer config");
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -302,7 +401,7 @@ fn equivalence_with_linear_entropy_weighted() {
 fn equivalence_with_linear_entropy_unweighted() {
     let spectra = reference_spectra();
     let linear = LinearEntropy::unweighted(0.1_f64).expect("valid scorer config");
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -355,7 +454,7 @@ fn equivalence_with_linear_entropy_unweighted() {
 #[test]
 fn empty_library() {
     let empty: Vec<&GenericSpectrum> = Vec::new();
-    let index = FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, true, empty)
+    let index = build_entropy_index(0.0_f64, 1.0_f64, 0.1_f64, true, empty)
         .expect("empty index should build");
     assert_eq!(index.n_spectra(), 0);
 
@@ -367,7 +466,7 @@ fn empty_library() {
 #[test]
 fn empty_query() {
     let spectra = reference_spectra();
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -390,7 +489,7 @@ fn zero_intensity_library_spectrum() {
     let normal = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let library = [empty, normal];
 
-    let index = FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, true, library.iter())
+    let index = build_entropy_index(0.0_f64, 1.0_f64, 0.1_f64, true, library.iter())
         .expect("index build should succeed");
 
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
@@ -412,7 +511,7 @@ fn zero_intensity_library_spectrum() {
 fn accessors_and_convenience_constructors_match_expected_configuration() {
     let spectra = reference_spectra();
 
-    let weighted = FlashEntropyIndex::<f64>::weighted(0.1_f64, spectra.iter().map(|(_, s)| s))
+    let weighted = build_entropy_index(0.0, 1.0, 0.1_f64, true, spectra.iter().map(|(_, s)| s))
         .expect("weighted index should build");
     assert!(weighted.is_weighted());
     assert_eq!(weighted.tolerance(), 0.1);
@@ -420,7 +519,7 @@ fn accessors_and_convenience_constructors_match_expected_configuration() {
     assert_eq!(weighted.mz_power_f64(), 0.0);
     assert_eq!(weighted.intensity_power_f64(), 1.0);
 
-    let unweighted = FlashEntropyIndex::<f64>::unweighted(0.1_f64, spectra.iter().map(|(_, s)| s))
+    let unweighted = build_entropy_index(0.0, 1.0, 0.1_f64, false, spectra.iter().map(|(_, s)| s))
         .expect("unweighted index should build");
     assert!(!unweighted.is_weighted());
     assert_eq!(unweighted.tolerance(), 0.1);
@@ -432,7 +531,7 @@ fn accessors_and_convenience_constructors_match_expected_configuration() {
 #[test]
 fn search_with_state_matches_stateless_results_and_state_reuse_is_stable() {
     let spectra = reference_spectra();
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.5_f64,
         2.0_f64,
         0.1_f64,
@@ -478,7 +577,7 @@ fn search_with_state_matches_stateless_results_and_state_reuse_is_stable() {
 #[test]
 fn thresholded_search_matches_filtered_direct_search() {
     let spectra = reference_spectra();
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -515,7 +614,7 @@ fn thresholded_search_matches_filtered_direct_search() {
 #[test]
 fn top_k_matches_sorted_direct_search_and_reuses_state() {
     let spectra = reference_spectra();
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -560,7 +659,7 @@ fn top_k_matches_sorted_direct_search_and_reuses_state() {
 #[test]
 fn thresholded_top_k_matches_filtered_direct_search() {
     let spectra = reference_spectra();
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -592,10 +691,8 @@ fn pepmass_filter_limits_entropy_search_paths() {
     ];
     let query = make_spectrum_f64(500.2, &[(100.0, 10.0), (200.0, 20.0)]);
 
-    let index = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
-        .expect("index build should succeed")
-        .with_pepmass_tolerance(0.5)
-        .expect("pepmass filter should be valid");
+    let index = build_entropy_index_with_pepmass(0.0, 1.0, 0.1, true, 0.5, library.iter())
+        .expect("index build should succeed");
     assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
 
     let direct_ids: Vec<_> = sorted_results(index.search(&query).expect("search should work"))
@@ -664,10 +761,8 @@ fn pepmass_filter_handles_entropy_bin_boundaries_without_false_hits() {
     ];
     let query = make_spectrum_f64(100.0, &[(50.0, 10.0), (60.0, 20.0)]);
 
-    let index = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
-        .expect("index build should succeed")
-        .with_pepmass_tolerance(0.5)
-        .expect("pepmass filter should be valid");
+    let index = build_entropy_index_with_pepmass(0.0, 1.0, 0.1, true, 0.5, library.iter())
+        .expect("index build should succeed");
 
     let direct_ids: Vec<_> = sorted_results(index.search(&query).expect("search should work"))
         .into_iter()
@@ -692,7 +787,7 @@ fn pepmass_filter_reduces_entropy_posting_scans() {
         .map(|index| make_spectrum_f64(500.0 + index as f64, &[(100.0, 10.0)]))
         .collect();
 
-    let unfiltered = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
+    let unfiltered = build_entropy_index(0.0, 1.0, 0.1, true, library.iter())
         .expect("index build should succeed");
     let mut unfiltered_state = unfiltered.new_search_state();
     let unfiltered_hits = unfiltered
@@ -702,10 +797,8 @@ fn pepmass_filter_reduces_entropy_posting_scans() {
     let unfiltered_visited = unfiltered_state.diagnostics().product_postings_visited;
     assert_eq!(unfiltered_visited, library.len());
 
-    let filtered = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
-        .expect("index build should succeed")
-        .with_pepmass_tolerance(0.1)
-        .expect("pepmass filter should be valid");
+    let filtered = build_entropy_index_with_pepmass(0.0, 1.0, 0.1, true, 0.1, library.iter())
+        .expect("index build should succeed");
     let mut filtered_state = filtered.new_search_state();
     let filtered_hits = filtered
         .search_with_state(&library[0], &mut filtered_state)
@@ -728,7 +821,7 @@ fn indexed_entropy_queries_match_external_queries() {
     let spectra = reference_spectra();
 
     for weighted in [true, false] {
-        let index = FlashEntropyIndex::<f64>::new(
+        let index = build_entropy_index(
             0.0_f64,
             1.0_f64,
             0.1_f64,
@@ -829,7 +922,7 @@ fn entropy_thresholded_top_k_prunes_low_bound_spectrum_blocks_without_losing_hit
         spectra.push(low_similarity.clone());
     }
 
-    let index = FlashEntropyIndex::<f64>::unweighted(0.1_f64, spectra.iter())
+    let index = build_entropy_index(0.0, 1.0, 0.1_f64, false, spectra.iter())
         .expect("entropy index should build");
     let expected = top_k_threshold_expected(
         index
@@ -876,7 +969,7 @@ fn entropy_index_preserves_public_ids_after_default_reordering() {
         make_spectrum_f64(500.0, &[(100.05, 11.0), (150.05, 19.0)]),
         make_spectrum_f64(700.0, &[(400.05, 11.0), (450.05, 19.0)]),
     ];
-    let index = FlashEntropyIndex::<f64>::unweighted(0.1_f64, spectra.iter())
+    let index = build_entropy_index(0.0, 1.0, 0.1_f64, false, spectra.iter())
         .expect("entropy index should build");
 
     for query_id in 0..spectra.len() as u32 {
@@ -896,7 +989,7 @@ fn entropy_index_preserves_public_ids_after_default_reordering() {
 #[test]
 fn indexed_entropy_queries_validate_ids_and_thresholds() {
     let spectra = reference_spectra();
-    let index = FlashEntropyIndex::<f64>::weighted(0.1_f64, spectra.iter().map(|(_, s)| s))
+    let index = build_entropy_index(0.0, 1.0, 0.1_f64, true, spectra.iter().map(|(_, s)| s))
         .expect("index build should succeed");
     let mut state = index.new_search_state();
     let out_of_bounds_id = spectra.len() as u32;
@@ -943,7 +1036,7 @@ fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
     let query = make_spectrum_f64(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
     let nonmatching_query = make_spectrum_f64(700.0, &[(400.0, 9.0)]);
 
-    let index = FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, false, library.iter())
+    let index = build_entropy_index(0.0_f64, 1.0_f64, 0.1_f64, false, library.iter())
         .expect("index build should succeed");
     let mut state = index.new_search_state();
 
@@ -976,8 +1069,7 @@ fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
 fn constructor_and_query_validation_errors_are_exposed() {
     let spectra = reference_spectra();
 
-    let nan_power =
-        FlashEntropyIndex::<f64>::new(f64::NAN, 1.0, 0.1, true, spectra.iter().map(|(_, s)| s));
+    let nan_power = build_entropy_index(f64::NAN, 1.0, 0.1, true, spectra.iter().map(|(_, s)| s));
     assert!(matches!(
         nan_power,
         Err(FlashEntropyIndexError::Config(
@@ -985,7 +1077,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
         ))
     ));
 
-    let inf_intensity = FlashEntropyIndex::<f64>::new(
+    let inf_intensity = build_entropy_index(
         0.0,
         f64::INFINITY,
         0.1,
@@ -1000,7 +1092,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
     ));
 
     let nan_tolerance =
-        FlashEntropyIndex::<f64>::new(0.0, 1.0, f64::NAN, true, spectra.iter().map(|(_, s)| s));
+        build_entropy_index(0.0, 1.0, f64::NAN, true, spectra.iter().map(|(_, s)| s));
     assert!(matches!(
         nan_tolerance,
         Err(FlashEntropyIndexError::Config(
@@ -1012,7 +1104,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
         precursor_mz: f64::NAN,
         peaks: vec![(100.0, 1.0)],
     };
-    let build_error = FlashEntropyIndex::<f64>::new(0.0, 1.0, 0.1, true, [&bad_library]);
+    let build_error = build_entropy_index(0.0, 1.0, 0.1, true, [&bad_library]);
     assert!(matches!(
         build_error,
         Err(FlashEntropyIndexError::Computation(
@@ -1020,7 +1112,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
         ))
     ));
 
-    let index = FlashEntropyIndex::<f64>::new(
+    let index = build_entropy_index(
         0.0_f64,
         1.0_f64,
         0.1_f64,
@@ -1055,7 +1147,7 @@ fn modified_search_includes_shifted_matches() {
     let lib = make_spectrum_f64(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let query = make_spectrum_f64(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
 
-    let index = FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, false, [&lib])
+    let index = build_entropy_index(0.0_f64, 1.0_f64, 0.1_f64, false, [&lib])
         .expect("index build should succeed");
 
     let direct_results = index.search(&query).expect("direct search should succeed");
@@ -1078,7 +1170,7 @@ fn modified_search_anti_double_counting() {
     let lib = make_spectrum_f64(200.0, &[(100.0, 10.0)]);
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0)]);
 
-    let index = FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, false, [&lib])
+    let index = build_entropy_index(0.0_f64, 1.0_f64, 0.1_f64, false, [&lib])
         .expect("index build should succeed");
 
     let direct = index.search(&query).expect("search should succeed");
@@ -1096,14 +1188,14 @@ fn modified_search_anti_double_counting() {
 #[test]
 fn rejects_non_well_separated_library() {
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
-    let result = FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, true, [&bad]);
+    let result = build_entropy_index(0.0_f64, 1.0_f64, 0.1_f64, true, [&bad]);
     assert!(result.is_err());
 }
 
 #[test]
 fn rejects_non_well_separated_query() {
     let good = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 8.0)]);
-    let index = FlashEntropyIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, true, [&good])
+    let index = build_entropy_index(0.0_f64, 1.0_f64, 0.1_f64, true, [&good])
         .expect("index build should succeed");
 
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);

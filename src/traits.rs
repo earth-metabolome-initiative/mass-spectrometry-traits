@@ -3,6 +3,7 @@
 pub mod reference_spectra;
 pub mod spectra;
 pub mod spectra_index;
+pub mod spectra_index_builder;
 pub mod spectral_filter;
 pub mod spectral_pipeline;
 pub mod spectral_pipeline_builder;
@@ -35,6 +36,7 @@ pub use reference_spectra::{
 };
 pub use spectra::Spectra;
 pub use spectra_index::SpectraIndex;
+pub use spectra_index_builder::SpectraIndexBuilder;
 pub use spectral_filter::SpectralFilter;
 pub use spectral_pipeline::SpectralPipeline;
 pub use spectral_pipeline_builder::SpectralPipelineBuilder;

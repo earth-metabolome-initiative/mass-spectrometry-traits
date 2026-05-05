@@ -5,10 +5,10 @@
 
 use mass_spectrometry::prelude::{
     CocaineSpectrum, FlashCosineIndex, FlashCosineIndexError, FlashCosineThresholdIndex,
-    FlashIndexBuildPhase, FlashSearchResult, GenericSpectrum, GlucoseSpectrum,
-    HydroxyCholesterolSpectrum, LinearCosine, PhenylalanineSpectrum, SalicinSpectrum,
-    ScalarSimilarity, SimilarityComputationError, SimilarityConfigError, SpectraIndex,
-    SpectraIndexSetupError, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
+    FlashIndexBuildPhase, FlashIndexBuildProgress, FlashSearchResult, GenericSpectrum,
+    GlucoseSpectrum, HydroxyCholesterolSpectrum, LinearCosine, PhenylalanineSpectrum,
+    SalicinSpectrum, ScalarSimilarity, SimilarityComputationError, SimilarityConfigError,
+    SpectraIndex, SpectraIndexBuilder, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
 };
 #[cfg(feature = "rayon")]
 use mass_spectrometry::prelude::{FlashCosineSelfSimilarityIndex, PepmassFilter};
@@ -27,6 +27,203 @@ fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
         spectrum.add_peak(mz, intensity).expect("valid sorted peak");
     }
     spectrum
+}
+
+fn build_cosine_index<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    spectra: I,
+) -> Result<FlashCosineIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .build(&spectra)
+}
+
+fn build_cosine_index_with_progress<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    spectra: I,
+    progress: &(dyn FlashIndexBuildProgress + Sync),
+) -> Result<FlashCosineIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .progress(progress)
+        .build(&spectra)
+}
+
+fn build_threshold_index<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    score_threshold: f64,
+    spectra: I,
+) -> Result<FlashCosineThresholdIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineThresholdIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .score_threshold(score_threshold)
+        .build(&spectra)
+}
+
+fn build_threshold_index_with_progress<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    score_threshold: f64,
+    spectra: I,
+    progress: &(dyn FlashIndexBuildProgress + Sync),
+) -> Result<FlashCosineThresholdIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineThresholdIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .score_threshold(score_threshold)
+        .progress(progress)
+        .build(&spectra)
+}
+
+fn build_cosine_index_with_pepmass<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    pepmass_tolerance: f64,
+    spectra: I,
+) -> Result<FlashCosineIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .pepmass_tolerance(pepmass_tolerance)
+        .map_err(FlashCosineIndexError::Config)?
+        .build(&spectra)
+}
+
+fn build_cosine_index_with_pepmass_progress<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    pepmass_tolerance: f64,
+    spectra: I,
+    progress: &(dyn FlashIndexBuildProgress + Sync),
+) -> Result<FlashCosineIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .pepmass_tolerance(pepmass_tolerance)
+        .map_err(FlashCosineIndexError::Config)?
+        .progress(progress)
+        .build(&spectra)
+}
+
+fn build_threshold_index_with_pepmass<'a, S, I>(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    score_threshold: f64,
+    pepmass_tolerance: f64,
+    spectra: I,
+) -> Result<FlashCosineThresholdIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineThresholdIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .score_threshold(score_threshold)
+        .pepmass_tolerance(pepmass_tolerance)
+        .map_err(FlashCosineIndexError::Config)?
+        .build(&spectra)
+}
+
+#[cfg(feature = "rayon")]
+fn build_self_similarity_index<'a, S, I>(
+    score_threshold: f64,
+    top_k: usize,
+    pepmass_tolerance: f64,
+    spectra: I,
+) -> Result<FlashCosineSelfSimilarityIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(score_threshold)
+        .top_k(top_k)
+        .pepmass_tolerance(pepmass_tolerance)
+        .map_err(FlashCosineIndexError::Config)?
+        .parallel()
+        .build(&spectra)
+}
+
+#[cfg(feature = "rayon")]
+fn build_self_similarity_index_with_progress<'a, S, I>(
+    score_threshold: f64,
+    top_k: usize,
+    pepmass_tolerance: f64,
+    spectra: I,
+    progress: &(dyn FlashIndexBuildProgress + Sync),
+) -> Result<FlashCosineSelfSimilarityIndex<f64>, FlashCosineIndexError>
+where
+    S: Spectrum<Precision = f64> + Clone + Sync + 'a,
+    I: IntoIterator<Item = &'a S>,
+{
+    let spectra: Vec<S> = spectra.into_iter().cloned().collect();
+    FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(score_threshold)
+        .top_k(top_k)
+        .pepmass_tolerance(pepmass_tolerance)
+        .map_err(FlashCosineIndexError::Config)?
+        .parallel()
+        .progress(progress)
+        .build(&spectra)
 }
 
 fn reference_spectra() -> Vec<(&'static str, GenericSpectrum)> {
@@ -156,9 +353,8 @@ fn index_build_progress_reports_construction_phases() {
             .sum::<u64>();
 
     let cosine_progress = RecordingProgress::default();
-    let cosine =
-        FlashCosineIndex::<f64>::new_with_progress(0.0, 1.0, 0.1, library.iter(), &cosine_progress)
-            .expect("cosine index should build");
+    let cosine = build_cosine_index_with_progress(0.0, 1.0, 0.1, library.iter(), &cosine_progress)
+        .expect("cosine index should build");
     assert_eq!(cosine.n_spectra(), 2);
     let cosine_events = cosine_progress.events();
     assert_progress_reports_phase(
@@ -195,9 +391,15 @@ fn index_build_progress_reports_construction_phases() {
     );
     assert!(cosine_events.contains(&ProgressEvent::Finish));
 
-    let cosine = cosine
-        .with_pepmass_tolerance_and_progress(0.5, &cosine_progress)
-        .expect("pepmass filter should be valid");
+    let cosine = build_cosine_index_with_pepmass_progress(
+        0.0,
+        1.0,
+        0.1,
+        0.5,
+        library.iter(),
+        &cosine_progress,
+    )
+    .expect("pepmass filter should be valid");
     assert_eq!(cosine.pepmass_filter().tolerance(), Some(0.5));
     let cosine_events = cosine_progress.events();
     assert_progress_reports_phase(
@@ -211,15 +413,8 @@ fn index_build_progress_reports_construction_phases() {
     );
 
     let threshold_progress = RecordingProgress::default();
-    FlashCosineThresholdIndex::<f64>::new_with_progress(
-        0.0,
-        1.0,
-        0.1,
-        0.8,
-        library.iter(),
-        &threshold_progress,
-    )
-    .expect("threshold index should build");
+    build_threshold_index_with_progress(0.0, 1.0, 0.1, 0.8, library.iter(), &threshold_progress)
+        .expect("threshold index should build");
     let threshold_events = threshold_progress.events();
     assert_progress_reports_phase(
         &threshold_events,
@@ -242,14 +437,13 @@ fn indicatif_progress_bar_can_build_cosine_index() {
         make_spectrum_f64(501.0, &[(100.0, 10.0)]),
     ];
     let progress = indicatif::ProgressBar::hidden();
-    let index =
-        FlashCosineIndex::<f64>::new_with_progress(0.0, 1.0, 0.1, library.iter(), &progress)
-            .expect("index should build with indicatif progress");
+    let index = build_cosine_index_with_progress(0.0, 1.0, 0.1, library.iter(), &progress)
+        .expect("index should build with indicatif progress");
     assert_eq!(index.n_spectra(), 2);
 
-    let index = index
-        .with_pepmass_tolerance_and_progress(0.5, &progress)
-        .expect("same indicatif progress bar should be reusable for lazy PEPMASS build");
+    let index =
+        build_cosine_index_with_pepmass_progress(0.0, 1.0, 0.1, 0.5, library.iter(), &progress)
+            .expect("same indicatif progress bar should be reusable for PEPMASS build");
     assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
 }
 
@@ -259,9 +453,8 @@ fn indicatif_progress_bar_can_build_cosine_index() {
 fn self_similarity_all_reference() {
     let spectra = reference_spectra();
 
-    let index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     for (i, (name, spectrum)) in spectra.iter().enumerate() {
         let results = index.search(spectrum).expect("search should succeed");
@@ -291,9 +484,8 @@ fn equivalence_with_linear_cosine() {
     let spectra = reference_spectra();
     let linear = LinearCosine::new(1.0_f64, 1.0_f64, 0.1_f64).expect("valid scorer config");
 
-    let index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     // Test every pair.
     for (qname, query) in spectra.iter() {
@@ -342,9 +534,8 @@ fn equivalence_with_linear_cosine() {
 fn equivalence_mz_power_0() {
     let spectra = reference_spectra();
     let linear = LinearCosine::new(0.0_f64, 1.0_f64, 0.1_f64).expect("valid config");
-    let index =
-        FlashCosineIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     let query = &spectra[0].1;
     let results = index.search(query).expect("search should succeed");
@@ -369,7 +560,7 @@ fn equivalence_mz_power_0() {
 #[test]
 fn empty_library() {
     let empty: Vec<&GenericSpectrum> = Vec::new();
-    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, empty)
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, empty)
         .expect("empty index build should succeed");
     assert_eq!(index.n_spectra(), 0);
 
@@ -381,9 +572,8 @@ fn empty_library() {
 #[test]
 fn empty_query() {
     let spectra = reference_spectra();
-    let index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     let empty = make_spectrum_f64(100.0, &[]);
     let results = index.search(&empty).expect("search should succeed");
@@ -399,7 +589,7 @@ fn zero_intensity_spectrum() {
     let normal = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let library = [empty, normal];
 
-    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
         .expect("index build should succeed");
 
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 5.0)]);
@@ -423,15 +613,15 @@ fn zero_intensity_spectrum() {
 fn rejects_non_well_separated_library() {
     // Gap = 0.15, tolerance = 0.1, min_gap = 0.2 → gap < min_gap.
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
-    let result = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&bad]);
+    let result = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, [&bad]);
     assert!(result.is_err());
 }
 
 #[test]
 fn rejects_non_well_separated_query() {
     let good = make_spectrum_f64(200.0, &[(100.0, 10.0), (200.0, 8.0)]);
-    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&good])
-        .expect("index build should succeed");
+    let index =
+        build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, [&good]).expect("index build should succeed");
 
     let bad = make_spectrum_f64(200.0, &[(100.0, 10.0), (100.15, 8.0)]);
     let result = index.search(&bad);
@@ -444,7 +634,7 @@ fn rejects_non_well_separated_query() {
 #[test]
 fn single_spectrum_library() {
     let cocaine: GenericSpectrum = GenericSpectrum::cocaine().unwrap();
-    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&cocaine])
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, [&cocaine])
         .expect("index build should succeed");
 
     let results = index.search(&cocaine).expect("search should succeed");
@@ -455,9 +645,8 @@ fn single_spectrum_library() {
 #[test]
 fn accessors_and_search_with_state_match_stateless_results() {
     let spectra = reference_spectra();
-    let index =
-        FlashCosineIndex::<f64>::new(0.5_f64, 2.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(0.5_f64, 2.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     assert_eq!(index.mz_power(), 0.5);
     assert_eq!(index.intensity_power(), 2.0);
@@ -501,9 +690,8 @@ fn accessors_and_search_with_state_match_stateless_results() {
 #[test]
 fn thresholded_search_matches_filtered_direct_search() {
     let spectra = reference_spectra();
-    let index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     for threshold in [0.0_f64, 0.5_f64, 0.9_f64] {
         let mut state = index.new_search_state();
@@ -525,9 +713,8 @@ fn thresholded_search_matches_filtered_direct_search() {
 #[test]
 fn thresholded_emitter_reuses_state_and_validates_threshold() {
     let spectra = reference_spectra();
-    let index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
     let mut state = index.new_search_state();
 
     let query_a = &spectra[0].1;
@@ -567,9 +754,8 @@ fn thresholded_emitter_reuses_state_and_validates_threshold() {
 #[test]
 fn top_k_matches_sorted_direct_search_and_reuses_state() {
     let spectra = reference_spectra();
-    let index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
 
     let query_a = &spectra[0].1;
     let query_b = &spectra[1].1;
@@ -606,9 +792,8 @@ fn top_k_matches_sorted_direct_search_and_reuses_state() {
 #[test]
 fn top_k_threshold_matches_filtered_direct_search() {
     let spectra = reference_spectra();
-    let index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
     let query = &spectra[0].1;
 
     for threshold in [0.0_f64, 0.5_f64, 0.9_f64, 1.1_f64] {
@@ -652,11 +837,11 @@ fn top_k_threshold_matches_filtered_direct_search() {
 fn threshold_index_matches_filtered_direct_search() {
     let spectra = reference_spectra();
     let direct_index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
             .expect("direct index build should succeed");
 
     for threshold in [0.5_f64, 0.7_f64, 0.9_f64] {
-        let threshold_index = FlashCosineThresholdIndex::<f64>::new(
+        let threshold_index = build_threshold_index(
             1.0_f64,
             1.0_f64,
             0.1_f64,
@@ -701,14 +886,14 @@ fn threshold_index_matches_filtered_direct_search() {
 fn threshold_index_top_k_matches_thresholded_results_for_external_and_indexed_queries() {
     let spectra = reference_spectra();
     let direct_index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
             .expect("direct index build should succeed");
 
     let query_id = 0_u32;
     let query = &spectra[query_id as usize].1;
 
     for threshold in [0.85_f64, 0.9, 0.95] {
-        let threshold_index = FlashCosineThresholdIndex::<f64>::new(
+        let threshold_index = build_threshold_index(
             1.0_f64,
             1.0_f64,
             0.1_f64,
@@ -777,10 +962,8 @@ fn pepmass_filter_limits_cosine_search_paths() {
     ];
     let query = make_spectrum_f64(500.2, &[(100.0, 10.0), (200.0, 20.0)]);
 
-    let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
-        .expect("index build should succeed")
-        .with_pepmass_tolerance(0.5)
-        .expect("pepmass filter should be valid");
+    let index = build_cosine_index_with_pepmass(0.0, 1.0, 0.1, 0.5, library.iter())
+        .expect("index build should succeed");
     assert!(index.pepmass_filter().is_enabled());
 
     let direct_ids: Vec<_> = sorted_results(index.search(&query).expect("search should work"))
@@ -820,10 +1003,9 @@ fn pepmass_filter_limits_cosine_search_paths() {
         ))
     ));
 
-    let threshold_index = FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.8, library.iter())
-        .expect("threshold index should build")
-        .with_pepmass_tolerance(0.5)
-        .expect("pepmass filter should be valid");
+    let threshold_index =
+        build_threshold_index_with_pepmass(0.0, 1.0, 0.1, 0.8, 0.5, library.iter())
+            .expect("threshold index should build");
 
     let threshold_ids: Vec<_> = sorted_results(
         threshold_index
@@ -857,10 +1039,8 @@ fn pepmass_filter_handles_bin_boundaries_without_false_hits() {
     ];
     let query = make_spectrum_f64(100.0, &[(50.0, 10.0), (60.0, 20.0)]);
 
-    let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
-        .expect("index build should succeed")
-        .with_pepmass_tolerance(0.5)
-        .expect("pepmass filter should be valid");
+    let index = build_cosine_index_with_pepmass(0.0, 1.0, 0.1, 0.5, library.iter())
+        .expect("index build should succeed");
 
     let direct_ids: Vec<_> = sorted_results(index.search(&query).expect("search should work"))
         .into_iter()
@@ -880,17 +1060,17 @@ fn pepmass_filter_handles_bin_boundaries_without_false_hits() {
 }
 
 #[test]
-fn pepmass_2d_index_rebuilds_when_tolerance_changes() {
+fn pepmass_2d_index_builds_with_requested_tolerance() {
     let library = [
         make_spectrum_f64(100.0, &[(50.0, 10.0)]),
         make_spectrum_f64(101.0, &[(50.0, 10.0)]),
     ];
     let progress = RecordingProgress::default();
 
-    let index = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
-        .expect("index build should succeed")
-        .with_pepmass_tolerance_and_progress(0.5, &progress)
-        .expect("pepmass filter should be valid");
+    let index =
+        build_cosine_index_with_pepmass_progress(0.0, 1.0, 0.1, 0.5, library.iter(), &progress)
+            .expect("index build should succeed");
+    assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
     let first_build_count = progress
         .events()
         .iter()
@@ -903,24 +1083,10 @@ fn pepmass_2d_index_rebuilds_when_tolerance_changes() {
         .count();
     assert_eq!(first_build_count, 1);
 
-    let index = index
-        .with_pepmass_tolerance_and_progress(0.5, &progress)
-        .expect("same pepmass tolerance should be reusable");
-    let same_tolerance_build_count = progress
-        .events()
-        .iter()
-        .filter(|event| {
-            matches!(
-                event,
-                ProgressEvent::Phase(FlashIndexBuildPhase::BuildPrecursorIndex, _)
-            )
-        })
-        .count();
-    assert_eq!(same_tolerance_build_count, first_build_count);
-
-    let _index = index
-        .with_pepmass_tolerance_and_progress(1.0, &progress)
-        .expect("changed pepmass tolerance should rebuild the 2D index");
+    let changed =
+        build_cosine_index_with_pepmass_progress(0.0, 1.0, 0.1, 1.0, library.iter(), &progress)
+            .expect("changed pepmass tolerance should build a fresh 2D index");
+    assert_eq!(changed.pepmass_filter().tolerance(), Some(1.0));
     let changed_tolerance_build_count = progress
         .events()
         .iter()
@@ -940,8 +1106,8 @@ fn pepmass_filter_reduces_cosine_posting_scans() {
         .map(|index| make_spectrum_f64(500.0 + index as f64, &[(100.0, 10.0)]))
         .collect();
 
-    let unfiltered = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
-        .expect("index build should succeed");
+    let unfiltered =
+        build_cosine_index(0.0, 1.0, 0.1, library.iter()).expect("index build should succeed");
     let mut unfiltered_state = unfiltered.new_search_state();
     let unfiltered_hits = unfiltered
         .search_with_state(&library[0], &mut unfiltered_state)
@@ -950,10 +1116,8 @@ fn pepmass_filter_reduces_cosine_posting_scans() {
     let unfiltered_visited = unfiltered_state.diagnostics().product_postings_visited;
     assert_eq!(unfiltered_visited, library.len());
 
-    let filtered = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
-        .expect("index build should succeed")
-        .with_pepmass_tolerance(0.1)
-        .expect("pepmass filter should be valid");
+    let filtered = build_cosine_index_with_pepmass(0.0, 1.0, 0.1, 0.1, library.iter())
+        .expect("index build should succeed");
     let mut filtered_state = filtered.new_search_state();
     let filtered_hits = filtered
         .search_with_state(&library[0], &mut filtered_state)
@@ -973,33 +1137,25 @@ fn pepmass_filter_reduces_cosine_posting_scans() {
 
 #[test]
 fn invalid_pepmass_filter_tolerances_are_rejected() {
-    let library = [make_spectrum_f64(500.0, &[(100.0, 10.0)])];
-
-    let nan_result = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
-        .expect("index should build")
-        .with_pepmass_tolerance(f64::NAN);
+    let nan_result = FlashCosineIndex::<f64>::builder().pepmass_tolerance(f64::NAN);
     assert!(matches!(
         nan_result,
-        Err(SpectraIndexSetupError::Config(
-            SimilarityConfigError::NonFiniteParameter("pepmass_tolerance")
+        Err(SimilarityConfigError::NonFiniteParameter(
+            "pepmass_tolerance"
         ))
     ));
 
-    let negative_result = FlashCosineIndex::<f64>::new(0.0, 1.0, 0.1, library.iter())
-        .expect("index should build")
-        .with_pepmass_tolerance(-0.1);
+    let negative_result = FlashCosineIndex::<f64>::builder().pepmass_tolerance(-0.1);
     assert!(matches!(
         negative_result,
-        Err(SpectraIndexSetupError::Config(
-            SimilarityConfigError::InvalidParameter("pepmass_tolerance")
-        ))
+        Err(SimilarityConfigError::InvalidParameter("pepmass_tolerance"))
     ));
 }
 
 #[test]
 fn threshold_indexed_top_k_reports_dynamic_block_candidate_diagnostics() {
     let spectra = reference_spectra();
-    let threshold_index = FlashCosineThresholdIndex::<f64>::new(
+    let threshold_index = build_threshold_index(
         1.0_f64,
         1.0_f64,
         0.1_f64,
@@ -1052,11 +1208,10 @@ fn threshold_index_top_k_prunes_low_bound_spectrum_blocks_without_losing_hits() 
         spectra.push(low_similarity.clone());
     }
 
-    let direct_index = FlashCosineIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter())
+    let direct_index = build_cosine_index(0.0_f64, 1.0_f64, 0.1_f64, spectra.iter())
         .expect("direct index should build");
-    let threshold_index =
-        FlashCosineThresholdIndex::<f64>::new(0.0_f64, 1.0_f64, 0.1_f64, 0.9_f64, spectra.iter())
-            .expect("threshold index should build");
+    let threshold_index = build_threshold_index(0.0_f64, 1.0_f64, 0.1_f64, 0.9_f64, spectra.iter())
+        .expect("threshold index should build");
 
     let expected = top_k_expected(
         direct_index
@@ -1099,7 +1254,7 @@ fn threshold_index_preserves_public_ids_after_default_reordering() {
         make_spectrum_f64(500.0, &[(100.05, 11.0), (150.05, 19.0)]),
         make_spectrum_f64(700.0, &[(400.05, 11.0), (450.05, 19.0)]),
     ];
-    let index = FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, 0.9, spectra.iter())
+    let index = build_threshold_index(0.0, 1.0, 0.1, 0.9, spectra.iter())
         .expect("threshold index should build");
 
     for query_id in 0..spectra.len() as u32 {
@@ -1119,7 +1274,7 @@ fn threshold_index_preserves_public_ids_after_default_reordering() {
 #[test]
 fn threshold_index_validates_threshold_and_query_id() {
     let spectra = reference_spectra();
-    let nan_threshold = FlashCosineThresholdIndex::<f64>::new(
+    let nan_threshold = build_threshold_index(
         1.0_f64,
         1.0_f64,
         0.1_f64,
@@ -1133,7 +1288,7 @@ fn threshold_index_validates_threshold_and_query_id() {
         ))
     ));
 
-    let threshold_index = FlashCosineThresholdIndex::<f64>::new(
+    let threshold_index = build_threshold_index(
         1.0_f64,
         1.0_f64,
         0.1_f64,
@@ -1176,20 +1331,11 @@ fn self_similarity_index_matches_threshold_index_rows_and_excludes_self() {
     let threshold = 0.5_f64;
     let top_k = 2_usize;
     let pepmass_tolerance = 0.5_f64;
-    let threshold_index = FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, threshold, &spectra)
-        .expect("threshold index should build")
-        .with_pepmass_tolerance(pepmass_tolerance)
-        .expect("pepmass filter should build");
-    let self_index = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
-        0.0,
-        1.0,
-        0.1,
-        threshold,
-        top_k,
-        pepmass_tolerance,
-        &spectra,
-    )
-    .expect("self-similarity index should build");
+    let threshold_index =
+        build_threshold_index_with_pepmass(0.0, 1.0, 0.1, threshold, pepmass_tolerance, &spectra)
+            .expect("threshold index should build");
+    let self_index = build_self_similarity_index(threshold, top_k, pepmass_tolerance, &spectra)
+        .expect("self-similarity index should build");
 
     assert_eq!(self_index.n_spectra(), spectra.len() as u32);
     assert_eq!(self_index.top_k(), top_k);
@@ -1199,7 +1345,7 @@ fn self_similarity_index_matches_threshold_index_rows_and_excludes_self() {
         Some(pepmass_tolerance)
     );
 
-    let mut rows: Vec<_> = self_index.par_top_k_rows().map(Result::unwrap).collect();
+    let mut rows: Vec<_> = (&self_index).into_par_iter().map(Result::unwrap).collect();
     rows.sort_by_key(|row| row.0);
     assert_eq!(
         rows.iter().map(|row| row.0).collect::<Vec<_>>(),
@@ -1225,6 +1371,35 @@ fn self_similarity_index_matches_threshold_index_rows_and_excludes_self() {
 
 #[cfg(feature = "rayon")]
 #[test]
+fn self_similarity_index_reports_construction_progress() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
+    ];
+    let progress = RecordingProgress::default();
+    let index = build_self_similarity_index_with_progress(0.8, 1, 0.5, &spectra, &progress)
+        .expect("self-similarity index should build");
+
+    assert_eq!(index.n_spectra(), 2);
+    let events = progress.events();
+    assert_progress_reports_phase(&events, FlashIndexBuildPhase::PrepareSpectra, Some(2));
+    assert_progress_reports_phase(
+        &events,
+        FlashIndexBuildPhase::BuildBlockUpperBounds,
+        Some(1),
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            ProgressEvent::Phase(FlashIndexBuildPhase::BuildPrecursorIndex, _)
+        )),
+        "missing precursor index progress: {events:?}"
+    );
+    assert!(events.contains(&ProgressEvent::Finish));
+}
+
+#[cfg(feature = "rayon")]
+#[test]
 fn self_similarity_index_can_iterate_a_contiguous_row_range() {
     let spectra = vec![
         make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
@@ -1232,12 +1407,15 @@ fn self_similarity_index_can_iterate_a_contiguous_row_range() {
         make_spectrum_f64(500.2, &[(100.05, 8.0), (200.05, 18.0)]),
         make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
     ];
-    let index = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
-        0.0, 1.0, 0.1, 0.5, 2, 0.5, &spectra,
-    )
-    .expect("self-similarity index should build");
+    let index = build_self_similarity_index(0.5, 2, 0.5, &spectra)
+        .expect("self-similarity index should build");
 
-    let mut rows: Vec<_> = index.par_top_k_rows_in(1..3).map(Result::unwrap).collect();
+    let mut rows: Vec<_> = index
+        .rows()
+        .range(1..3)
+        .into_par_iter()
+        .map(Result::unwrap)
+        .collect();
     rows.sort_by_key(|row| row.0);
 
     assert_eq!(rows.len(), 2);
@@ -1258,13 +1436,14 @@ fn self_similarity_index_can_iterate_an_explicit_row_set() {
         make_spectrum_f64(500.2, &[(100.05, 8.0), (200.05, 18.0)]),
         make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
     ];
-    let index = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
-        0.0, 1.0, 0.1, 0.5, 2, 0.5, &spectra,
-    )
-    .expect("self-similarity index should build");
+    let index = build_self_similarity_index(0.5, 2, 0.5, &spectra)
+        .expect("self-similarity index should build");
 
+    let row_ids = [2, 0];
     let mut rows: Vec<_> = index
-        .par_top_k_rows_for(&[2, 0])
+        .rows()
+        .ids(&row_ids)
+        .into_par_iter()
         .map(Result::unwrap)
         .collect();
     rows.sort_by_key(|row| row.0);
@@ -1280,21 +1459,57 @@ fn self_similarity_index_can_iterate_an_explicit_row_set() {
 
 #[cfg(feature = "rayon")]
 #[test]
+fn self_similarity_index_reports_row_iteration_progress() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
+        make_spectrum_f64(500.2, &[(100.05, 8.0), (200.05, 18.0)]),
+    ];
+    let index = build_self_similarity_index(0.5, 2, 0.5, &spectra)
+        .expect("self-similarity index should build");
+    let progress = RecordingProgress::default();
+
+    let row_ids = [2, 0];
+    let rows: Vec<_> = index
+        .rows()
+        .ids(&row_ids)
+        .progress(&progress)
+        .into_par_iter()
+        .map(Result::unwrap)
+        .collect();
+
+    assert_eq!(rows.len(), 2);
+    let events = progress.events();
+    assert!(events.contains(&ProgressEvent::RowStart(2)));
+    assert_eq!(
+        events
+            .iter()
+            .filter_map(|event| match event {
+                ProgressEvent::RowInc(delta) => Some(*delta),
+                _ => None,
+            })
+            .sum::<u64>(),
+        2
+    );
+    assert!(events.contains(&ProgressEvent::RowFinish));
+}
+
+#[cfg(feature = "rayon")]
+#[test]
 fn self_similarity_index_validates_fixed_profile() {
     let spectra = vec![
         make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
         make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
     ];
 
-    let disabled_filter = FlashCosineSelfSimilarityIndex::<f64>::new(
-        0.0,
-        1.0,
-        0.1,
-        0.8,
-        1,
-        PepmassFilter::disabled(),
-        &spectra,
-    );
+    let disabled_filter = FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(0.8)
+        .top_k(1)
+        .pepmass_filter(PepmassFilter::disabled())
+        .build(&spectra);
     assert!(matches!(
         disabled_filter,
         Err(FlashCosineIndexError::Config(
@@ -1302,9 +1517,15 @@ fn self_similarity_index_validates_fixed_profile() {
         ))
     ));
 
-    let zero_k = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
-        0.0, 1.0, 0.1, 0.8, 0, 0.5, &spectra,
-    );
+    let zero_k = FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(0.8)
+        .top_k(0)
+        .pepmass_tolerance(0.5)
+        .unwrap()
+        .build(&spectra);
     assert!(matches!(
         zero_k,
         Err(FlashCosineIndexError::Config(
@@ -1312,15 +1533,15 @@ fn self_similarity_index_validates_fixed_profile() {
         ))
     ));
 
-    let nan_threshold = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
-        0.0,
-        1.0,
-        0.1,
-        f64::NAN,
-        1,
-        0.5,
-        &spectra,
-    );
+    let nan_threshold = FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(f64::NAN)
+        .top_k(1)
+        .pepmass_tolerance(0.5)
+        .unwrap()
+        .build(&spectra);
     assert!(matches!(
         nan_threshold,
         Err(FlashCosineIndexError::Computation(
@@ -1328,15 +1549,42 @@ fn self_similarity_index_validates_fixed_profile() {
         ))
     ));
 
-    let invalid_pepmass = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
-        0.0, 1.0, 0.1, 0.8, 1, -0.5, &spectra,
-    );
+    let invalid_pepmass = FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(0.8)
+        .top_k(1)
+        .pepmass_tolerance(-0.5)
+        .map_err(FlashCosineIndexError::Config)
+        .and_then(|builder| builder.build(&spectra));
     assert!(matches!(
         invalid_pepmass,
         Err(FlashCosineIndexError::Config(
             SimilarityConfigError::InvalidParameter("pepmass_tolerance")
         ))
     ));
+}
+
+#[cfg(all(feature = "rayon", feature = "indicatif"))]
+#[test]
+fn indicatif_progress_bar_can_build_and_iterate_self_similarity_index() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
+    ];
+    let build_progress = indicatif::ProgressBar::hidden();
+    let index = build_self_similarity_index_with_progress(0.8, 1, 0.5, &spectra, &build_progress)
+        .expect("self-similarity index should build with indicatif progress");
+    let row_progress = indicatif::ProgressBar::hidden();
+    let rows: Vec<_> = index
+        .rows()
+        .progress(&row_progress)
+        .into_par_iter()
+        .map(Result::unwrap)
+        .collect();
+
+    assert_eq!(rows.len(), 2);
 }
 
 #[test]
@@ -1348,7 +1596,7 @@ fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
     let query = make_spectrum_f64(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
     let nonmatching_query = make_spectrum_f64(700.0, &[(400.0, 9.0)]);
 
-    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, library.iter())
         .expect("index build should succeed");
     let mut state = index.new_search_state();
 
@@ -1381,8 +1629,7 @@ fn modified_search_with_state_reuses_buffers_without_leaking_matches() {
 fn constructor_and_query_validation_errors_are_exposed() {
     let spectra = reference_spectra();
 
-    let nan_power =
-        FlashCosineIndex::<f64>::new(f64::NAN, 1.0, 0.1, spectra.iter().map(|(_, s)| s));
+    let nan_power = build_cosine_index(f64::NAN, 1.0, 0.1, spectra.iter().map(|(_, s)| s));
     assert!(matches!(
         nan_power,
         Err(FlashCosineIndexError::Computation(
@@ -1390,8 +1637,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
         ))
     ));
 
-    let inf_intensity =
-        FlashCosineIndex::<f64>::new(1.0, f64::INFINITY, 0.1, spectra.iter().map(|(_, s)| s));
+    let inf_intensity = build_cosine_index(1.0, f64::INFINITY, 0.1, spectra.iter().map(|(_, s)| s));
     assert!(matches!(
         inf_intensity,
         Err(FlashCosineIndexError::Computation(
@@ -1399,8 +1645,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
         ))
     ));
 
-    let nan_tolerance =
-        FlashCosineIndex::<f64>::new(1.0, 1.0, f64::NAN, spectra.iter().map(|(_, s)| s));
+    let nan_tolerance = build_cosine_index(1.0, 1.0, f64::NAN, spectra.iter().map(|(_, s)| s));
     assert!(matches!(
         nan_tolerance,
         Err(FlashCosineIndexError::Config(
@@ -1412,7 +1657,7 @@ fn constructor_and_query_validation_errors_are_exposed() {
         precursor_mz: f64::NAN,
         peaks: vec![(100.0, 1.0)],
     };
-    let build_error = FlashCosineIndex::<f64>::new(1.0, 1.0, 0.1, [&bad_library]);
+    let build_error = build_cosine_index(1.0, 1.0, 0.1, [&bad_library]);
     assert!(matches!(
         build_error,
         Err(FlashCosineIndexError::Computation(
@@ -1420,9 +1665,8 @@ fn constructor_and_query_validation_errors_are_exposed() {
         ))
     ));
 
-    let index =
-        FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
-            .expect("index build should succeed");
+    let index = build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, spectra.iter().map(|(_, s)| s))
+        .expect("index build should succeed");
     let bad_query = RawSpectrum {
         precursor_mz: f64::NAN,
         peaks: vec![(100.0, 1.0)],
@@ -1455,8 +1699,8 @@ fn modified_search_includes_shifted_matches() {
     let lib = make_spectrum_f64(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
     let query = make_spectrum_f64(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
 
-    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib])
-        .expect("index build should succeed");
+    let index =
+        build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, [&lib]).expect("index build should succeed");
 
     let direct_results = index.search(&query).expect("direct search should succeed");
     let modified_results = index
@@ -1485,8 +1729,8 @@ fn modified_search_anti_double_counting() {
     let lib = make_spectrum_f64(200.0, &[(100.0, 10.0)]);
     let query = make_spectrum_f64(200.0, &[(100.0, 10.0)]);
 
-    let index = FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, 0.1_f64, [&lib])
-        .expect("index build should succeed");
+    let index =
+        build_cosine_index(1.0_f64, 1.0_f64, 0.1_f64, [&lib]).expect("index build should succeed");
 
     let direct = index.search(&query).expect("search should succeed");
     let modified = index

@@ -1,6 +1,6 @@
 use mass_spectrometry::prelude::{
     FlashSearchResult, GenericSpectrumMutationError, RandomSpectrumGenerationError,
-    SimilarityComputationError, SimilarityConfigError, SpectraIndexSetupError,
+    SimilarityComputationError, SimilarityConfigError,
 };
 
 #[test]
@@ -44,21 +44,6 @@ fn similarity_computation_error_messages_are_stable() {
     assert_eq!(
         SimilarityComputationError::InvalidPeakSpacing("left spectrum").to_string(),
         "`left spectrum` violates strict peak spacing precondition: consecutive peaks must be > 2 * mz_tolerance apart"
-    );
-}
-
-#[test]
-fn spectra_index_setup_error_messages_are_stable() {
-    assert_eq!(
-        SpectraIndexSetupError::Config(SimilarityConfigError::InvalidParameter(
-            "pepmass_tolerance",
-        ))
-        .to_string(),
-        "invalid parameter `pepmass_tolerance`"
-    );
-    assert_eq!(
-        SpectraIndexSetupError::Computation(SimilarityComputationError::IndexOverflow).to_string(),
-        "index overflow while building similarity data structures"
     );
 }
 

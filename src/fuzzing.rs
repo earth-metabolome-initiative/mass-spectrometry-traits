@@ -14,12 +14,40 @@ use crate::structs::{
     ModifiedLinearEntropy, MsEntropyCleanSpectrum, SimilarityComputationError,
     SiriusMergeClosePeaks,
 };
-use crate::traits::{SpectralProcessor, Spectrum};
+use crate::traits::{SpectraIndexBuilder, SpectralProcessor, Spectrum};
 
 const FIXED_TOLERANCE: f64 = 0.1;
 const SYMMETRY_EPS: f64 = 1.0e-4;
 const DIFFERENTIAL_EPS: f64 = 1.0e-4;
 const MODIFIED_DIFFERENTIAL_EPS: f64 = 1.0e-6;
+
+fn build_flash_cosine_index(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    library: &[GenericSpectrum],
+) -> Result<FlashCosineIndex<f64>, crate::structs::FlashCosineIndexError> {
+    FlashCosineIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .build(library)
+}
+
+fn build_flash_entropy_index(
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    weighted: bool,
+    library: &[GenericSpectrum],
+) -> Result<FlashEntropyIndex<f64>, crate::structs::FlashEntropyIndexError> {
+    FlashEntropyIndex::<f64>::builder()
+        .mz_power(mz_power)
+        .intensity_power(intensity_power)
+        .mz_tolerance(mz_tolerance)
+        .weighted(weighted)
+        .build(library)
+}
 
 /// Result returned by [`run_hungarian_cosine_case`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -394,11 +422,10 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
     let merged_query = merger.process(&case.query);
 
     // Fixed config (1.0, 1.0, 0.1): differential oracle against LinearCosine.
-    let index =
-        match FlashCosineIndex::<f64>::new(1.0_f64, 1.0_f64, FIXED_TOLERANCE, merged_lib.iter()) {
-            Ok(idx) => idx,
-            Err(_) => return FlashCosineHarnessOutcome::Checked,
-        };
+    let index = match build_flash_cosine_index(1.0_f64, 1.0_f64, FIXED_TOLERANCE, &merged_lib) {
+        Ok(idx) => idx,
+        Err(_) => return FlashCosineHarnessOutcome::Checked,
+    };
 
     let direct_results = match index.search(&merged_query) {
         Ok(r) => r,
@@ -456,11 +483,11 @@ pub fn run_flash_cosine_case(bytes: &[u8]) -> FlashCosineHarnessOutcome {
     }
 
     // Dynamic config (arbitrary params): attempt build + search, check score ranges.
-    if let Ok(dyn_index) = FlashCosineIndex::<f64>::new(
+    if let Ok(dyn_index) = build_flash_cosine_index(
         case.mz_power,
         case.intensity_power,
         case.tolerance,
-        merged_lib.iter(),
+        &merged_lib,
     ) && let Ok(dyn_results) = dyn_index.search(&merged_query)
     {
         for r in &dyn_results {
@@ -499,7 +526,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
 
     // Fixed unweighted config: differential oracle against LinearEntropy.
     let unweighted_index =
-        match FlashEntropyIndex::<f64>::unweighted(FIXED_TOLERANCE, merged_lib.iter()) {
+        match build_flash_entropy_index(0.0_f64, 1.0_f64, FIXED_TOLERANCE, false, &merged_lib) {
             Ok(idx) => idx,
             Err(_) => return FlashEntropyHarnessOutcome::Checked,
         };
@@ -571,7 +598,7 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
 
     // Fixed weighted config.
     let weighted_index =
-        match FlashEntropyIndex::<f64>::weighted(FIXED_TOLERANCE, merged_lib.iter()) {
+        match build_flash_entropy_index(0.0_f64, 1.0_f64, FIXED_TOLERANCE, true, &merged_lib) {
             Ok(idx) => idx,
             Err(_) => return FlashEntropyHarnessOutcome::Checked,
         };
@@ -626,12 +653,12 @@ pub fn run_flash_entropy_case(bytes: &[u8]) -> FlashEntropyHarnessOutcome {
     }
 
     // Dynamic config (arbitrary params): attempt build + search, check score ranges.
-    if let Ok(dyn_index) = FlashEntropyIndex::<f64>::new(
+    if let Ok(dyn_index) = build_flash_entropy_index(
         case.mz_power,
         case.intensity_power,
         case.tolerance,
         case.weighted,
-        merged_lib.iter(),
+        &merged_lib,
     ) && let Ok(dyn_results) = dyn_index.search(&merged_query)
     {
         for r in &dyn_results {
@@ -1751,7 +1778,7 @@ mod tests {
         let library = flash_library();
         let query = make_spectrum(310.0, &[(100.0, 10.0), (210.0, 5.0)]);
 
-        let cosine_index = FlashCosineIndex::<f64>::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+        let cosine_index = build_flash_cosine_index(1.0, 1.0, FIXED_TOLERANCE, &library)
             .expect("cosine index should build");
         let cosine_direct = cosine_index
             .search(&query)
@@ -1790,7 +1817,7 @@ mod tests {
         assert_flash_state_equivalence(&cosine_state_results, &cosine_direct, "flash/cosine/state");
         assert_flash_self_similarity_cosine(&cosine_index, &library[0], 0, "flash/cosine/self");
 
-        let entropy_index = FlashEntropyIndex::<f64>::weighted(FIXED_TOLERANCE, library.iter())
+        let entropy_index = build_flash_entropy_index(0.0, 1.0, FIXED_TOLERANCE, true, &library)
             .expect("entropy index should build");
         let entropy_direct = entropy_index
             .search(&query)
@@ -1921,7 +1948,7 @@ mod tests {
         ];
         let query = make_spectrum(300.0, &[(100.0, 10.0), (200.0, 5.0)]);
 
-        let cosine_index = FlashCosineIndex::<f64>::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+        let cosine_index = build_flash_cosine_index(1.0, 1.0, FIXED_TOLERANCE, &library)
             .expect("cosine index should build");
         let cosine_results = cosine_index.search(&query).expect("search should work");
         let cosine_oracle =
@@ -1934,7 +1961,7 @@ mod tests {
             "flash/cosine/present",
         );
 
-        let entropy_index = FlashEntropyIndex::<f64>::weighted(FIXED_TOLERANCE, library.iter())
+        let entropy_index = build_flash_entropy_index(0.0, 1.0, FIXED_TOLERANCE, true, &library)
             .expect("entropy index should build");
         let entropy_results = entropy_index.search(&query).expect("search should work");
         let entropy_oracle = LinearEntropy::weighted(FIXED_TOLERANCE).expect("oracle should build");
@@ -1975,12 +2002,12 @@ mod tests {
         let invalid_query = make_spectrum(300.0, &[(100.0, 10.0), (100.15, 5.0)]);
         let missing_query = make_spectrum(900.0, &[(800.0, 1.0)]);
 
-        let cosine_index = FlashCosineIndex::<f64>::new(1.0, 1.0, FIXED_TOLERANCE, library.iter())
+        let cosine_index = build_flash_cosine_index(1.0, 1.0, FIXED_TOLERANCE, &library)
             .expect("cosine index should build");
         assert_flash_self_similarity_cosine(&cosine_index, &invalid_query, 0, "flash/cosine/err");
         assert_flash_self_similarity_cosine(&cosine_index, &missing_query, 99, "flash/cosine/miss");
 
-        let entropy_index = FlashEntropyIndex::<f64>::weighted(FIXED_TOLERANCE, library.iter())
+        let entropy_index = build_flash_entropy_index(0.0, 1.0, FIXED_TOLERANCE, true, &library)
             .expect("entropy index should build");
         assert_flash_self_similarity_entropy(
             &entropy_index,

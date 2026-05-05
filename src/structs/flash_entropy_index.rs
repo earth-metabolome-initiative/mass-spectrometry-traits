@@ -5,6 +5,7 @@
 //! well-separated spectra (consecutive peaks > 2 * tolerance apart).
 
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
@@ -15,17 +16,15 @@ use super::cosine_common::{
 };
 use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
 use super::flash_common::{
-    DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashIndexBuildPhase,
-    FlashIndexBuildProgress, FlashKernel, FlashSearchResult, NoopFlashIndexBuildProgress,
-    PepmassFilter, PreparedFlashSpectra, PreparedFlashSpectrum, SearchState,
-    SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults,
-    TopKSearchState, convert_flash_value, convert_flash_values, flash_values_to_f64,
-    progress_len_from_size_hint, reorder_prepared_spectra_by_signature,
+    DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashIndexBuildOptions,
+    FlashIndexBuildPhase, FlashIndexBuildProgress, FlashKernel, FlashSearchResult, PepmassFilter,
+    PreparedFlashSpectra, PreparedFlashSpectrum, SearchState, SpectrumBlockProductIndex,
+    SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults, TopKSearchState,
+    convert_flash_value, convert_flash_values, flash_values_to_f64, progress_len_from_size_hint,
+    reorder_prepared_spectra_by_signature,
 };
-use super::similarity_errors::{
-    SimilarityComputationError, SimilarityConfigError, SpectraIndexSetupError,
-};
-use crate::traits::{SpectraIndex, Spectrum, SpectrumFloat};
+use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
+use crate::traits::{SpectraIndex, SpectraIndexBuilder, Spectrum, SpectrumFloat};
 
 const ENTROPY_BLOCK_PRUNING_MIN_THRESHOLD: f64 = 0.75;
 
@@ -424,6 +423,167 @@ fn for_each_entropy_top_k_prepared<P, Q, Emit>(
 // FlashEntropyIndex
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy)]
+struct EntropyIndexProfile {
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    weighted: bool,
+    pepmass_filter: PepmassFilter,
+}
+
+impl EntropyIndexProfile {
+    const fn new(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        weighted: bool,
+        pepmass_filter: PepmassFilter,
+    ) -> Self {
+        Self {
+            mz_power,
+            intensity_power,
+            mz_tolerance,
+            weighted,
+            pepmass_filter,
+        }
+    }
+}
+
+/// Builder for [`FlashEntropyIndex`].
+#[derive(Clone, Copy)]
+pub struct FlashEntropyIndexBuilder<'a, P: SpectrumFloat = f64> {
+    mz_power: f64,
+    intensity_power: f64,
+    mz_tolerance: f64,
+    weighted: bool,
+    options: FlashIndexBuildOptions<'a>,
+    _precision: PhantomData<P>,
+}
+
+impl<'a, P: SpectrumFloat> Default for FlashEntropyIndexBuilder<'a, P> {
+    fn default() -> Self {
+        Self {
+            mz_power: 0.0,
+            intensity_power: 1.0,
+            mz_tolerance: 0.0,
+            weighted: true,
+            options: FlashIndexBuildOptions::default(),
+            _precision: PhantomData,
+        }
+    }
+}
+
+impl<'a, P: SpectrumFloat> FlashEntropyIndexBuilder<'a, P> {
+    /// Set the m/z power used before entropy weighting.
+    #[must_use]
+    pub const fn mz_power(mut self, mz_power: f64) -> Self {
+        self.mz_power = mz_power;
+        self
+    }
+
+    /// Set the intensity power used before entropy weighting.
+    #[must_use]
+    pub const fn intensity_power(mut self, intensity_power: f64) -> Self {
+        self.intensity_power = intensity_power;
+        self
+    }
+
+    /// Set the m/z tolerance used for peak matching.
+    #[must_use]
+    pub const fn mz_tolerance(mut self, mz_tolerance: f64) -> Self {
+        self.mz_tolerance = mz_tolerance;
+        self
+    }
+
+    /// Enable or disable entropy-based intensity weighting.
+    #[must_use]
+    pub const fn weighted(mut self, weighted: bool) -> Self {
+        self.weighted = weighted;
+        self
+    }
+}
+
+impl<'a, P> SpectraIndexBuilder<'a> for FlashEntropyIndexBuilder<'a, P>
+where
+    P: SpectrumFloat + Send + Sync,
+{
+    type Error = FlashEntropyIndexError;
+    type Index = FlashEntropyIndex<P>;
+
+    fn options(&self) -> &FlashIndexBuildOptions<'a> {
+        &self.options
+    }
+
+    fn options_mut(&mut self) -> &mut FlashIndexBuildOptions<'a> {
+        &mut self.options
+    }
+
+    fn build<S>(self, spectra: &[S]) -> Result<Self::Index, Self::Error>
+    where
+        S: Spectrum + Sync,
+    {
+        let profile = EntropyIndexProfile::new(
+            self.mz_power,
+            self.intensity_power,
+            self.mz_tolerance,
+            self.weighted,
+            self.options.pepmass_filter(),
+        );
+        validate_entropy_index_config(
+            profile.mz_power,
+            profile.intensity_power,
+            profile.mz_tolerance,
+        )?;
+        let progress = self.options.progress();
+        #[cfg(feature = "rayon")]
+        let prepared = if self.options.parallel() {
+            prepare_entropy_library_parallel::<P, S, _>(
+                profile.mz_power,
+                profile.intensity_power,
+                profile.mz_tolerance,
+                profile.weighted,
+                spectra,
+                progress,
+            )?
+        } else {
+            prepare_entropy_library::<P, S>(
+                profile.mz_power,
+                profile.intensity_power,
+                profile.mz_tolerance,
+                profile.weighted,
+                spectra,
+                progress,
+            )?
+        };
+        #[cfg(not(feature = "rayon"))]
+        let prepared = prepare_entropy_library::<P, S>(
+            profile.mz_power,
+            profile.intensity_power,
+            profile.mz_tolerance,
+            profile.weighted,
+            spectra,
+            progress,
+        )?;
+
+        #[cfg(feature = "rayon")]
+        if self.options.parallel() {
+            return FlashEntropyIndex::from_prepared_library_with_builder(
+                profile,
+                prepared,
+                progress,
+                FlashIndex::<EntropyKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
+            );
+        }
+        FlashEntropyIndex::from_prepared_library_with_builder(
+            profile,
+            prepared,
+            progress,
+            FlashIndex::<EntropyKernel, P>::build_with_spectrum_id_map_and_progress,
+        )
+    }
+}
+
 /// Flash inverted m/z index for spectral entropy similarity.
 ///
 /// Build once from a library of spectra, then search many queries against it.
@@ -439,7 +599,12 @@ fn for_each_entropy_top_k_prepared<P, Q, Emit>(
 ///     GenericSpectrum::cocaine().unwrap(),
 ///     GenericSpectrum::glucose().unwrap(),
 /// ];
-/// let index = FlashEntropyIndex::<f64>::new(0.0, 1.0, 0.1, true, library.iter())
+/// let index = FlashEntropyIndex::<f64>::builder()
+///     .mz_power(0.0)
+///     .intensity_power(1.0)
+///     .mz_tolerance(0.1)
+///     .weighted(true)
+///     .build(&library)
 ///     .expect("index build should succeed");
 ///
 /// let query: GenericSpectrum = GenericSpectrum::cocaine().unwrap();
@@ -459,6 +624,12 @@ pub struct FlashEntropyIndex<P: SpectrumFloat = f64> {
 }
 
 impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
+    /// Create a builder for an entropy Flash index.
+    #[must_use]
+    pub fn builder<'a>() -> FlashEntropyIndexBuilder<'a, P> {
+        FlashEntropyIndexBuilder::default()
+    }
+
     /// Returns whether entropy-based intensity weighting is enabled.
     #[inline]
     pub fn is_weighted(&self) -> bool {
@@ -489,200 +660,8 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         self.intensity_power_f64
     }
 
-    /// Build a weighted entropy flash index with default powers (mz_power=0,
-    /// intensity_power=1).
-    pub fn weighted<'a, S>(
-        mz_tolerance: f64,
-        spectra: impl IntoIterator<Item = &'a S>,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        S: Spectrum + 'a,
-    {
-        Self::new(0.0, 1.0, mz_tolerance, true, spectra)
-    }
-
-    /// Build a weighted entropy flash index with progress reporting.
-    pub fn weighted_with_progress<'a, S, G>(
-        mz_tolerance: f64,
-        spectra: impl IntoIterator<Item = &'a S>,
-        progress: &G,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        S: Spectrum + 'a,
-        G: FlashIndexBuildProgress + ?Sized,
-    {
-        Self::new_with_progress(0.0, 1.0, mz_tolerance, true, spectra, progress)
-    }
-
-    /// Build a weighted entropy flash index with Rayon-backed library
-    /// preparation, internal index sorting, and default powers
-    /// (mz_power=0, intensity_power=1).
-    #[cfg(feature = "rayon")]
-    pub fn weighted_parallel<'a, S, I>(
-        mz_tolerance: f64,
-        spectra: I,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        P: Send,
-        S: Spectrum + Sync + 'a,
-        I: IntoParallelIterator<Item = &'a S>,
-    {
-        Self::new_parallel(0.0, 1.0, mz_tolerance, true, spectra)
-    }
-
-    /// Build a weighted entropy flash index with Rayon-backed preparation and
-    /// progress reporting.
-    #[cfg(feature = "rayon")]
-    pub fn weighted_parallel_with_progress<'a, S, I, G>(
-        mz_tolerance: f64,
-        spectra: I,
-        progress: &G,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        P: Send,
-        S: Spectrum + Sync + 'a,
-        I: IntoParallelIterator<Item = &'a S>,
-        G: FlashIndexBuildProgress + Sync + ?Sized,
-    {
-        Self::new_parallel_with_progress(0.0, 1.0, mz_tolerance, true, spectra, progress)
-    }
-
-    /// Build an unweighted entropy flash index with default powers (mz_power=0,
-    /// intensity_power=1).
-    pub fn unweighted<'a, S>(
-        mz_tolerance: f64,
-        spectra: impl IntoIterator<Item = &'a S>,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        S: Spectrum + 'a,
-    {
-        Self::new(0.0, 1.0, mz_tolerance, false, spectra)
-    }
-
-    /// Build an unweighted entropy flash index with progress reporting.
-    pub fn unweighted_with_progress<'a, S, G>(
-        mz_tolerance: f64,
-        spectra: impl IntoIterator<Item = &'a S>,
-        progress: &G,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        S: Spectrum + 'a,
-        G: FlashIndexBuildProgress + ?Sized,
-    {
-        Self::new_with_progress(0.0, 1.0, mz_tolerance, false, spectra, progress)
-    }
-
-    /// Build an unweighted entropy flash index with Rayon-backed library
-    /// preparation, internal index sorting, and default powers
-    /// (mz_power=0, intensity_power=1).
-    #[cfg(feature = "rayon")]
-    pub fn unweighted_parallel<'a, S, I>(
-        mz_tolerance: f64,
-        spectra: I,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        P: Send,
-        S: Spectrum + Sync + 'a,
-        I: IntoParallelIterator<Item = &'a S>,
-    {
-        Self::new_parallel(0.0, 1.0, mz_tolerance, false, spectra)
-    }
-
-    /// Build an unweighted entropy flash index with Rayon-backed preparation
-    /// and progress reporting.
-    #[cfg(feature = "rayon")]
-    pub fn unweighted_parallel_with_progress<'a, S, I, G>(
-        mz_tolerance: f64,
-        spectra: I,
-        progress: &G,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        P: Send,
-        S: Spectrum + Sync + 'a,
-        I: IntoParallelIterator<Item = &'a S>,
-        G: FlashIndexBuildProgress + Sync + ?Sized,
-    {
-        Self::new_parallel_with_progress(0.0, 1.0, mz_tolerance, false, spectra, progress)
-    }
-
-    /// Build a new entropy flash index from an iterator of spectra.
-    ///
-    /// Each library spectrum must satisfy the well-separated precondition:
-    /// consecutive peaks must be more than `2 * mz_tolerance` apart.
-    /// Spectra are reordered internally by a deterministic peak-signature
-    /// heuristic; returned spectrum ids and indexed query ids remain in the
-    /// original insertion order.
-    ///
-    /// # Errors
-    ///
-    /// - [`SimilarityConfigError`] if `mz_tolerance` is invalid or power
-    ///   parameters are non-finite.
-    /// - [`SimilarityComputationError`] if any spectrum violates the
-    ///   well-separated precondition or contains non-representable values.
-    pub fn new<'a, S>(
-        mz_power: f64,
-        intensity_power: f64,
-        mz_tolerance: f64,
-        weighted: bool,
-        spectra: impl IntoIterator<Item = &'a S>,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        S: Spectrum + 'a,
-    {
-        let progress = NoopFlashIndexBuildProgress;
-        Self::new_with_progress(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            weighted,
-            spectra,
-            &progress,
-        )
-    }
-
-    /// Build a new entropy flash index while reporting construction progress.
-    ///
-    /// With the `indicatif` feature enabled, pass an `indicatif::ProgressBar`
-    /// to display the current construction phase.
-    pub fn new_with_progress<'a, S, G>(
-        mz_power: f64,
-        intensity_power: f64,
-        mz_tolerance: f64,
-        weighted: bool,
-        spectra: impl IntoIterator<Item = &'a S>,
-        progress: &G,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        S: Spectrum + 'a,
-        G: FlashIndexBuildProgress + ?Sized,
-    {
-        validate_entropy_index_config(mz_power, intensity_power, mz_tolerance)?;
-
-        let prepared = prepare_entropy_library::<P, S>(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            weighted,
-            spectra,
-            progress,
-        )?;
-
-        Self::from_prepared_library_with_builder(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            weighted,
-            prepared,
-            progress,
-            FlashIndex::<EntropyKernel, P>::build_with_spectrum_id_map_and_progress,
-        )
-    }
-
     fn from_prepared_library_with_builder<G, BuildInner>(
-        mz_power: f64,
-        intensity_power: f64,
-        mz_tolerance: f64,
-        weighted: bool,
+        profile: EntropyIndexProfile,
         prepared: PreparedFlashSpectra<P>,
         progress: &G,
         build_inner: BuildInner,
@@ -699,11 +678,11 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
     {
         progress.start_phase(FlashIndexBuildPhase::ReorderSpectra, Some(1));
         let (prepared, spectrum_id_map) =
-            reorder_prepared_spectra_by_signature(prepared, mz_tolerance)
+            reorder_prepared_spectra_by_signature(prepared, profile.mz_tolerance)
                 .map_err(FlashEntropyIndexError::Computation)?;
         progress.inc(1);
         progress.start_phase(FlashIndexBuildPhase::BuildBlockUpperBounds, Some(1));
-        let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, mz_tolerance)
+        let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, profile.mz_tolerance)
             .map_err(FlashEntropyIndexError::Computation)?;
         progress.inc(1);
         progress.start_phase(FlashIndexBuildPhase::BuildBlockProductIndex, Some(1));
@@ -711,7 +690,10 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             SpectrumBlockProductIndex::build(&prepared, DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE)
                 .map_err(FlashEntropyIndexError::Computation)?;
         progress.inc(1);
-        let inner = build_inner(mz_tolerance, prepared, spectrum_id_map, progress)
+        let mut inner = build_inner(profile.mz_tolerance, prepared, spectrum_id_map, progress)
+            .map_err(FlashEntropyIndexError::Computation)?;
+        inner
+            .set_pepmass_filter_with_progress(profile.pepmass_filter, progress)
             .map_err(FlashEntropyIndexError::Computation)?;
         progress.finish();
 
@@ -719,79 +701,10 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             inner,
             block_upper_bounds,
             block_products,
-            weighted,
-            mz_power_f64: mz_power,
-            intensity_power_f64: intensity_power,
+            weighted: profile.weighted,
+            mz_power_f64: profile.mz_power,
+            intensity_power_f64: profile.intensity_power,
         })
-    }
-
-    /// Build a new entropy flash index with Rayon-backed library preparation
-    /// and internal index sorting.
-    /// Uses the same internal spectrum reordering as [`Self::new`].
-    ///
-    /// This constructor is available with the `rayon` feature. It accepts any
-    /// Rayon-compatible collection yielding borrowed spectra, such as `&[S]`
-    /// or `&Vec<S>`.
-    #[cfg(feature = "rayon")]
-    pub fn new_parallel<'a, S, I>(
-        mz_power: f64,
-        intensity_power: f64,
-        mz_tolerance: f64,
-        weighted: bool,
-        spectra: I,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        P: Send,
-        S: Spectrum + Sync + 'a,
-        I: IntoParallelIterator<Item = &'a S>,
-    {
-        let progress = NoopFlashIndexBuildProgress;
-        Self::new_parallel_with_progress(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            weighted,
-            spectra,
-            &progress,
-        )
-    }
-
-    /// Build a new entropy flash index with Rayon-backed preparation and
-    /// progress reporting.
-    #[cfg(feature = "rayon")]
-    pub fn new_parallel_with_progress<'a, S, I, G>(
-        mz_power: f64,
-        intensity_power: f64,
-        mz_tolerance: f64,
-        weighted: bool,
-        spectra: I,
-        progress: &G,
-    ) -> Result<Self, FlashEntropyIndexError>
-    where
-        P: Send,
-        S: Spectrum + Sync + 'a,
-        I: IntoParallelIterator<Item = &'a S>,
-        G: FlashIndexBuildProgress + Sync + ?Sized,
-    {
-        validate_entropy_index_config(mz_power, intensity_power, mz_tolerance)?;
-
-        let prepared = prepare_entropy_library_parallel::<P, S, I>(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            weighted,
-            spectra,
-            progress,
-        )?;
-        Self::from_prepared_library_with_builder(
-            mz_power,
-            intensity_power,
-            mz_tolerance,
-            weighted,
-            prepared,
-            progress,
-            FlashIndex::<EntropyKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
-        )
     }
 
     /// Create a [`SearchState`] sized for this index, suitable for reuse
@@ -1029,7 +942,11 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
     /// right.add_peaks([(100.05, 10.0), (200.05, 20.0)]).unwrap();
     ///
     /// let spectra = vec![left, right];
-    /// let index = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
+    /// let index = FlashEntropyIndex::<f64>::builder()
+    ///     .mz_tolerance(0.1)
+    ///     .weighted(true)
+    ///     .build(&spectra)
+    ///     .unwrap();
     /// let hits = index.search_top_k(&spectra[0], 1).unwrap();
     ///
     /// assert_eq!(hits.len(), 1);
@@ -1342,24 +1259,6 @@ impl<P: SpectrumFloat + Sync> SpectraIndex for FlashEntropyIndex<P> {
         self.inner.pepmass_filter()
     }
 
-    fn with_pepmass_filter_and_progress<G>(
-        mut self,
-        filter: PepmassFilter,
-        progress: &G,
-    ) -> Result<Self, SpectraIndexSetupError>
-    where
-        G: FlashIndexBuildProgress + ?Sized,
-    {
-        self.inner
-            .set_pepmass_filter_with_progress(filter, progress)?;
-        Ok(self)
-    }
-
-    fn without_pepmass_filter(mut self) -> Self {
-        self.inner.clear_pepmass_filter();
-        self
-    }
-
     fn search<S>(&self, query: &S) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
     where
         S: Spectrum,
@@ -1512,10 +1411,25 @@ mod tests {
         spectrum
     }
 
+    fn entropy_index<P: SpectrumFloat + Send + Sync>(
+        mz_power: f64,
+        intensity_power: f64,
+        mz_tolerance: f64,
+        weighted: bool,
+        library: &[GenericSpectrum],
+    ) -> Result<FlashEntropyIndex<P>, FlashEntropyIndexError> {
+        FlashEntropyIndex::<P>::builder()
+            .mz_power(mz_power)
+            .intensity_power(intensity_power)
+            .mz_tolerance(mz_tolerance)
+            .weighted(weighted)
+            .build(library)
+    }
+
     #[test]
     fn entropy_index_accessors_convenience_constructors_and_wrappers_round_trip() {
         let library = [make_spectrum(200.0, &[(100.0, 4.0)])];
-        let weighted = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
+        let weighted = entropy_index::<f64>(0.0, 1.0, 0.1, true, &library)
             .expect("weighted index should build");
         assert!(weighted.is_weighted());
         assert_eq!(weighted.mz_power_f64(), 0.0);
@@ -1542,7 +1456,7 @@ mod tests {
             .expect("stateful modified search should work");
         assert_eq!(modified, modified_with_state);
 
-        let unweighted = FlashEntropyIndex::<f64>::unweighted(0.1, library.iter())
+        let unweighted = entropy_index::<f64>(0.0, 1.0, 0.1, false, &library)
             .expect("unweighted index should build");
         assert!(!unweighted.is_weighted());
     }
@@ -1555,14 +1469,14 @@ mod tests {
             make_spectrum(500.0, &[(300.0, 10.0), (400.0, 20.0)]),
         ];
 
-        let f32_index = FlashEntropyIndex::<f32>::weighted(0.1, library.iter())
+        let f32_index = entropy_index::<f32>(0.0, 1.0, 0.1, true, &library)
             .expect("f32 entropy index should build");
         let f32_hits = f32_index
             .search_top_k_threshold(&library[0], 2, 0.5)
             .expect("f32 entropy top-k should work");
         assert!(f32_hits.iter().any(|hit| hit.spectrum_id == 0));
 
-        let f16_index = FlashEntropyIndex::<f16>::weighted(0.1, library.iter())
+        let f16_index = entropy_index::<f16>(0.0, 1.0, 0.1, true, &library)
             .expect("f16 entropy index should build for representable peaks");
         let f16_hits = f16_index
             .search_threshold(&library[0], 0.5)
@@ -1578,9 +1492,12 @@ mod tests {
             make_spectrum(500.0, &[(100.05, 10.0), (200.05, 20.0)]),
             make_spectrum(500.0, &[(300.0, 10.0), (400.0, 20.0)]),
         ];
-        let sequential = FlashEntropyIndex::<f64>::weighted(0.1, library.iter())
+        let sequential = entropy_index::<f64>(0.0, 1.0, 0.1, true, &library)
             .expect("sequential entropy index should build");
-        let parallel = FlashEntropyIndex::<f64>::weighted_parallel(0.1, library.as_slice())
+        let parallel = FlashEntropyIndex::<f64>::builder()
+            .mz_tolerance(0.1)
+            .parallel()
+            .build(&library)
             .expect("parallel entropy index should build");
 
         assert_eq!(sequential.search(&library[0]), parallel.search(&library[0]));
@@ -1599,7 +1516,11 @@ mod tests {
             parallel.search_modified(&shifted_query)
         );
 
-        let unweighted = FlashEntropyIndex::<f64>::unweighted_parallel(0.1, library.as_slice())
+        let unweighted = FlashEntropyIndex::<f64>::builder()
+            .mz_tolerance(0.1)
+            .weighted(false)
+            .parallel()
+            .build(&library)
             .expect("parallel unweighted index should build");
         assert!(!unweighted.is_weighted());
     }
@@ -1607,19 +1528,20 @@ mod tests {
     #[test]
     fn entropy_index_treats_underflowed_products_as_empty() {
         let tiny = make_spectrum(200.0, &[(100.0, f64::MIN_POSITIVE)]);
-        let index = FlashEntropyIndex::<f64>::new(0.0, 2.0, 0.1, false, core::iter::once(&tiny))
+        let library = [tiny];
+        let index = entropy_index::<f64>(0.0, 2.0, 0.1, false, &library)
             .expect("empty-product library should still build");
 
         assert_eq!(index.n_spectra(), 1);
         assert!(
             index
-                .search(&tiny)
+                .search(&library[0])
                 .expect("empty-product query should succeed")
                 .is_empty()
         );
         assert!(
             index
-                .search_modified(&tiny)
+                .search_modified(&library[0])
                 .expect("modified empty-product query should succeed")
                 .is_empty()
         );
@@ -1629,7 +1551,7 @@ mod tests {
     fn modified_search_rejects_non_finite_query_precursor() {
         let library = [make_spectrum(200.0, &[(100.0, 1.0)])];
         let index =
-            FlashEntropyIndex::<f64>::weighted(0.1, library.iter()).expect("index should build");
+            entropy_index::<f64>(0.0, 1.0, 0.1, true, &library).expect("index should build");
         let query = RawSpectrum {
             precursor_mz: f64::NAN,
             peaks: vec![(100.0, 1.0)],
