@@ -954,6 +954,114 @@ fn threshold_index_top_k_matches_thresholded_results_for_external_and_indexed_qu
 }
 
 #[test]
+fn threshold_index_pepmass_top_k_uses_block_local_candidates() {
+    let spectra = [
+        make_spectrum_f64(
+            500.0,
+            &[(100.0, 20.0), (150.0, 80.0), (200.0, 120.0), (250.0, 40.0)],
+        ),
+        make_spectrum_f64(
+            505.0,
+            &[
+                (100.004, 20.0),
+                (150.004, 80.0),
+                (200.004, 120.0),
+                (250.004, 40.0),
+            ],
+        ),
+        make_spectrum_f64(
+            507.5,
+            &[
+                (99.996, 18.0),
+                (149.996, 76.0),
+                (199.996, 118.0),
+                (249.996, 42.0),
+            ],
+        ),
+        make_spectrum_f64(503.0, &[(100.002, 20.0)]),
+        make_spectrum_f64(
+            530.0,
+            &[
+                (100.002, 20.0),
+                (150.002, 80.0),
+                (200.002, 120.0),
+                (250.002, 40.0),
+            ],
+        ),
+    ];
+    let mz_tolerance = 0.01_f64;
+    let score_threshold = 0.95_f64;
+    let pepmass_tolerance = 10.0_f64;
+    let top_k = 4_usize;
+
+    let direct_index =
+        build_cosine_index_with_pepmass(0.0, 1.0, mz_tolerance, pepmass_tolerance, spectra.iter())
+            .expect("direct PEPMASS index should build");
+    let threshold_index = build_threshold_index_with_pepmass(
+        0.0,
+        1.0,
+        mz_tolerance,
+        score_threshold,
+        pepmass_tolerance,
+        spectra.iter(),
+    )
+    .expect("threshold PEPMASS index should build");
+
+    let expected_external = top_k_expected(
+        direct_index
+            .search(&spectra[0])
+            .expect("direct PEPMASS search should work"),
+        top_k,
+        score_threshold,
+    );
+    assert!(
+        !expected_external.is_empty(),
+        "fixture should contain high-threshold PEPMASS hits"
+    );
+
+    let mut external_state = threshold_index.new_search_state();
+    let external = threshold_index
+        .search_top_k_with_state(&spectra[0], top_k, &mut external_state)
+        .expect("threshold PEPMASS external top-k should work");
+    assert_results_close(
+        external,
+        expected_external,
+        "block-local external PEPMASS top-k",
+    );
+    let external_diagnostics = external_state.diagnostics();
+    assert!(external_diagnostics.product_postings_visited > 0);
+    assert!(external_diagnostics.candidates_marked > 0);
+    assert_eq!(
+        external_diagnostics.candidates_rescored,
+        external_diagnostics.candidates_marked
+    );
+
+    let expected_indexed = top_k_expected(
+        direct_index
+            .search(&spectra[0])
+            .expect("direct PEPMASS indexed baseline should work"),
+        top_k,
+        score_threshold,
+    );
+    let mut indexed_state = threshold_index.new_search_state();
+    let indexed = threshold_index
+        .search_top_k_indexed_with_state(0, top_k, &mut indexed_state)
+        .expect("threshold PEPMASS indexed top-k should work");
+    assert_results_close(
+        indexed,
+        expected_indexed,
+        "block-local indexed PEPMASS top-k",
+    );
+    let indexed_diagnostics = indexed_state.diagnostics();
+    assert!(indexed_diagnostics.product_postings_visited > 0);
+    assert!(indexed_diagnostics.candidates_marked > 0);
+    assert_eq!(
+        indexed_diagnostics.candidates_rescored,
+        indexed_diagnostics.candidates_marked
+    );
+}
+
+#[test]
 fn pepmass_filter_limits_cosine_search_paths() {
     let library = [
         make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),

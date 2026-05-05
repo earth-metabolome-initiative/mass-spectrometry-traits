@@ -2359,6 +2359,30 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         }
     }
 
+    /// Prefer block-local product postings when block pruning has already made
+    /// the eligible block set much smaller than the full index.
+    ///
+    /// The precursor-aware global posting index is ideal when PEPMASS is the
+    /// dominant filter. After a high threshold leaves only a handful of spectrum
+    /// blocks, scanning those block-local m/z rows and applying the exact
+    /// precursor check is usually cheaper than walking the whole precursor
+    /// window and discarding almost every posting by block id.
+    #[inline]
+    fn prefer_block_local_pepmass_scan(
+        &self,
+        block_products: &SpectrumBlockProductIndex<P>,
+        state: &SearchState,
+    ) -> bool {
+        if !self.pepmass_filter.is_enabled() {
+            return false;
+        }
+
+        let allowed_blocks = state.n_allowed_spectrum_blocks();
+        let total_blocks = block_products.n_blocks as usize;
+        allowed_blocks > 0
+            && (allowed_blocks <= 4 || allowed_blocks.saturating_mul(8) <= total_blocks)
+    }
+
     pub(crate) fn for_each_allowed_block_raw_score<Q: SpectrumFloat>(
         &self,
         query_mz: &[Q],
@@ -2375,7 +2399,9 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         }
 
         let mut product_postings_visited = 0usize;
-        if self.pepmass_filter.is_enabled() {
+        if self.pepmass_filter.is_enabled()
+            && !self.prefer_block_local_pepmass_scan(block_products, state)
+        {
             for (query_index, &mz) in query_mz.iter().enumerate() {
                 product_postings_visited =
                     product_postings_visited.saturating_add(self.for_each_product_peak_in_window(
@@ -2406,6 +2432,7 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
             return;
         }
 
+        let check_precursor = self.pepmass_filter.is_enabled();
         for (query_index, &mz) in query_mz.iter().enumerate() {
             for block_index in 0..state.n_allowed_spectrum_blocks() {
                 let block_id = state.allowed_spectrum_block_id(block_index);
@@ -2415,6 +2442,11 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
                         mz,
                         self.tolerance,
                         |spec_id, library_data| {
+                            if check_precursor
+                                && !self.allows_precursor(query_precursor_mz, spec_id)
+                            {
+                                return;
+                            }
                             let score = K::pair_score(
                                 query_data[query_index].to_f64(),
                                 library_data.to_f64(),
@@ -2466,7 +2498,9 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         let mut product_postings_visited = 0usize;
         let mut candidates_rescored = 0usize;
         let query_order_len = state.query_order().len();
-        if self.pepmass_filter.is_enabled() {
+        if self.pepmass_filter.is_enabled()
+            && !self.prefer_block_local_pepmass_scan(block_products, state)
+        {
             for order_position in 0..query_order_len {
                 let query_index = state.query_order()[order_position];
                 let query_mz = query_mz[query_index];
@@ -2500,6 +2534,7 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
             return;
         }
 
+        let check_precursor = self.pepmass_filter.is_enabled();
         for order_position in 0..query_order_len {
             let query_index = state.query_order()[order_position];
             let query_mz = query_mz[query_index];
@@ -2512,6 +2547,11 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
                         query_mz,
                         self.tolerance,
                         |spec_id, _| {
+                            if check_precursor
+                                && !self.allows_precursor(query_precursor_mz, spec_id)
+                            {
+                                return;
+                            }
                             if state.is_candidate(spec_id) {
                                 return;
                             }

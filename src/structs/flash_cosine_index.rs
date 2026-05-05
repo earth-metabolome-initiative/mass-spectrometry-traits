@@ -425,6 +425,73 @@ fn for_each_cosine_top_k_prepared<P, Q, Emit>(
     top_k.emit(emit);
 }
 
+/// Exact-score one cosine candidate and keep it if it can enter the top-k set.
+fn push_cosine_direct_top_k_candidate<P, Q>(
+    inner: &FlashIndex<CosineKernel, P>,
+    search: &DirectThresholdSearch<'_, CosineKernel, Q>,
+    spec_id: u32,
+    top_k: &mut TopKSearchResults<'_>,
+) where
+    P: SpectrumFloat + Sync,
+    Q: SpectrumFloat,
+{
+    let query_norm = search.query_meta.0;
+    let lib_meta = inner.spectrum_meta(spec_id);
+    if lib_meta.0 == 0.0 {
+        return;
+    }
+
+    let target_raw = top_k.pruning_score() * query_norm * lib_meta.0;
+    let (raw, count) = inner.direct_score_for_spectrum(search.query_mz, search.query_data, spec_id);
+    if raw < target_raw {
+        return;
+    }
+
+    let score = CosineKernel::finalize(raw, count, search.query_meta, lib_meta);
+    if score > 0.0 {
+        top_k.push(FlashSearchResult {
+            spectrum_id: inner.public_spectrum_id(spec_id),
+            score,
+            n_matches: count,
+        });
+    }
+}
+
+/// Visit currently allowed spectrum blocks in query-bound order and exact-score
+/// each unique candidate that survives PEPMASS and block filtering.
+fn push_cosine_exact_allowed_block_top_k_candidates<P, Q>(
+    inner: &FlashIndex<CosineKernel, P>,
+    block_products: &SpectrumBlockProductIndex<P>,
+    search: DirectThresholdSearch<'_, CosineKernel, Q>,
+    state: &mut SearchState,
+    top_k: &mut TopKSearchResults<'_>,
+    excluded_internal_id: Option<u32>,
+) where
+    P: SpectrumFloat + Sync,
+    Q: SpectrumFloat,
+{
+    let query_norm = search.query_meta.0;
+    if query_norm == 0.0 {
+        state.reset_allowed_spectrum_blocks();
+        return;
+    }
+
+    state.prepare_threshold_order(search.query_data);
+    inner.score_allowed_block_candidates_by_query_order(
+        search.query_mz,
+        search.query_precursor_mz,
+        block_products,
+        state,
+        top_k.pruning_score() * query_norm,
+        |spec_id| {
+            if excluded_internal_id != Some(spec_id) {
+                push_cosine_direct_top_k_candidate(inner, &search, spec_id, top_k);
+            }
+            top_k.pruning_score() * query_norm
+        },
+    );
+}
+
 // ---------------------------------------------------------------------------
 // FlashCosineIndex
 // ---------------------------------------------------------------------------
@@ -1652,7 +1719,14 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             top_k.pruning_score(),
             state,
         );
-        self.push_allowed_block_top_k_candidates(search, state, &mut top_k);
+        push_cosine_exact_allowed_block_top_k_candidates(
+            &self.inner,
+            &self.block_products,
+            search,
+            state,
+            &mut top_k,
+            None,
+        );
         state.add_results_emitted(top_k.len());
         top_k.emit(emit);
     }
@@ -1689,54 +1763,6 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             },
         );
         state.add_results_emitted(results_emitted);
-    }
-
-    fn push_allowed_block_top_k_candidates<Q: SpectrumFloat>(
-        &self,
-        search: DirectThresholdSearch<'_, CosineKernel, Q>,
-        state: &mut SearchState,
-        top_k: &mut TopKSearchResults<'_>,
-    ) {
-        let query_norm = search.query_meta.0;
-        if query_norm == 0.0 {
-            state.reset_allowed_spectrum_blocks();
-            return;
-        }
-
-        state.prepare_threshold_order(search.query_data);
-        self.inner.score_allowed_block_candidates_by_query_order(
-            search.query_mz,
-            search.query_precursor_mz,
-            &self.block_products,
-            state,
-            top_k.pruning_score() * query_norm,
-            |spec_id| {
-                let lib_meta = self.inner.spectrum_meta(spec_id);
-                if lib_meta.0 == 0.0 {
-                    return top_k.pruning_score() * query_norm;
-                }
-
-                let target_raw = top_k.pruning_score() * query_norm * lib_meta.0;
-                let (raw, count) = self.inner.direct_score_for_spectrum(
-                    search.query_mz,
-                    search.query_data,
-                    spec_id,
-                );
-                if raw < target_raw {
-                    return top_k.pruning_score() * query_norm;
-                }
-
-                let score = CosineKernel::finalize(raw, count, search.query_meta, lib_meta);
-                if score > 0.0 && score >= self.score_threshold {
-                    top_k.push(FlashSearchResult {
-                        spectrum_id: self.inner.public_spectrum_id(spec_id),
-                        score,
-                        n_matches: count,
-                    });
-                }
-                top_k.pruning_score() * query_norm
-            },
-        );
     }
 
     fn for_each_direct_threshold_prepared<Q: SpectrumFloat, Emit>(
@@ -2287,11 +2313,13 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
             top_k.pruning_score(),
             state,
         );
-        self.push_allowed_block_top_k_candidates_excluding_self(
-            internal_query_id,
+        push_cosine_exact_allowed_block_top_k_candidates(
+            &self.inner,
+            &self.block_products,
             search,
             state,
             &mut top_k,
+            Some(internal_query_id),
         );
         state.add_results_emitted(top_k.len());
         top_k.emit(emit);
@@ -2321,7 +2349,7 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
                         return;
                     }
                     state.mark_candidate(spec_id);
-                    self.score_top_k_candidate(&search, spec_id, top_k);
+                    push_cosine_direct_top_k_candidate(&self.inner, &search, spec_id, top_k);
                 },
             );
             state.add_product_postings_visited(visited);
@@ -2333,60 +2361,6 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
         }
 
         state.reset_candidates();
-    }
-
-    fn push_allowed_block_top_k_candidates_excluding_self<Q: SpectrumFloat>(
-        &self,
-        internal_query_id: u32,
-        search: DirectThresholdSearch<'_, CosineKernel, Q>,
-        state: &mut SearchState,
-        top_k: &mut TopKSearchResults<'_>,
-    ) {
-        let query_norm = search.query_meta.0;
-        state.prepare_threshold_order(search.query_data);
-        self.inner.score_allowed_block_candidates_by_query_order(
-            search.query_mz,
-            search.query_precursor_mz,
-            &self.block_products,
-            state,
-            top_k.pruning_score() * query_norm,
-            |spec_id| {
-                if spec_id != internal_query_id {
-                    self.score_top_k_candidate(&search, spec_id, top_k);
-                }
-                top_k.pruning_score() * query_norm
-            },
-        );
-    }
-
-    fn score_top_k_candidate<Q: SpectrumFloat>(
-        &self,
-        search: &DirectThresholdSearch<'_, CosineKernel, Q>,
-        spec_id: u32,
-        top_k: &mut TopKSearchResults<'_>,
-    ) {
-        let query_norm = search.query_meta.0;
-        let lib_meta = self.inner.spectrum_meta(spec_id);
-        if lib_meta.0 == 0.0 {
-            return;
-        }
-
-        let target_raw = top_k.pruning_score() * query_norm * lib_meta.0;
-        let (raw, count) =
-            self.inner
-                .direct_score_for_spectrum(search.query_mz, search.query_data, spec_id);
-        if raw < target_raw {
-            return;
-        }
-
-        let score = CosineKernel::finalize(raw, count, search.query_meta, lib_meta);
-        if score > 0.0 {
-            top_k.push(FlashSearchResult {
-                spectrum_id: self.inner.public_spectrum_id(spec_id),
-                score,
-                n_matches: count,
-            });
-        }
     }
 }
 
