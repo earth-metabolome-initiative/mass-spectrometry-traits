@@ -625,17 +625,90 @@ pub(crate) fn reorder_prepared_spectra_by_signature<P: SpectrumFloat>(
     Ok((reordered, id_map))
 }
 
+pub(crate) fn reorder_prepared_spectra_for_block_pruning<P: SpectrumFloat>(
+    spectra: PreparedFlashSpectra<P>,
+    tolerance: f64,
+    pepmass_filter: PepmassFilter,
+) -> Result<(PreparedFlashSpectra<P>, SpectrumIdMap), SimilarityComputationError> {
+    if !pepmass_filter.is_enabled() {
+        return reorder_prepared_spectra_by_signature(spectra, tolerance);
+    }
+
+    let n_spectra: u32 =
+        u32::try_from(spectra.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+    if n_spectra <= 1 {
+        return Ok((spectra, SpectrumIdMap::identity()));
+    }
+
+    let signature_bin_width = if tolerance > 0.0 {
+        (10.0 * tolerance).max(tolerance)
+    } else {
+        1.0
+    };
+    let precursor_bin_width = pepmass_precursor_bin_width(pepmass_filter).ok_or(
+        SimilarityComputationError::InvalidParameter("pepmass_filter"),
+    )?;
+
+    let mut keyed = Vec::with_capacity(spectra.len());
+    for (public_id, spectrum) in spectra.into_iter().enumerate() {
+        let public_id =
+            u32::try_from(public_id).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let key = spectrum_reorder_key_with_bin_widths(
+            &spectrum,
+            public_id,
+            signature_bin_width,
+            precursor_bin_width,
+        )?;
+        keyed.push((key, spectrum));
+    }
+
+    // Exact precursor ordering keeps per-block min/max monotone, which lets
+    // PEPMASS queries binary-search a contiguous block range.
+    keyed.sort_unstable_by(|(left, left_spectrum), (right, right_spectrum)| {
+        left.precursor_bin
+            .cmp(&right.precursor_bin)
+            .then_with(|| {
+                left_spectrum
+                    .precursor_mz
+                    .to_f64()
+                    .total_cmp(&right_spectrum.precursor_mz.to_f64())
+            })
+            .then_with(|| left.top_mz_bins.cmp(&right.top_mz_bins))
+            .then_with(|| left.n_peaks.cmp(&right.n_peaks))
+            .then_with(|| left.public_id.cmp(&right.public_id))
+    });
+
+    let mut internal_to_public = Vec::with_capacity(keyed.len());
+    let mut reordered = Vec::with_capacity(keyed.len());
+    for (key, spectrum) in keyed {
+        internal_to_public.push(key.public_id);
+        reordered.push(spectrum);
+    }
+    let id_map = SpectrumIdMap::from_internal_to_public(internal_to_public)?;
+
+    Ok((reordered, id_map))
+}
+
 fn spectrum_reorder_key<P: SpectrumFloat>(
     spectrum: &PreparedFlashSpectrum<P>,
     public_id: u32,
     bin_width: f64,
 ) -> Result<SpectrumReorderKey, SimilarityComputationError> {
-    let precursor_bin = mz_bin(spectrum.precursor_mz.to_f64(), bin_width)?;
+    spectrum_reorder_key_with_bin_widths(spectrum, public_id, bin_width, bin_width)
+}
+
+fn spectrum_reorder_key_with_bin_widths<P: SpectrumFloat>(
+    spectrum: &PreparedFlashSpectrum<P>,
+    public_id: u32,
+    signature_bin_width: f64,
+    precursor_bin_width: f64,
+) -> Result<SpectrumReorderKey, SimilarityComputationError> {
+    let precursor_bin = mz_bin(spectrum.precursor_mz.to_f64(), precursor_bin_width)?;
     let n_peaks =
         u32::try_from(spectrum.mz.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
     let mut top_mz_bins = [i64::MAX; 8];
     for (target, &mz) in top_mz_bins.iter_mut().zip(spectrum.mz.iter()) {
-        *target = mz_bin(mz.to_f64(), bin_width)?;
+        *target = mz_bin(mz.to_f64(), signature_bin_width)?;
     }
 
     Ok(SpectrumReorderKey {
@@ -1521,11 +1594,12 @@ impl SpectrumBlockUpperBoundIndex {
         })
     }
 
-    pub(crate) fn prepare_allowed_blocks<Q, Contribution>(
+    pub(crate) fn prepare_allowed_blocks_in_block_range<Q, Contribution>(
         &self,
         query_mz: &[Q],
         tolerance: f64,
         minimum_bound: f64,
+        block_range: Option<Range<u32>>,
         state: &mut SearchState,
         mut contribution: Contribution,
     ) where
@@ -1533,8 +1607,19 @@ impl SpectrumBlockUpperBoundIndex {
         Contribution: FnMut(usize, f64) -> f64,
     {
         state.prepare_spectrum_block_scratch(self.n_blocks);
+        let evaluated_blocks = block_range.as_ref().map_or(self.n_blocks, |range| {
+            range.end.saturating_sub(range.start) as usize
+        });
         if self.n_blocks == 0 || self.n_bins == 0 {
-            state.add_spectrum_block_filter_stats(self.n_blocks, 0);
+            state.add_spectrum_block_filter_stats(evaluated_blocks, 0);
+            return;
+        }
+
+        let block_range = block_range.unwrap_or_else(|| {
+            0..u32::try_from(self.n_blocks).expect("block count was checked during construction")
+        });
+        if block_range.start >= block_range.end {
+            state.add_spectrum_block_filter_stats(0, 0);
             return;
         }
 
@@ -1542,6 +1627,11 @@ impl SpectrumBlockUpperBoundIndex {
             for bin_index in self.bin_indices_for_window(mz.to_f64(), tolerance) {
                 let bin_index = bin_index as u32;
                 let (block_ids, max_values) = self.bins.sparse_row_entries_slice(bin_index);
+                let start = block_ids.partition_point(|&block_id| block_id < block_range.start);
+                let end = start
+                    + block_ids[start..].partition_point(|&block_id| block_id < block_range.end);
+                let block_ids = &block_ids[start..end];
+                let max_values = &max_values[start..end];
                 state.add_spectrum_block_bound_entries_visited(block_ids.len());
                 for (&block_id, &max_value) in block_ids.iter().zip(max_values) {
                     state.add_spectrum_block_upper_bound(
@@ -1553,7 +1643,7 @@ impl SpectrumBlockUpperBoundIndex {
         }
 
         let allowed_blocks = state.mark_allowed_spectrum_blocks(minimum_bound);
-        state.add_spectrum_block_filter_stats(self.n_blocks, allowed_blocks);
+        state.add_spectrum_block_filter_stats(evaluated_blocks, allowed_blocks);
     }
 
     fn bin_indices_for_window(&self, mz: f64, tolerance: f64) -> impl Iterator<Item = usize> + '_ {
@@ -1577,6 +1667,85 @@ impl SpectrumBlockUpperBoundIndex {
     #[inline]
     fn bin_id(mz: f64, bin_width: f64) -> i64 {
         (mz / bin_width).floor() as i64
+    }
+}
+
+/// Contiguous spectrum-block precursor ranges for PEPMASS-aware block pruning.
+///
+/// This helper is only exact when spectra were ordered by precursor before
+/// blocks were built. It is deliberately conservative: boundary blocks are
+/// retained so candidate scoring can apply the exact precursor check.
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
+#[derive(Debug)]
+pub(crate) struct SpectrumBlockPrecursorRangeIndex {
+    block_min_precursor_mz: Vec<f64>,
+    block_max_precursor_mz: Vec<f64>,
+}
+
+impl SpectrumBlockPrecursorRangeIndex {
+    pub(crate) fn build<P: SpectrumFloat>(
+        spectra: &[PreparedFlashSpectrum<P>],
+        block_size: usize,
+    ) -> Result<Self, SimilarityComputationError> {
+        let block_size = block_size.max(1);
+        let n_blocks = spectra.len().div_ceil(block_size);
+        let _ = u32::try_from(n_blocks).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let mut block_min_precursor_mz = Vec::with_capacity(n_blocks);
+        let mut block_max_precursor_mz = Vec::with_capacity(n_blocks);
+
+        for block in spectra.chunks(block_size) {
+            let mut min_precursor = f64::INFINITY;
+            let mut max_precursor = f64::NEG_INFINITY;
+            for spectrum in block {
+                let precursor_mz = spectrum.precursor_mz.to_f64();
+                if !precursor_mz.is_finite() {
+                    return Err(SimilarityComputationError::NonFiniteValue("precursor_mz"));
+                }
+                min_precursor = min_precursor.min(precursor_mz);
+                max_precursor = max_precursor.max(precursor_mz);
+            }
+            block_min_precursor_mz.push(min_precursor);
+            block_max_precursor_mz.push(max_precursor);
+        }
+
+        let sorted_ranges = block_min_precursor_mz
+            .windows(2)
+            .all(|window| window[0] <= window[1])
+            && block_max_precursor_mz
+                .windows(2)
+                .all(|window| window[0] <= window[1]);
+        if !sorted_ranges {
+            return Err(SimilarityComputationError::IndexConstructionFailed);
+        }
+
+        Ok(Self {
+            block_min_precursor_mz,
+            block_max_precursor_mz,
+        })
+    }
+
+    pub(crate) fn matching_block_range(
+        &self,
+        filter: PepmassFilter,
+        query_precursor_mz: Option<f64>,
+    ) -> Option<Range<u32>> {
+        let tolerance = filter.tolerance()?;
+        let Some(query_precursor_mz) = query_precursor_mz else {
+            return Some(0..0);
+        };
+        let lo = query_precursor_mz - tolerance;
+        let hi = query_precursor_mz + tolerance;
+        let start = self
+            .block_max_precursor_mz
+            .partition_point(|&precursor_mz| precursor_mz < lo);
+        let end = self
+            .block_min_precursor_mz
+            .partition_point(|&precursor_mz| precursor_mz <= hi);
+        let start = u32::try_from(start).expect("block count was checked during construction");
+        let end = u32::try_from(end).expect("block count was checked during construction");
+        Some(start..end)
     }
 }
 
@@ -3208,8 +3377,14 @@ mod tests {
         let index = build_test_index(spectra, 0.1);
         let mut state = index.new_search_state();
 
-        block_index
-            .prepare_allowed_blocks(&[100.0], 0.1, 0.5, &mut state, |_, max_value| max_value);
+        block_index.prepare_allowed_blocks_in_block_range(
+            &[100.0],
+            0.1,
+            0.5,
+            None,
+            &mut state,
+            |_, max_value| max_value,
+        );
         let mut scored = Vec::new();
         index.for_each_allowed_block_raw_score(
             &[100.0],
@@ -3227,6 +3402,117 @@ mod tests {
         assert_eq!(state.diagnostics.spectrum_blocks_pruned, 1);
         assert_eq!(state.diagnostics.product_postings_visited, 2);
         assert_eq!(state.diagnostics.candidates_marked, 2);
+    }
+
+    #[test]
+    fn precursor_first_reorder_groups_compatible_blocks() {
+        let filter = PepmassFilter::within_tolerance(10.0).unwrap();
+        let spectra = vec![
+            prepared(500.0, vec![100.0], vec![1.0]),
+            prepared(100.0, vec![100.0], vec![1.0]),
+            prepared(510.0, vec![100.0], vec![1.0]),
+            prepared(110.0, vec![100.0], vec![1.0]),
+        ];
+
+        let (reordered, id_map) = reorder_prepared_spectra_for_block_pruning(spectra, 0.1, filter)
+            .expect("precursor-first reorder should succeed");
+        let precursors: Vec<_> = reordered
+            .iter()
+            .map(|spectrum| spectrum.precursor_mz)
+            .collect();
+        assert_eq!(precursors, vec![100.0, 110.0, 500.0, 510.0]);
+        assert_eq!(id_map.internal_to_public(0), 1);
+
+        let ranges = SpectrumBlockPrecursorRangeIndex::build(&reordered, 2)
+            .expect("precursor block ranges should build");
+        assert_eq!(ranges.matching_block_range(filter, Some(105.0)), Some(0..1));
+        assert_eq!(ranges.matching_block_range(filter, Some(505.0)), Some(1..2));
+        assert_eq!(ranges.matching_block_range(filter, None), Some(0..0));
+    }
+
+    #[test]
+    fn precursor_first_reorder_keeps_ranges_monotone_within_one_pepmass_bin() {
+        let filter = PepmassFilter::within_tolerance(10.0).unwrap();
+        let spectra = vec![
+            prepared(119.0, vec![50.0], vec![1.0]),
+            prepared(101.0, vec![100.0], vec![1.0]),
+            prepared(500.0, vec![50.0], vec![1.0]),
+        ];
+
+        let (reordered, _) = reorder_prepared_spectra_for_block_pruning(spectra, 0.1, filter)
+            .expect("precursor-first reorder should succeed");
+        let precursors: Vec<_> = reordered
+            .iter()
+            .map(|spectrum| spectrum.precursor_mz)
+            .collect();
+        assert_eq!(precursors, vec![101.0, 119.0, 500.0]);
+
+        let ranges = SpectrumBlockPrecursorRangeIndex::build(&reordered, 1)
+            .expect("precursor block ranges should build");
+        assert_eq!(ranges.matching_block_range(filter, Some(101.0)), Some(0..1));
+        assert_eq!(ranges.matching_block_range(filter, Some(119.0)), Some(1..2));
+    }
+
+    #[test]
+    fn precursor_block_ranges_reject_unsorted_blocks() {
+        let spectra = vec![
+            prepared(500.0, vec![100.0], vec![1.0]),
+            prepared(100.0, vec![100.0], vec![1.0]),
+        ];
+
+        let error = SpectrumBlockPrecursorRangeIndex::build(&spectra, 1)
+            .expect_err("unsorted precursor blocks cannot be range-searched safely");
+        assert_eq!(error, SimilarityComputationError::IndexConstructionFailed);
+    }
+
+    #[test]
+    fn block_upper_bounds_scan_only_requested_block_range() {
+        let spectra = vec![
+            prepared(100.0, vec![100.0], vec![1.0]),
+            prepared(110.0, vec![100.0], vec![1.0]),
+            prepared(500.0, vec![100.0], vec![1.0]),
+            prepared(510.0, vec![100.0], vec![1.0]),
+        ];
+        let block_index = SpectrumBlockUpperBoundIndex::build(&spectra, 0.1, 2, |_, spectrum| {
+            Ok(spectrum.data.iter().map(|&value| value.to_f64()).collect())
+        })
+        .expect("block index should build");
+
+        let mut full_state = SearchState::new();
+        block_index.prepare_allowed_blocks_in_block_range(
+            &[100.0],
+            0.1,
+            0.5,
+            None,
+            &mut full_state,
+            |_, max_value| max_value,
+        );
+        assert_eq!(
+            full_state
+                .diagnostics()
+                .spectrum_block_bound_entries_visited,
+            2
+        );
+        assert_eq!(full_state.diagnostics().spectrum_blocks_evaluated, 2);
+        assert_eq!(full_state.diagnostics().spectrum_blocks_allowed, 2);
+
+        let mut restricted_state = SearchState::new();
+        block_index.prepare_allowed_blocks_in_block_range(
+            &[100.0],
+            0.1,
+            0.5,
+            Some(0..1),
+            &mut restricted_state,
+            |_, max_value| max_value,
+        );
+        assert_eq!(
+            restricted_state
+                .diagnostics()
+                .spectrum_block_bound_entries_visited,
+            1
+        );
+        assert_eq!(restricted_state.diagnostics().spectrum_blocks_evaluated, 1);
+        assert_eq!(restricted_state.diagnostics().spectrum_blocks_allowed, 1);
     }
 
     #[test]

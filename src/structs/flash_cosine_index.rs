@@ -27,9 +27,10 @@ use super::flash_common::{
     DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashIndexBuildOptions,
     FlashIndexBuildPhase, FlashIndexBuildProgress, FlashKernel, FlashSearchDiagnostics,
     FlashSearchResult, PepmassFilter, PreparedFlashSpectra, PreparedFlashSpectrum, SearchState,
-    SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults,
-    TopKSearchState, convert_flash_value, convert_flash_values, flash_values_to_f64,
-    progress_len_from_size_hint, reorder_prepared_spectra_by_signature,
+    SpectrumBlockPrecursorRangeIndex, SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex,
+    SpectrumIdMap, TopKSearchResults, TopKSearchState, convert_flash_value, convert_flash_values,
+    flash_values_to_f64, progress_len_from_size_hint, reorder_prepared_spectra_by_signature,
+    reorder_prepared_spectra_for_block_pruning,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{SpectraIndex, SpectraIndexBuilder, Spectrum, SpectrumFloat};
@@ -1264,6 +1265,7 @@ pub struct FlashCosineThresholdIndex<P: SpectrumFloat = f64> {
     intensity_power: f64,
     score_threshold: f64,
     block_upper_bounds: SpectrumBlockUpperBoundIndex,
+    block_precursor_ranges: Option<SpectrumBlockPrecursorRangeIndex>,
     block_products: SpectrumBlockProductIndex<P>,
 }
 
@@ -1291,13 +1293,27 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             -> Result<FlashIndex<CosineKernel, P>, SimilarityComputationError>,
     {
         progress.start_phase(FlashIndexBuildPhase::ReorderSpectra, Some(1));
-        let (prepared, spectrum_id_map) =
-            reorder_prepared_spectra_by_signature(prepared, profile.mz_tolerance)
-                .map_err(FlashCosineIndexError::Computation)?;
+        let (prepared, spectrum_id_map) = reorder_prepared_spectra_for_block_pruning(
+            prepared,
+            profile.mz_tolerance,
+            profile.pepmass_filter,
+        )
+        .map_err(FlashCosineIndexError::Computation)?;
         progress.inc(1);
         progress.start_phase(FlashIndexBuildPhase::BuildBlockUpperBounds, Some(1));
         let block_upper_bounds = build_cosine_block_upper_bounds(&prepared, profile.mz_tolerance)
             .map_err(FlashCosineIndexError::Computation)?;
+        let block_precursor_ranges = if profile.pepmass_filter.is_enabled() {
+            Some(
+                SpectrumBlockPrecursorRangeIndex::build(
+                    &prepared,
+                    DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE,
+                )
+                .map_err(FlashCosineIndexError::Computation)?,
+            )
+        } else {
+            None
+        };
         progress.inc(1);
         progress.start_phase(FlashIndexBuildPhase::BuildBlockProductIndex, Some(1));
         let block_products =
@@ -1317,6 +1333,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             intensity_power: profile.intensity_power,
             score_threshold: profile.score_threshold,
             block_upper_bounds,
+            block_precursor_ranges,
             block_products,
         })
     }
@@ -1614,21 +1631,27 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
         query_mz: &[Q],
         query_data: &[Q],
         query_meta: &CosineNorm,
+        query_precursor_mz: Option<f64>,
         minimum_score: f64,
         state: &mut SearchState,
     ) {
-        self.block_upper_bounds.prepare_allowed_blocks(
-            query_mz,
-            self.inner.tolerance,
-            minimum_score,
-            state,
-            |query_index, block_max_weight| {
-                if query_meta.0 == 0.0 {
-                    return 0.0;
-                }
-                query_data[query_index].to_f64().abs() / query_meta.0 * block_max_weight
-            },
-        );
+        let block_range = self.block_precursor_ranges.as_ref().and_then(|ranges| {
+            ranges.matching_block_range(self.inner.pepmass_filter(), query_precursor_mz)
+        });
+        self.block_upper_bounds
+            .prepare_allowed_blocks_in_block_range(
+                query_mz,
+                self.inner.tolerance,
+                minimum_score,
+                block_range,
+                state,
+                |query_index, block_max_weight| {
+                    if query_meta.0 == 0.0 {
+                        return 0.0;
+                    }
+                    query_data[query_index].to_f64().abs() / query_meta.0 * block_max_weight
+                },
+            );
     }
 
     fn for_each_prepared_with_state<Q: SpectrumFloat, Emit>(
@@ -1672,6 +1695,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             query_mz,
             query_data,
             query_meta,
+            query_precursor_mz,
             self.score_threshold,
             state,
         );
@@ -1716,6 +1740,7 @@ impl<P: SpectrumFloat + Sync> FlashCosineThresholdIndex<P> {
             search.query_mz,
             search.query_data,
             search.query_meta,
+            search.query_precursor_mz,
             top_k.pruning_score(),
             state,
         );
@@ -1976,6 +2001,7 @@ pub struct FlashCosineSelfSimilarityIndex<P: SpectrumFloat = f64> {
     score_threshold: f64,
     top_k: usize,
     block_upper_bounds: SpectrumBlockUpperBoundIndex,
+    block_precursor_ranges: Option<SpectrumBlockPrecursorRangeIndex>,
     block_products: SpectrumBlockProductIndex<P>,
 }
 
@@ -2102,9 +2128,12 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
             -> Result<FlashIndex<CosineKernel, P>, SimilarityComputationError>,
     {
         progress.start_phase(FlashIndexBuildPhase::ReorderSpectra, Some(1));
-        let (prepared, spectrum_id_map) =
-            reorder_prepared_spectra_by_signature(prepared, profile.mz_tolerance)
-                .map_err(FlashCosineIndexError::Computation)?;
+        let (prepared, spectrum_id_map) = reorder_prepared_spectra_for_block_pruning(
+            prepared,
+            profile.mz_tolerance,
+            profile.pepmass_filter,
+        )
+        .map_err(FlashCosineIndexError::Computation)?;
         progress.inc(1);
 
         let block_size =
@@ -2116,6 +2145,14 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
             block_size,
         )
         .map_err(FlashCosineIndexError::Computation)?;
+        let block_precursor_ranges = if profile.pepmass_filter.is_enabled() {
+            Some(
+                SpectrumBlockPrecursorRangeIndex::build(&prepared, block_size)
+                    .map_err(FlashCosineIndexError::Computation)?,
+            )
+        } else {
+            None
+        };
         progress.inc(1);
         progress.start_phase(FlashIndexBuildPhase::BuildBlockProductIndex, Some(1));
         let block_products = SpectrumBlockProductIndex::build(&prepared, block_size)
@@ -2136,6 +2173,7 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
             score_threshold: profile.score_threshold,
             top_k: profile.top_k,
             block_upper_bounds,
+            block_precursor_ranges,
             block_products,
         })
     }
@@ -2351,21 +2389,27 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
         query_mz: &[Q],
         query_data: &[Q],
         query_meta: &CosineNorm,
+        query_precursor_mz: Option<f64>,
         minimum_score: f64,
         state: &mut SearchState,
     ) {
-        self.block_upper_bounds.prepare_allowed_blocks(
-            query_mz,
-            self.inner.tolerance,
-            minimum_score,
-            state,
-            |query_index, block_max_weight| {
-                if query_meta.0 == 0.0 {
-                    return 0.0;
-                }
-                query_data[query_index].to_f64().abs() / query_meta.0 * block_max_weight
-            },
-        );
+        let block_range = self.block_precursor_ranges.as_ref().and_then(|ranges| {
+            ranges.matching_block_range(self.inner.pepmass_filter(), query_precursor_mz)
+        });
+        self.block_upper_bounds
+            .prepare_allowed_blocks_in_block_range(
+                query_mz,
+                self.inner.tolerance,
+                minimum_score,
+                block_range,
+                state,
+                |query_index, block_max_weight| {
+                    if query_meta.0 == 0.0 {
+                        return 0.0;
+                    }
+                    query_data[query_index].to_f64().abs() / query_meta.0 * block_max_weight
+                },
+            );
     }
 
     fn for_each_top_k_prepared_excluding_self<Q: SpectrumFloat, Emit>(
@@ -2407,6 +2451,7 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
             search.query_mz,
             search.query_data,
             search.query_meta,
+            search.query_precursor_mz,
             top_k.pruning_score(),
             state,
         );
@@ -2960,6 +3005,49 @@ mod tests {
                 "library spectrum"
             ))
         );
+    }
+
+    #[test]
+    fn cosine_threshold_pepmass_uses_block_range_without_changing_hits() {
+        let mut library = Vec::with_capacity(2048);
+        for _ in 0..1024 {
+            library.push(make_spectrum(100.0, &[(100.0, 1.0)]));
+        }
+        for _ in 0..1024 {
+            library.push(make_spectrum(500.0, &[(100.0, 1.0)]));
+        }
+        let query = make_spectrum(100.0, &[(100.0, 1.0)]);
+
+        let baseline = FlashCosineIndex::<f64>::builder()
+            .mz_power(0.0)
+            .intensity_power(1.0)
+            .mz_tolerance(0.1)
+            .pepmass_tolerance(10.0)
+            .expect("PEPMASS filter should be valid")
+            .build(&library)
+            .expect("baseline cosine index should build");
+        let threshold = FlashCosineThresholdIndex::<f64>::builder()
+            .mz_power(0.0)
+            .intensity_power(1.0)
+            .mz_tolerance(0.1)
+            .score_threshold(0.95)
+            .pepmass_tolerance(10.0)
+            .expect("PEPMASS filter should be valid")
+            .build(&library)
+            .expect("threshold cosine index should build");
+
+        let baseline_hits = baseline
+            .search_top_k_threshold(&query, 4, 0.95)
+            .expect("baseline top-k should work");
+        let mut state = threshold.new_search_state();
+        let threshold_hits = threshold
+            .search_top_k_with_state(&query, 4, &mut state)
+            .expect("threshold top-k should work");
+
+        assert_eq!(threshold_hits, baseline_hits);
+        assert_eq!(state.diagnostics().spectrum_blocks_evaluated, 1);
+        assert_eq!(state.diagnostics().spectrum_block_bound_entries_visited, 1);
+        assert!(threshold_hits.iter().all(|hit| hit.spectrum_id < 1024));
     }
 
     #[cfg(feature = "rayon")]

@@ -18,10 +18,10 @@ use super::entropy_common::{entropy_pair, prepare_entropy_peaks};
 use super::flash_common::{
     DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashIndexBuildOptions,
     FlashIndexBuildPhase, FlashIndexBuildProgress, FlashKernel, FlashSearchResult, PepmassFilter,
-    PreparedFlashSpectra, PreparedFlashSpectrum, SearchState, SpectrumBlockProductIndex,
-    SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults, TopKSearchState,
-    convert_flash_value, convert_flash_values, flash_values_to_f64, progress_len_from_size_hint,
-    reorder_prepared_spectra_by_signature,
+    PreparedFlashSpectra, PreparedFlashSpectrum, SearchState, SpectrumBlockPrecursorRangeIndex,
+    SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults,
+    TopKSearchState, convert_flash_value, convert_flash_values, flash_values_to_f64,
+    progress_len_from_size_hint, reorder_prepared_spectra_for_block_pruning,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{SpectraIndex, SpectraIndexBuilder, Spectrum, SpectrumFloat};
@@ -204,6 +204,7 @@ fn build_entropy_block_upper_bounds<P: SpectrumFloat>(
 #[derive(Clone, Copy)]
 struct EntropyBlockPruning<'a, P: SpectrumFloat> {
     upper_bounds: &'a SpectrumBlockUpperBoundIndex,
+    precursor_ranges: Option<&'a SpectrumBlockPrecursorRangeIndex>,
     products: &'a SpectrumBlockProductIndex<P>,
 }
 
@@ -212,21 +213,28 @@ fn prepare_entropy_block_pruned_candidate_blocks<P, Q>(
     inner: &FlashIndex<EntropyKernel, P>,
     query_mz: &[Q],
     query_data: &[Q],
+    query_precursor_mz: Option<f64>,
     score_threshold: f64,
     state: &mut SearchState,
 ) where
     P: SpectrumFloat + Sync,
     Q: SpectrumFloat,
 {
-    block_pruning.upper_bounds.prepare_allowed_blocks(
-        query_mz,
-        inner.tolerance,
-        entropy_raw_threshold(score_threshold),
-        state,
-        |query_index, block_max_intensity| {
-            entropy_pair(query_data[query_index].to_f64(), block_max_intensity)
-        },
-    );
+    let block_range = block_pruning
+        .precursor_ranges
+        .and_then(|ranges| ranges.matching_block_range(inner.pepmass_filter(), query_precursor_mz));
+    block_pruning
+        .upper_bounds
+        .prepare_allowed_blocks_in_block_range(
+            query_mz,
+            inner.tolerance,
+            entropy_raw_threshold(score_threshold),
+            block_range,
+            state,
+            |query_index, block_max_intensity| {
+                entropy_pair(query_data[query_index].to_f64(), block_max_intensity)
+            },
+        );
 }
 
 fn for_each_entropy_threshold_prepared<P, Q, Emit>(
@@ -262,6 +270,7 @@ fn for_each_entropy_threshold_prepared<P, Q, Emit>(
             inner,
             search.query_mz,
             search.query_data,
+            search.query_precursor_mz,
             search.score_threshold,
             state,
         );
@@ -343,6 +352,7 @@ fn for_each_entropy_top_k_prepared<P, Q, Emit>(
             inner,
             search.query_mz,
             search.query_data,
+            search.query_precursor_mz,
             search.score_threshold,
             state,
         );
@@ -617,6 +627,7 @@ where
 pub struct FlashEntropyIndex<P: SpectrumFloat = f64> {
     inner: FlashIndex<EntropyKernel, P>,
     block_upper_bounds: SpectrumBlockUpperBoundIndex,
+    block_precursor_ranges: Option<SpectrumBlockPrecursorRangeIndex>,
     block_products: SpectrumBlockProductIndex<P>,
     weighted: bool,
     mz_power_f64: f64,
@@ -677,13 +688,27 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             -> Result<FlashIndex<EntropyKernel, P>, SimilarityComputationError>,
     {
         progress.start_phase(FlashIndexBuildPhase::ReorderSpectra, Some(1));
-        let (prepared, spectrum_id_map) =
-            reorder_prepared_spectra_by_signature(prepared, profile.mz_tolerance)
-                .map_err(FlashEntropyIndexError::Computation)?;
+        let (prepared, spectrum_id_map) = reorder_prepared_spectra_for_block_pruning(
+            prepared,
+            profile.mz_tolerance,
+            profile.pepmass_filter,
+        )
+        .map_err(FlashEntropyIndexError::Computation)?;
         progress.inc(1);
         progress.start_phase(FlashIndexBuildPhase::BuildBlockUpperBounds, Some(1));
         let block_upper_bounds = build_entropy_block_upper_bounds(&prepared, profile.mz_tolerance)
             .map_err(FlashEntropyIndexError::Computation)?;
+        let block_precursor_ranges = if profile.pepmass_filter.is_enabled() {
+            Some(
+                SpectrumBlockPrecursorRangeIndex::build(
+                    &prepared,
+                    DEFAULT_ENTROPY_SPECTRUM_BLOCK_SIZE,
+                )
+                .map_err(FlashEntropyIndexError::Computation)?,
+            )
+        } else {
+            None
+        };
         progress.inc(1);
         progress.start_phase(FlashIndexBuildPhase::BuildBlockProductIndex, Some(1));
         let block_products =
@@ -700,6 +725,7 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
         Ok(Self {
             inner,
             block_upper_bounds,
+            block_precursor_ranges,
             block_products,
             weighted: profile.weighted,
             mz_power_f64: profile.mz_power,
@@ -877,6 +903,7 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             &self.inner,
             EntropyBlockPruning {
                 upper_bounds: &self.block_upper_bounds,
+                precursor_ranges: self.block_precursor_ranges.as_ref(),
                 products: &self.block_products,
             },
             DirectThresholdSearch {
@@ -911,6 +938,7 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             &self.inner,
             EntropyBlockPruning {
                 upper_bounds: &self.block_upper_bounds,
+                precursor_ranges: self.block_precursor_ranges.as_ref(),
                 products: &self.block_products,
             },
             DirectThresholdSearch {
@@ -1126,6 +1154,7 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             &self.inner,
             EntropyBlockPruning {
                 upper_bounds: &self.block_upper_bounds,
+                precursor_ranges: self.block_precursor_ranges.as_ref(),
                 products: &self.block_products,
             },
             DirectThresholdSearch {
@@ -1165,6 +1194,7 @@ impl<P: SpectrumFloat + Sync> FlashEntropyIndex<P> {
             &self.inner,
             EntropyBlockPruning {
                 upper_bounds: &self.block_upper_bounds,
+                precursor_ranges: self.block_precursor_ranges.as_ref(),
                 products: &self.block_products,
             },
             DirectThresholdSearch {
@@ -1482,6 +1512,37 @@ mod tests {
             .search_threshold(&library[0], 0.5)
             .expect("f16 entropy search should work");
         assert!(f16_hits.iter().any(|hit| hit.spectrum_id == 0));
+    }
+
+    #[test]
+    fn entropy_pepmass_uses_block_range_without_losing_hits() {
+        let mut library = Vec::with_capacity(512);
+        for _ in 0..256 {
+            library.push(make_spectrum(100.0, &[(100.0, 1.0)]));
+        }
+        for _ in 0..256 {
+            library.push(make_spectrum(500.0, &[(100.0, 1.0)]));
+        }
+        let query = make_spectrum(100.0, &[(100.0, 1.0)]);
+        let index = FlashEntropyIndex::<f64>::builder()
+            .mz_power(0.0)
+            .intensity_power(1.0)
+            .mz_tolerance(0.1)
+            .weighted(false)
+            .pepmass_tolerance(10.0)
+            .expect("PEPMASS filter should be valid")
+            .build(&library)
+            .expect("entropy index should build");
+
+        let mut state = index.new_search_state();
+        let hits = index
+            .search_top_k_threshold_with_state(&query, 4, 0.95, &mut state)
+            .expect("entropy top-k should work");
+
+        assert_eq!(hits.len(), 4);
+        assert!(hits.iter().all(|hit| hit.spectrum_id < 256));
+        assert_eq!(state.diagnostics().spectrum_blocks_evaluated, 1);
+        assert_eq!(state.diagnostics().spectrum_block_bound_entries_visited, 1);
     }
 
     #[cfg(feature = "rayon")]
