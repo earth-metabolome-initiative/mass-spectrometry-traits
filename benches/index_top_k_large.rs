@@ -23,11 +23,15 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use half::f16;
+#[cfg(feature = "rayon")]
+use mass_spectrometry::prelude::FlashCosineSelfSimilarityIndex;
 use mass_spectrometry::prelude::{
     FlashCosineIndex, FlashCosineThresholdIndex, FlashEntropyIndex, FlashSearchDiagnostics,
     FlashSearchResult, RandomSpectrumConfig, SpectraIndex, Spectrum, SpectrumAlloc, SpectrumFloat,
     SpectrumMut, TopKSearchState,
 };
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 type BenchSpectrum = mass_spectrometry::prelude::GenericSpectrum;
 
@@ -804,7 +808,7 @@ fn bench_large_index_top_k(c: &mut Criterion) {
 
 fn bench_large_cosine_top_k_for_precision<P>(c: &mut Criterion, config: CosineTopKBenchConfig<'_>)
 where
-    P: SpectrumFloat + Sync,
+    P: SpectrumFloat + Send + Sync,
 {
     let mz_power = 1.0_f64;
     let intensity_power = 1.0_f64;
@@ -876,6 +880,12 @@ where
             None => flash_cosine_threshold,
         };
         let threshold_label = format!("{threshold:.3}");
+        #[cfg(feature = "rayon")]
+        let query_ids_u32: Vec<u32> = config
+            .query_ids
+            .iter()
+            .map(|&query_id| u32::try_from(query_id).expect("benchmark query id should fit in u32"))
+            .collect();
 
         let mut state = flash_cosine.new_search_state();
         let mut top_k_state = TopKSearchState::new();
@@ -990,6 +1000,74 @@ where
             last_diagnostics,
         );
 
+        #[cfg(feature = "rayon")]
+        group.bench_function(
+            BenchmarkId::new("threshold_index_indexed_top_k_rayon", &threshold_label),
+            |b| {
+                b.iter(|| {
+                    let (total_score, total_matches, diagnostics_totals) = query_ids_u32
+                        .par_iter()
+                        .copied()
+                        .map_init(
+                            || {
+                                (
+                                    flash_cosine_threshold.new_search_state(),
+                                    TopKSearchState::new(),
+                                )
+                            },
+                            |(state, top_k_state), query_id| {
+                                let mut total_score = 0.0;
+                                let mut total_matches = 0usize;
+                                flash_cosine_threshold
+                                    .for_each_top_k_indexed_with_state(
+                                        black_box(query_id),
+                                        black_box(config.top_k),
+                                        state,
+                                        top_k_state,
+                                        |result| {
+                                            total_score += result.score;
+                                            total_matches += result.n_matches;
+                                        },
+                                    )
+                                    .expect("parallel indexed top-k threshold search should work");
+                                let mut diagnostics = DiagnosticTotals::default();
+                                diagnostics.add(state.diagnostics());
+                                (total_score, total_matches, diagnostics)
+                            },
+                        )
+                        .reduce(
+                            || (0.0_f64, 0usize, DiagnosticTotals::default()),
+                            |left, right| {
+                                let mut diagnostics = left.2;
+                                diagnostics.product_postings_visited = diagnostics
+                                    .product_postings_visited
+                                    .saturating_add(right.2.product_postings_visited);
+                                diagnostics.candidates_marked = diagnostics
+                                    .candidates_marked
+                                    .saturating_add(right.2.candidates_marked);
+                                diagnostics.candidates_rescored = diagnostics
+                                    .candidates_rescored
+                                    .saturating_add(right.2.candidates_rescored);
+                                diagnostics.results_emitted = diagnostics
+                                    .results_emitted
+                                    .saturating_add(right.2.results_emitted);
+                                diagnostics.spectrum_blocks_evaluated = diagnostics
+                                    .spectrum_blocks_evaluated
+                                    .saturating_add(right.2.spectrum_blocks_evaluated);
+                                diagnostics.spectrum_blocks_allowed = diagnostics
+                                    .spectrum_blocks_allowed
+                                    .saturating_add(right.2.spectrum_blocks_allowed);
+                                diagnostics.spectrum_blocks_pruned = diagnostics
+                                    .spectrum_blocks_pruned
+                                    .saturating_add(right.2.spectrum_blocks_pruned);
+                                (left.0 + right.0, left.1 + right.1, diagnostics)
+                            },
+                        );
+                    black_box((total_score, total_matches, diagnostics_totals))
+                })
+            },
+        );
+
         let mut state = flash_cosine_threshold.new_search_state();
         let mut last_diagnostics = DiagnosticTotals::default();
         group.bench_function(
@@ -1029,6 +1107,48 @@ where
             config.query_ids.len(),
             last_diagnostics,
         );
+
+        #[cfg(feature = "rayon")]
+        if let Some(pepmass_tolerance) = config.pepmass_tolerance {
+            let self_similarity = match FlashCosineSelfSimilarityIndex::<P>::with_pepmass_tolerance(
+                mz_power,
+                intensity_power,
+                mz_tolerance,
+                threshold,
+                config.top_k,
+                pepmass_tolerance,
+                config.library,
+            ) {
+                Ok(index) => index,
+                Err(error) => {
+                    eprintln!(
+                        "index_top_k_large skipped cosine self-similarity precision={} threshold={threshold:.3} because one-shot index build failed: {error:?}",
+                        config.precision_label
+                    );
+                    continue;
+                }
+            };
+            group.bench_function(
+                BenchmarkId::new("one_shot_self_similarity_top_k_rows", &threshold_label),
+                |b| {
+                    b.iter(|| {
+                        let (total_score, total_matches) = self_similarity
+                            .par_top_k_rows_for(black_box(query_ids_u32.as_slice()))
+                            .map(|row| {
+                                let (_, hits) = row.expect("one-shot self row should score");
+                                hits.iter().fold((0.0_f64, 0usize), |acc, hit| {
+                                    (acc.0 + hit.score, acc.1 + hit.n_matches)
+                                })
+                            })
+                            .reduce(
+                                || (0.0_f64, 0usize),
+                                |left, right| (left.0 + right.0, left.1 + right.1),
+                            );
+                        black_box((total_score, total_matches))
+                    })
+                },
+            );
+        }
     }
 
     group.finish();

@@ -22,6 +22,8 @@ pub use flash_common::{
     FlashIndexBuildPhase, FlashIndexBuildProgress, FlashSearchDiagnostics, FlashSearchResult,
     NoopFlashIndexBuildProgress, PepmassFilter, SearchState, TopKSearchState,
 };
+#[cfg(feature = "rayon")]
+pub use flash_cosine_index::FlashCosineSelfSimilarityIndex;
 pub use flash_cosine_index::{FlashCosineIndex, FlashCosineIndexError, FlashCosineThresholdIndex};
 pub use flash_entropy_index::{FlashEntropyIndex, FlashEntropyIndexError};
 pub use generic_spectrum::{GenericSpectrum, GenericSpectrumMutationError};

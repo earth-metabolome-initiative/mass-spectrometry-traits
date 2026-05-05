@@ -52,7 +52,7 @@ assert_eq!(
 
 ### Indices
 
-The regular cosine and entropy indices accept a cutoff at query time. `FlashCosineThresholdIndex` bakes one cutoff into the cosine index and is the intended path for thresholded indexed self-similarity; entropy keeps query-time thresholding only. `FlashCosineIndex`, `FlashCosineThresholdIndex`, and `FlashEntropyIndex` implement `SpectraIndex` for external-query search and top-k search with reusable scratch state. Flash indices can also enable an optional PEPmass/precursor m/z filter; when enabled, search uses a lazily built precursor-ordered posting index so spectra outside the configured precursor-mass window are skipped before most product-ion postings are scanned.
+The regular cosine and entropy indices accept a cutoff at query time. `FlashCosineThresholdIndex` bakes one cutoff into the cosine index and is the intended path for reusable thresholded indexed self-similarity; entropy keeps query-time thresholding only. With the `rayon` feature, `FlashCosineSelfSimilarityIndex` is the narrower one-shot cosine surface for full indexed self-similarity when `k`, the score threshold, and a PEPmass filter are fixed up front; it requires that filter and builds its precursor index eagerly instead of using the lazy optional filter path. `FlashCosineIndex`, `FlashCosineThresholdIndex`, and `FlashEntropyIndex` implement `SpectraIndex` for external-query search and top-k search with reusable scratch state. Flash indices can also enable an optional PEPmass/precursor m/z filter; when enabled, search uses a lazily built precursor-ordered posting index so spectra outside the configured precursor-mass window are skipped before most product-ion postings are scanned.
 
 Flash indices are generic over their stored peak precision, so the default `f64` examples below can be switched to `FlashCosineIndex::<f32>`, `FlashCosineThresholdIndex::<f32>`, or `FlashEntropyIndex::<f32>` when index memory is the limiting factor; half precision is also available for spectra whose m/z and intensity values remain representable at that precision.
 
@@ -119,6 +119,28 @@ assert_eq!(edges.len(), 1);
 assert_eq!(edges[0].0, 0);
 assert_eq!(edges[0].1, 1);
 assert!(edges[0].2 > 0.99);
+
+#[cfg(feature = "rayon")]
+{
+    use rayon::prelude::*;
+
+    let one_shot = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
+        0.0, 1.0, 0.1, 0.8, 2, 0.5, &spectra,
+    )
+    .unwrap();
+    let mut rows: Vec<_> = one_shot.par_top_k_rows().map(Result::unwrap).collect();
+    rows.sort_by_key(|row| row.0);
+    assert_eq!(rows[0].0, 0);
+    assert!(rows[0].1.iter().all(|hit| hit.spectrum_id != 0));
+    assert!(rows[0].1.iter().any(|hit| hit.spectrum_id == 1));
+
+    let shard_ids = [0, 2];
+    let shard_rows: Vec<_> = one_shot
+        .par_top_k_rows_for(&shard_ids)
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(shard_rows.len(), shard_ids.len());
+}
 
 let entropy_index = FlashEntropyIndex::<f64>::weighted(0.1, &spectra).unwrap();
 let entropy_best = entropy_index.search_top_k_threshold(&spectra[0], 2, 0.8).unwrap();

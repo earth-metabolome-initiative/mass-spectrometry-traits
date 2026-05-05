@@ -10,6 +10,10 @@ use mass_spectrometry::prelude::{
     ScalarSimilarity, SimilarityComputationError, SimilarityConfigError, SpectraIndex,
     SpectraIndexSetupError, Spectrum, SpectrumAlloc, SpectrumMut, TopKSearchState,
 };
+#[cfg(feature = "rayon")]
+use mass_spectrometry::prelude::{FlashCosineSelfSimilarityIndex, PepmassFilter};
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 #[path = "support/progress.rs"]
 mod progress;
@@ -1157,6 +1161,182 @@ fn threshold_index_validates_threshold_and_query_id() {
         top_k_out_of_bounds,
         SimilarityComputationError::IndexOverflow
     );
+}
+
+#[cfg(feature = "rayon")]
+#[test]
+fn self_similarity_index_matches_threshold_index_rows_and_excludes_self() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0), (300.0, 30.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0), (300.05, 30.0)]),
+        make_spectrum_f64(500.2, &[(100.05, 10.0), (200.05, 20.0)]),
+        make_spectrum_f64(502.0, &[(100.05, 10.0), (200.05, 20.0), (300.05, 30.0)]),
+        make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
+    ];
+    let threshold = 0.5_f64;
+    let top_k = 2_usize;
+    let pepmass_tolerance = 0.5_f64;
+    let threshold_index = FlashCosineThresholdIndex::<f64>::new(0.0, 1.0, 0.1, threshold, &spectra)
+        .expect("threshold index should build")
+        .with_pepmass_tolerance(pepmass_tolerance)
+        .expect("pepmass filter should build");
+    let self_index = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
+        0.0,
+        1.0,
+        0.1,
+        threshold,
+        top_k,
+        pepmass_tolerance,
+        &spectra,
+    )
+    .expect("self-similarity index should build");
+
+    assert_eq!(self_index.n_spectra(), spectra.len() as u32);
+    assert_eq!(self_index.top_k(), top_k);
+    assert_eq!(self_index.score_threshold(), threshold);
+    assert_eq!(
+        self_index.pepmass_filter().tolerance(),
+        Some(pepmass_tolerance)
+    );
+
+    let mut rows: Vec<_> = self_index.par_top_k_rows().map(Result::unwrap).collect();
+    rows.sort_by_key(|row| row.0);
+    assert_eq!(
+        rows.iter().map(|row| row.0).collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4]
+    );
+
+    for (query_id, row) in rows {
+        assert!(
+            row.iter().all(|hit| hit.spectrum_id != query_id),
+            "row {query_id} should not contain the query spectrum"
+        );
+
+        let mut state = threshold_index.new_search_state();
+        let mut expected = Vec::new();
+        threshold_index
+            .for_each_indexed_with_state(query_id, &mut state, |hit| expected.push(hit))
+            .expect("baseline threshold row should work");
+        expected.retain(|hit| hit.spectrum_id != query_id);
+        let expected = top_k_expected(expected, top_k, threshold);
+        assert_results_close(row, expected, &format!("self row {query_id}"));
+    }
+}
+
+#[cfg(feature = "rayon")]
+#[test]
+fn self_similarity_index_can_iterate_a_contiguous_row_range() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
+        make_spectrum_f64(500.2, &[(100.05, 8.0), (200.05, 18.0)]),
+        make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
+    ];
+    let index = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
+        0.0, 1.0, 0.1, 0.5, 2, 0.5, &spectra,
+    )
+    .expect("self-similarity index should build");
+
+    let mut rows: Vec<_> = index.par_top_k_rows_in(1..3).map(Result::unwrap).collect();
+    rows.sort_by_key(|row| row.0);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, 1);
+    assert_eq!(rows[1].0, 2);
+    assert!(
+        rows.iter()
+            .all(|(query_id, row)| row.iter().all(|hit| hit.spectrum_id != *query_id))
+    );
+}
+
+#[cfg(feature = "rayon")]
+#[test]
+fn self_similarity_index_can_iterate_an_explicit_row_set() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
+        make_spectrum_f64(500.2, &[(100.05, 8.0), (200.05, 18.0)]),
+        make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
+    ];
+    let index = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
+        0.0, 1.0, 0.1, 0.5, 2, 0.5, &spectra,
+    )
+    .expect("self-similarity index should build");
+
+    let mut rows: Vec<_> = index
+        .par_top_k_rows_for(&[2, 0])
+        .map(Result::unwrap)
+        .collect();
+    rows.sort_by_key(|row| row.0);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, 0);
+    assert_eq!(rows[1].0, 2);
+    assert!(
+        rows.iter()
+            .all(|(query_id, row)| row.iter().all(|hit| hit.spectrum_id != *query_id))
+    );
+}
+
+#[cfg(feature = "rayon")]
+#[test]
+fn self_similarity_index_validates_fixed_profile() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
+    ];
+
+    let disabled_filter = FlashCosineSelfSimilarityIndex::<f64>::new(
+        0.0,
+        1.0,
+        0.1,
+        0.8,
+        1,
+        PepmassFilter::disabled(),
+        &spectra,
+    );
+    assert!(matches!(
+        disabled_filter,
+        Err(FlashCosineIndexError::Config(
+            SimilarityConfigError::InvalidParameter("pepmass_filter")
+        ))
+    ));
+
+    let zero_k = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
+        0.0, 1.0, 0.1, 0.8, 0, 0.5, &spectra,
+    );
+    assert!(matches!(
+        zero_k,
+        Err(FlashCosineIndexError::Config(
+            SimilarityConfigError::InvalidParameter("top_k")
+        ))
+    ));
+
+    let nan_threshold = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
+        0.0,
+        1.0,
+        0.1,
+        f64::NAN,
+        1,
+        0.5,
+        &spectra,
+    );
+    assert!(matches!(
+        nan_threshold,
+        Err(FlashCosineIndexError::Computation(
+            SimilarityComputationError::NonFiniteValue("score_threshold")
+        ))
+    ));
+
+    let invalid_pepmass = FlashCosineSelfSimilarityIndex::<f64>::with_pepmass_tolerance(
+        0.0, 1.0, 0.1, 0.8, 1, -0.5, &spectra,
+    );
+    assert!(matches!(
+        invalid_pepmass,
+        Err(FlashCosineIndexError::Config(
+            SimilarityConfigError::InvalidParameter("pepmass_tolerance")
+        ))
+    ));
 }
 
 #[test]
