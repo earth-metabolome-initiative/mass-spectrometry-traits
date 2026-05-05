@@ -25,11 +25,11 @@ use super::cosine_common::{
 use super::flash_common::FlashRowSearchProgress;
 use super::flash_common::{
     DEFAULT_COSINE_SPECTRUM_BLOCK_SIZE, DirectThresholdSearch, FlashIndex, FlashIndexBuildOptions,
-    FlashIndexBuildPhase, FlashIndexBuildProgress, FlashKernel, FlashSearchResult, PepmassFilter,
-    PreparedFlashSpectra, PreparedFlashSpectrum, SearchState, SpectrumBlockProductIndex,
-    SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults, TopKSearchState,
-    convert_flash_value, convert_flash_values, flash_values_to_f64, progress_len_from_size_hint,
-    reorder_prepared_spectra_by_signature,
+    FlashIndexBuildPhase, FlashIndexBuildProgress, FlashKernel, FlashSearchDiagnostics,
+    FlashSearchResult, PepmassFilter, PreparedFlashSpectra, PreparedFlashSpectrum, SearchState,
+    SpectrumBlockProductIndex, SpectrumBlockUpperBoundIndex, SpectrumIdMap, TopKSearchResults,
+    TopKSearchState, convert_flash_value, convert_flash_values, flash_values_to_f64,
+    progress_len_from_size_hint, reorder_prepared_spectra_by_signature,
 };
 use super::similarity_errors::{SimilarityComputationError, SimilarityConfigError};
 use crate::traits::{SpectraIndex, SpectraIndexBuilder, Spectrum, SpectrumFloat};
@@ -1996,6 +1996,32 @@ pub struct FlashCosineSelfSimilarityRows<'a, P: SpectrumFloat = f64> {
     progress: Option<&'a (dyn FlashRowSearchProgress + Sync + 'a)>,
 }
 
+/// One row emitted by diagnostic self-similarity iteration.
+///
+/// The regular row iterator returns only `(query_id, hits)`. Use this type when
+/// profiling large graph builds to see whether a row is dominated by block
+/// pruning, posting scans, exact rescoring, or result emission.
+#[cfg(feature = "rayon")]
+#[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
+#[cfg_attr(feature = "mem_size", mem_size(rec))]
+#[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlashCosineSelfSimilarityRow {
+    /// Public id of the query spectrum.
+    pub query_id: u32,
+    /// Top-k non-self hits retained for this query row.
+    pub hits: Vec<FlashSearchResult>,
+    /// Per-row Flash search counters.
+    pub diagnostics: FlashSearchDiagnostics,
+}
+
+/// Row selection for self-similarity iteration that also returns diagnostics.
+#[cfg(feature = "rayon")]
+#[derive(Clone)]
+pub struct FlashCosineSelfSimilarityDiagnosticRows<'a, P: SpectrumFloat = f64> {
+    rows: FlashCosineSelfSimilarityRows<'a, P>,
+}
+
 #[cfg(feature = "rayon")]
 impl<'a, P: SpectrumFloat> FlashCosineSelfSimilarityRows<'a, P> {
     /// Iterate all query rows.
@@ -2028,12 +2054,27 @@ impl<'a, P: SpectrumFloat> FlashCosineSelfSimilarityRows<'a, P> {
         self.progress = Some(progress);
         self
     }
+
+    /// Return row hits together with per-row search diagnostics.
+    ///
+    /// This preserves the same row selection and progress reporter. It is meant
+    /// for profiling large one-shot graph builds rather than for the hot path.
+    #[must_use]
+    pub const fn with_diagnostics(self) -> FlashCosineSelfSimilarityDiagnosticRows<'a, P> {
+        FlashCosineSelfSimilarityDiagnosticRows { rows: self }
+    }
 }
 
 /// Parallel iterator over one-shot self-similarity rows.
 #[cfg(feature = "rayon")]
 pub struct FlashCosineSelfSimilarityParRows<'a, P: SpectrumFloat = f64> {
     rows: FlashCosineSelfSimilarityRows<'a, P>,
+}
+
+/// Parallel iterator over one-shot self-similarity rows with diagnostics.
+#[cfg(feature = "rayon")]
+pub struct FlashCosineSelfSimilarityParDiagnosticRows<'a, P: SpectrumFloat = f64> {
+    rows: FlashCosineSelfSimilarityDiagnosticRows<'a, P>,
 }
 
 #[cfg(feature = "rayon")]
@@ -2193,6 +2234,48 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
         )
     }
 
+    fn top_k_diagnostic_rows_in_iter<'a>(
+        &'a self,
+        query_ids: Range<u32>,
+        progress: Option<&'a (dyn FlashRowSearchProgress + Sync + 'a)>,
+    ) -> impl ParallelIterator<
+        Item = Result<FlashCosineSelfSimilarityRow, SimilarityComputationError>,
+    > + 'a {
+        let len = u64::from(query_ids.end.saturating_sub(query_ids.start));
+        self.start_row_progress(progress, len);
+        let completed = Arc::new(AtomicU64::new(0));
+
+        query_ids.into_par_iter().map_init(
+            || (self.inner.new_search_state(), TopKSearchState::new()),
+            move |(state, top_k_state), query_id| {
+                let row = self.top_k_row_with_diagnostics_state(query_id, state, top_k_state);
+                self.complete_progress_row(progress, &completed, len);
+                row
+            },
+        )
+    }
+
+    fn top_k_diagnostic_rows_for_iter<'a>(
+        &'a self,
+        query_ids: &'a [u32],
+        progress: Option<&'a (dyn FlashRowSearchProgress + Sync + 'a)>,
+    ) -> impl ParallelIterator<
+        Item = Result<FlashCosineSelfSimilarityRow, SimilarityComputationError>,
+    > + 'a {
+        let len = u64::try_from(query_ids.len()).unwrap_or(u64::MAX);
+        self.start_row_progress(progress, len);
+        let completed = Arc::new(AtomicU64::new(0));
+
+        query_ids.par_iter().copied().map_init(
+            || (self.inner.new_search_state(), TopKSearchState::new()),
+            move |(state, top_k_state), query_id| {
+                let row = self.top_k_row_with_diagnostics_state(query_id, state, top_k_state);
+                self.complete_progress_row(progress, &completed, len);
+                row
+            },
+        )
+    }
+
     fn start_row_progress(
         &self,
         progress: Option<&(dyn FlashRowSearchProgress + Sync + '_)>,
@@ -2226,6 +2309,16 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
         state: &mut SearchState,
         top_k_state: &mut TopKSearchState,
     ) -> Result<(u32, Vec<FlashSearchResult>), SimilarityComputationError> {
+        let row = self.top_k_row_with_diagnostics_state(query_id, state, top_k_state)?;
+        Ok((row.query_id, row.hits))
+    }
+
+    fn top_k_row_with_diagnostics_state(
+        &self,
+        query_id: u32,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+    ) -> Result<FlashCosineSelfSimilarityRow, SimilarityComputationError> {
         let internal_query_id = self.inner.internal_spectrum_id(query_id)?;
         let (query_mz, query_data) = self.inner.spectrum_slices(internal_query_id);
         let query_meta = *self.inner.spectrum_meta(internal_query_id);
@@ -2246,7 +2339,11 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
             |result| results.push(result),
         );
 
-        Ok((query_id, results))
+        Ok(FlashCosineSelfSimilarityRow {
+            query_id,
+            hits: results,
+            diagnostics: state.diagnostics(),
+        })
     }
 
     fn prepare_block_pruned_candidate_blocks<Q: SpectrumFloat>(
@@ -2391,6 +2488,19 @@ where
 }
 
 #[cfg(feature = "rayon")]
+impl<'a, P> IntoParallelIterator for FlashCosineSelfSimilarityDiagnosticRows<'a, P>
+where
+    P: SpectrumFloat + Send + Sync,
+{
+    type Iter = FlashCosineSelfSimilarityParDiagnosticRows<'a, P>;
+    type Item = Result<FlashCosineSelfSimilarityRow, SimilarityComputationError>;
+
+    fn into_par_iter(self) -> Self::Iter {
+        FlashCosineSelfSimilarityParDiagnosticRows { rows: self }
+    }
+}
+
+#[cfg(feature = "rayon")]
 impl<'a, P> ParallelIterator for FlashCosineSelfSimilarityParRows<'a, P>
 where
     P: SpectrumFloat + Send + Sync,
@@ -2423,6 +2533,53 @@ where
     fn opt_len(&self) -> Option<usize> {
         match &self.rows.ids {
             SelfSimilarityRowIds::All => usize::try_from(self.rows.index.n_spectra()).ok(),
+            SelfSimilarityRowIds::Range(range) => {
+                usize::try_from(range.end.saturating_sub(range.start)).ok()
+            }
+            SelfSimilarityRowIds::Slice(ids) => Some(ids.len()),
+        }
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl<'a, P> ParallelIterator for FlashCosineSelfSimilarityParDiagnosticRows<'a, P>
+where
+    P: SpectrumFloat + Send + Sync,
+{
+    type Item = Result<FlashCosineSelfSimilarityRow, SimilarityComputationError>;
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+    where
+        C: UnindexedConsumer<Self::Item>,
+    {
+        match self.rows.rows.ids {
+            SelfSimilarityRowIds::All => self
+                .rows
+                .rows
+                .index
+                .top_k_diagnostic_rows_in_iter(
+                    0..self.rows.rows.index.n_spectra(),
+                    self.rows.rows.progress,
+                )
+                .drive_unindexed(consumer),
+            SelfSimilarityRowIds::Range(range) => self
+                .rows
+                .rows
+                .index
+                .top_k_diagnostic_rows_in_iter(range, self.rows.rows.progress)
+                .drive_unindexed(consumer),
+            SelfSimilarityRowIds::Slice(ids) => self
+                .rows
+                .rows
+                .index
+                .top_k_diagnostic_rows_for_iter(ids, self.rows.rows.progress)
+                .drive_unindexed(consumer),
+        }
+    }
+
+    fn opt_len(&self) -> Option<usize> {
+        match &self.rows.rows.ids {
+            SelfSimilarityRowIds::All => usize::try_from(self.rows.rows.index.n_spectra()).ok(),
             SelfSimilarityRowIds::Range(range) => {
                 usize::try_from(range.end.saturating_sub(range.start)).ok()
             }

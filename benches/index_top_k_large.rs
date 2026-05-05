@@ -45,6 +45,7 @@ const RANDOM_BASE_SEED: u64 = 0xDEAD_BEEF_CAFE_BABE;
 #[derive(Clone, Copy, Debug, Default)]
 struct DiagnosticTotals {
     product_postings_visited: usize,
+    spectrum_block_bound_entries_visited: usize,
     candidates_marked: usize,
     candidates_rescored: usize,
     results_emitted: usize,
@@ -98,6 +99,9 @@ impl DiagnosticTotals {
         self.product_postings_visited = self
             .product_postings_visited
             .saturating_add(diagnostics.product_postings_visited);
+        self.spectrum_block_bound_entries_visited = self
+            .spectrum_block_bound_entries_visited
+            .saturating_add(diagnostics.spectrum_block_bound_entries_visited);
         self.candidates_marked = self
             .candidates_marked
             .saturating_add(diagnostics.candidates_marked);
@@ -120,6 +124,7 @@ impl DiagnosticTotals {
 
     fn is_empty(&self) -> bool {
         self.product_postings_visited == 0
+            && self.spectrum_block_bound_entries_visited == 0
             && self.candidates_marked == 0
             && self.candidates_rescored == 0
             && self.results_emitted == 0
@@ -151,6 +156,7 @@ fn print_diagnostic_summary(
             "index_top_k_large diagnostics ",
             "bench={bench_name}/{threshold_label} queries={query_count} ",
             "product_postings/q={product_postings:.3} ",
+            "block_bound_entries/q={block_bound_entries:.3} ",
             "candidates_marked/q={candidates_marked:.3} ",
             "candidates_rescored/q={candidates_rescored:.3} ",
             "results_emitted/q={results_emitted:.3} ",
@@ -162,6 +168,10 @@ fn print_diagnostic_summary(
         threshold_label = threshold_label,
         query_count = query_count,
         product_postings = per_query(diagnostics.product_postings_visited, query_count),
+        block_bound_entries = per_query(
+            diagnostics.spectrum_block_bound_entries_visited,
+            query_count
+        ),
         candidates_marked = per_query(diagnostics.candidates_marked, query_count),
         candidates_rescored = per_query(diagnostics.candidates_rescored, query_count),
         results_emitted = per_query(diagnostics.results_emitted, query_count),
@@ -1036,6 +1046,9 @@ where
                                 diagnostics.product_postings_visited = diagnostics
                                     .product_postings_visited
                                     .saturating_add(right.2.product_postings_visited);
+                                diagnostics.spectrum_block_bound_entries_visited = diagnostics
+                                    .spectrum_block_bound_entries_visited
+                                    .saturating_add(right.2.spectrum_block_bound_entries_visited);
                                 diagnostics.candidates_marked = diagnostics
                                     .candidates_marked
                                     .saturating_add(right.2.candidates_marked);
@@ -1131,28 +1144,70 @@ where
                     continue;
                 }
             };
+            let mut last_diagnostics = DiagnosticTotals::default();
             group.bench_function(
                 BenchmarkId::new("one_shot_self_similarity_top_k_rows", &threshold_label),
                 |b| {
                     b.iter(|| {
                         let query_ids = black_box(query_ids_u32.as_slice());
-                        let (total_score, total_matches) = self_similarity
+                        let (total_score, total_matches, diagnostics_totals) = self_similarity
                             .rows()
                             .ids(query_ids)
+                            .with_diagnostics()
                             .into_par_iter()
                             .map(|row| {
-                                let (_, hits) = row.expect("one-shot self row should score");
-                                hits.iter().fold((0.0_f64, 0usize), |acc, hit| {
-                                    (acc.0 + hit.score, acc.1 + hit.n_matches)
-                                })
+                                let row = row.expect("one-shot self row should score");
+                                let (score, matches) =
+                                    row.hits.iter().fold((0.0_f64, 0usize), |acc, hit| {
+                                        (acc.0 + hit.score, acc.1 + hit.n_matches)
+                                    });
+                                let mut diagnostics = DiagnosticTotals::default();
+                                diagnostics.add(row.diagnostics);
+                                (score, matches, diagnostics)
                             })
                             .reduce(
-                                || (0.0_f64, 0usize),
-                                |left, right| (left.0 + right.0, left.1 + right.1),
+                                || (0.0_f64, 0usize, DiagnosticTotals::default()),
+                                |left, right| {
+                                    let mut diagnostics = left.2;
+                                    diagnostics.product_postings_visited = diagnostics
+                                        .product_postings_visited
+                                        .saturating_add(right.2.product_postings_visited);
+                                    diagnostics.spectrum_block_bound_entries_visited = diagnostics
+                                        .spectrum_block_bound_entries_visited
+                                        .saturating_add(
+                                            right.2.spectrum_block_bound_entries_visited,
+                                        );
+                                    diagnostics.candidates_marked = diagnostics
+                                        .candidates_marked
+                                        .saturating_add(right.2.candidates_marked);
+                                    diagnostics.candidates_rescored = diagnostics
+                                        .candidates_rescored
+                                        .saturating_add(right.2.candidates_rescored);
+                                    diagnostics.results_emitted = diagnostics
+                                        .results_emitted
+                                        .saturating_add(right.2.results_emitted);
+                                    diagnostics.spectrum_blocks_evaluated = diagnostics
+                                        .spectrum_blocks_evaluated
+                                        .saturating_add(right.2.spectrum_blocks_evaluated);
+                                    diagnostics.spectrum_blocks_allowed = diagnostics
+                                        .spectrum_blocks_allowed
+                                        .saturating_add(right.2.spectrum_blocks_allowed);
+                                    diagnostics.spectrum_blocks_pruned = diagnostics
+                                        .spectrum_blocks_pruned
+                                        .saturating_add(right.2.spectrum_blocks_pruned);
+                                    (left.0 + right.0, left.1 + right.1, diagnostics)
+                                },
                             );
-                        black_box((total_score, total_matches))
+                        last_diagnostics = diagnostics_totals;
+                        black_box((total_score, total_matches, diagnostics_totals))
                     })
                 },
+            );
+            print_diagnostic_summary(
+                "one_shot_self_similarity_top_k_rows",
+                &threshold_label,
+                config.query_ids.len(),
+                last_diagnostics,
             );
         }
     }

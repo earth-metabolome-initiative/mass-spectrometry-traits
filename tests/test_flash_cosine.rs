@@ -1668,6 +1668,36 @@ fn self_similarity_index_can_iterate_an_explicit_row_set() {
 
 #[cfg(feature = "rayon")]
 #[test]
+fn self_similarity_index_can_return_row_diagnostics() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (150.0, 30.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (150.05, 30.0), (200.05, 20.0)]),
+        make_spectrum_f64(500.2, &[(100.05, 8.0), (200.05, 18.0)]),
+        make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
+    ];
+    let index = build_self_similarity_index(0.9, 2, 0.5, &spectra)
+        .expect("self-similarity index should build");
+
+    let row_ids = [0_u32];
+    let rows: Vec<_> = index
+        .rows()
+        .ids(&row_ids)
+        .with_diagnostics()
+        .into_par_iter()
+        .map(Result::unwrap)
+        .collect();
+
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.query_id, 0);
+    assert!(row.hits.iter().all(|hit| hit.spectrum_id != 0));
+    assert!(row.diagnostics.product_postings_visited > 0);
+    assert!(row.diagnostics.spectrum_block_bound_entries_visited > 0);
+    assert!(row.diagnostics.spectrum_blocks_evaluated > 0);
+}
+
+#[cfg(feature = "rayon")]
+#[test]
 fn self_similarity_index_accessors_and_all_rows_work_after_sequential_build() {
     let spectra = vec![
         make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),

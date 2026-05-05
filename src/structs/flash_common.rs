@@ -847,6 +847,8 @@ pub struct FlashSearchResult {
 pub struct FlashSearchDiagnostics {
     /// Product-ion postings visited while scanning m/z windows.
     pub product_postings_visited: usize,
+    /// Block-upper-bound entries visited while preparing block pruning.
+    pub spectrum_block_bound_entries_visited: usize,
     /// Unique primary candidates marked for exact scoring.
     pub candidates_marked: usize,
     /// Candidates passed to exact scoring.
@@ -1540,6 +1542,7 @@ impl SpectrumBlockUpperBoundIndex {
             for bin_index in self.bin_indices_for_window(mz.to_f64(), tolerance) {
                 let bin_index = bin_index as u32;
                 let (block_ids, max_values) = self.bins.sparse_row_entries_slice(bin_index);
+                state.add_spectrum_block_bound_entries_visited(block_ids.len());
                 for (&block_id, &max_value) in block_ids.iter().zip(max_values) {
                     state.add_spectrum_block_upper_bound(
                         block_id,
@@ -1712,6 +1715,14 @@ impl SearchState {
         self.diagnostics.product_postings_visited = self
             .diagnostics
             .product_postings_visited
+            .saturating_add(count);
+    }
+
+    #[inline]
+    pub(crate) fn add_spectrum_block_bound_entries_visited(&mut self, count: usize) {
+        self.diagnostics.spectrum_block_bound_entries_visited = self
+            .diagnostics
+            .spectrum_block_bound_entries_visited
             .saturating_add(count);
     }
 

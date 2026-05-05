@@ -29,8 +29,9 @@ pub use flash_cosine_index::{
 };
 #[cfg(feature = "rayon")]
 pub use flash_cosine_index::{
-    FlashCosineSelfSimilarityIndex, FlashCosineSelfSimilarityIndexBuilder,
-    FlashCosineSelfSimilarityParRows, FlashCosineSelfSimilarityRows,
+    FlashCosineSelfSimilarityDiagnosticRows, FlashCosineSelfSimilarityIndex,
+    FlashCosineSelfSimilarityIndexBuilder, FlashCosineSelfSimilarityParDiagnosticRows,
+    FlashCosineSelfSimilarityParRows, FlashCosineSelfSimilarityRow, FlashCosineSelfSimilarityRows,
 };
 pub use flash_entropy_index::{
     FlashEntropyIndex, FlashEntropyIndexBuilder, FlashEntropyIndexError,
