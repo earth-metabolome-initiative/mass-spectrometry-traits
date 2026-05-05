@@ -1371,6 +1371,107 @@ fn self_similarity_index_matches_threshold_index_rows_and_excludes_self() {
 
 #[cfg(feature = "rayon")]
 #[test]
+fn self_similarity_index_matches_threshold_index_at_high_threshold_and_broad_pepmass() {
+    let spectra = vec![
+        make_spectrum_f64(
+            500.0,
+            &[(100.0, 20.0), (150.0, 80.0), (200.0, 120.0), (250.0, 40.0)],
+        ),
+        make_spectrum_f64(
+            505.0,
+            &[
+                (100.004, 20.0),
+                (150.004, 80.0),
+                (200.004, 120.0),
+                (250.004, 40.0),
+            ],
+        ),
+        make_spectrum_f64(
+            507.5,
+            &[
+                (99.996, 18.0),
+                (149.996, 76.0),
+                (199.996, 118.0),
+                (249.996, 42.0),
+            ],
+        ),
+        make_spectrum_f64(
+            530.0,
+            &[
+                (100.002, 20.0),
+                (150.002, 80.0),
+                (200.002, 120.0),
+                (250.002, 40.0),
+            ],
+        ),
+        make_spectrum_f64(
+            503.0,
+            &[(101.0, 20.0), (151.0, 80.0), (201.0, 120.0), (251.0, 40.0)],
+        ),
+        make_spectrum_f64(
+            900.0,
+            &[(300.0, 20.0), (350.0, 80.0), (400.0, 120.0), (450.0, 40.0)],
+        ),
+    ];
+    let mz_tolerance = 0.01_f64;
+    let threshold = 0.9_f64;
+    let top_k = 4_usize;
+    let pepmass_tolerance = 10.0_f64;
+
+    let threshold_index = build_threshold_index_with_pepmass(
+        0.0,
+        1.0,
+        mz_tolerance,
+        threshold,
+        pepmass_tolerance,
+        &spectra,
+    )
+    .expect("threshold index should build");
+    let self_index = FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(mz_tolerance)
+        .score_threshold(threshold)
+        .top_k(top_k)
+        .pepmass_tolerance(pepmass_tolerance)
+        .unwrap()
+        .parallel()
+        .build(&spectra)
+        .expect("self-similarity index should build");
+
+    let mut rows: Vec<_> = (&self_index).into_par_iter().map(Result::unwrap).collect();
+    rows.sort_by_key(|row| row.0);
+
+    let mut expected_total_hits = 0_usize;
+    let mut actual_total_hits = 0_usize;
+    for (query_id, row) in rows {
+        let mut state = threshold_index.new_search_state();
+        let mut expected = Vec::new();
+        threshold_index
+            .for_each_indexed_with_state(query_id, &mut state, |hit| expected.push(hit))
+            .expect("baseline threshold row should work");
+        expected.retain(|hit| hit.spectrum_id != query_id);
+        let expected = top_k_expected(expected, top_k, threshold);
+        expected_total_hits += expected.len();
+        actual_total_hits += row.len();
+        assert_results_close(
+            row,
+            expected,
+            &format!("high threshold self row {query_id}"),
+        );
+    }
+    assert!(
+        expected_total_hits > 0,
+        "baseline threshold index should produce non-self hits"
+    );
+    assert!(
+        actual_total_hits > 0,
+        "high-threshold one-shot self-similarity should produce non-self hits"
+    );
+}
+
+#[cfg(feature = "rayon")]
+#[test]
 fn self_similarity_index_reports_construction_progress() {
     let spectra = vec![
         make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),

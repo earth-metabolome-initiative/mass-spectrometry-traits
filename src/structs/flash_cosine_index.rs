@@ -2343,6 +2343,7 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
         top_k: &mut TopKSearchResults<'_>,
     ) {
         let query_norm = search.query_meta.0;
+        state.prepare_threshold_order(search.query_data);
         self.inner.score_allowed_block_candidates_by_query_order(
             search.query_mz,
             search.query_precursor_mz,
