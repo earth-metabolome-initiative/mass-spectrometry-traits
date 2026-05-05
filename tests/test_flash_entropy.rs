@@ -846,10 +846,18 @@ fn indexed_entropy_queries_match_external_queries() {
             let threshold_indexed = index
                 .search_threshold_indexed_with_state(query_id, threshold, &mut state)
                 .expect("indexed threshold search should work");
+            let threshold_indexed_stateless = index
+                .search_threshold_indexed(query_id, threshold)
+                .expect("stateless indexed threshold search should work");
             assert_results_close(
                 threshold_indexed,
                 threshold_expected.clone(),
                 &format!("indexed threshold weighted={weighted} threshold={threshold}"),
+            );
+            assert_results_close(
+                threshold_indexed_stateless,
+                threshold_expected.clone(),
+                &format!("stateless indexed threshold weighted={weighted} threshold={threshold}"),
             );
 
             let top_k_expected = top_k_threshold_expected(direct_expected.clone(), 3, threshold);
@@ -888,6 +896,15 @@ fn indexed_entropy_queries_match_external_queries() {
                 .search_top_k_indexed_with_state(query_id, 0, &mut state)
                 .expect("zero-k indexed search should work")
                 .is_empty()
+        );
+
+        let top_k_stateless = index
+            .search_top_k_indexed(query_id, 2)
+            .expect("stateless indexed top-k should work");
+        assert_results_close(
+            top_k_stateless,
+            top_k_expected(direct_expected.clone(), 2),
+            "stateless indexed top-k",
         );
 
         let mut streamed_top_k = Vec::new();

@@ -30,17 +30,25 @@ where
     assert_eq!(index.n_spectra(), 3);
     assert_eq!(index.tolerance(), 0.1);
 
+    let direct_hits = index.search(query).expect("trait search should succeed");
+    assert!(direct_hits.iter().any(|hit| hit.spectrum_id == 0));
+
+    let direct_top = index
+        .search_top_k(query, 1)
+        .expect("trait top-k should succeed");
+    assert_eq!(direct_top.len(), 1);
+    assert_eq!(direct_top[0].spectrum_id, 0);
+
     let mut state = index.new_search_state();
     let hits = index
         .search_with_state(query, &mut state)
         .expect("trait search should succeed");
-    assert!(hits.iter().any(|hit| hit.spectrum_id == 0));
+    assert_eq!(hits, direct_hits);
 
     let top = index
         .search_top_k_with_state(query, 1, &mut state)
         .expect("trait top-k should succeed");
-    assert_eq!(top.len(), 1);
-    assert_eq!(top[0].spectrum_id, 0);
+    assert_eq!(top, direct_top);
 
     let mut top_k_state = TopKSearchState::new();
     let mut streamed = Vec::new();
@@ -131,4 +139,31 @@ fn index_builders_configure_pepmass_filters() {
         .build(&spectra)
         .unwrap();
     assert_eq!(cosine.pepmass_filter().tolerance(), Some(0.5));
+}
+
+#[test]
+fn index_builders_can_force_sequential_execution() {
+    let spectra = spectra();
+
+    let cosine = FlashCosineIndex::<f64>::builder()
+        .mz_tolerance(0.1)
+        .sequential()
+        .build(&spectra)
+        .unwrap();
+    assert_trait_surface(&cosine, &spectra[0]);
+
+    let threshold_cosine = FlashCosineThresholdIndex::<f64>::builder()
+        .mz_tolerance(0.1)
+        .score_threshold(0.8)
+        .sequential()
+        .build(&spectra)
+        .unwrap();
+    assert_trait_surface(&threshold_cosine, &spectra[0]);
+
+    let entropy = FlashEntropyIndex::<f64>::builder()
+        .mz_tolerance(0.1)
+        .sequential()
+        .build(&spectra)
+        .unwrap();
+    assert_trait_surface(&entropy, &spectra[0]);
 }

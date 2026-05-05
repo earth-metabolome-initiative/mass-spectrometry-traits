@@ -1560,6 +1560,47 @@ fn self_similarity_index_can_iterate_an_explicit_row_set() {
 
 #[cfg(feature = "rayon")]
 #[test]
+fn self_similarity_index_accessors_and_all_rows_work_after_sequential_build() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
+        make_spectrum_f64(700.0, &[(400.0, 10.0), (450.0, 20.0)]),
+    ];
+    let index = FlashCosineSelfSimilarityIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .score_threshold(0.5)
+        .top_k(2)
+        .pepmass_tolerance(0.5)
+        .unwrap()
+        .sequential()
+        .build(&spectra)
+        .expect("sequential self-similarity index should build");
+
+    assert_eq!(index.mz_power(), 0.0);
+    assert_eq!(index.intensity_power(), 1.0);
+    assert_eq!(index.tolerance(), 0.1);
+    assert_eq!(index.score_threshold(), 0.5);
+    assert_eq!(index.top_k(), 2);
+    assert_eq!(index.n_spectra(), spectra.len() as u32);
+    assert_eq!(index.pepmass_filter().tolerance(), Some(0.5));
+
+    let rows: Vec<_> = index
+        .rows()
+        .all()
+        .into_par_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(rows.len(), spectra.len());
+    assert!(
+        rows.iter()
+            .all(|(query_id, row)| row.iter().all(|hit| hit.spectrum_id != *query_id))
+    );
+}
+
+#[cfg(feature = "rayon")]
+#[test]
 fn self_similarity_index_reports_row_iteration_progress() {
     let spectra = vec![
         make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
@@ -1593,6 +1634,32 @@ fn self_similarity_index_reports_row_iteration_progress() {
         2
     );
     assert!(events.contains(&ProgressEvent::RowFinish));
+}
+
+#[cfg(feature = "rayon")]
+#[test]
+fn self_similarity_index_reports_empty_row_iteration_progress() {
+    let spectra = vec![
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(500.1, &[(100.05, 10.0), (200.05, 20.0)]),
+    ];
+    let index = build_self_similarity_index(0.5, 2, 0.5, &spectra)
+        .expect("self-similarity index should build");
+    let progress = RecordingProgress::default();
+
+    let rows: Vec<_> = index
+        .rows()
+        .range(1..1)
+        .progress(&progress)
+        .into_par_iter()
+        .map(Result::unwrap)
+        .collect();
+
+    assert!(rows.is_empty());
+    assert_eq!(
+        progress.events(),
+        vec![ProgressEvent::RowStart(0), ProgressEvent::RowFinish]
+    );
 }
 
 #[cfg(feature = "rayon")]
