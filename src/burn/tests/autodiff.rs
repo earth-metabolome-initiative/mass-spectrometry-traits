@@ -11,11 +11,17 @@
 use burn::backend::cuda::CudaDevice;
 use burn::backend::{Autodiff, Cuda};
 
-use crate::burn::{KernelMetric, LinearCosineMetric, cross_kernel, paired_kernel, ranking_kernel};
+use crate::burn::api::SpectrumBatch;
+use crate::burn::{
+    KernelMetric, LinearCosineMetric, LinearEntropyMetric, ModifiedLinearCosineMetric,
+    ModifiedLinearEntropyMetric, cross_kernel, paired_kernel, ranking_kernel,
+};
 
 use super::fixtures::{
     DEFAULT_TEST_POINT, PAIR_CHUNK_SIZE, TEST_EPSILON, TEST_INTENSITY_POWER, TEST_MAX_PEAKS,
-    TEST_MZ_POWER, TEST_MZ_TOLERANCE, all_pair_indices, cpu_linear_cosine, pair_batches, pair_rows,
+    TEST_MZ_POWER, TEST_MZ_TOLERANCE, all_pair_indices, assert_ranking_matches_cpu,
+    cpu_linear_cosine, cpu_linear_entropy, cpu_modified_linear_cosine, cpu_modified_linear_entropy,
+    default_entropy_ranking_config, default_ranking_config, pair_batches, pair_rows,
     pairwise_params_constant, reference_spectra, spectrum_batch, spectrum_rows,
 };
 
@@ -105,52 +111,177 @@ fn autodiff_cross_matches_raw_backend() {
 }
 
 #[test]
-fn autodiff_ranking_matches_raw_backend() {
-    // We just confirm that the autodiff wrapper for ranking_score runs end-to-end
-    // and returns the expected shapes, full LCG equivalence is exercised by
-    // `ranking_matches_cpu_linear_cosine` through the raw backend.
+fn autodiff_ranking_matches_cpu_linear_cosine() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<AutodiffBackend, LinearCosineMetric>(
+        spectra,
+        &device,
+        default_ranking_config::<LinearCosineMetric>(),
+        |l, r| cpu_linear_cosine(DEFAULT_TEST_POINT, l, r),
+        1.0e-4,
+    );
+}
+
+#[test]
+fn autodiff_ranking_matches_cpu_modified_linear_cosine() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<AutodiffBackend, ModifiedLinearCosineMetric>(
+        spectra,
+        &device,
+        default_ranking_config::<ModifiedLinearCosineMetric>(),
+        |l, r| cpu_modified_linear_cosine(DEFAULT_TEST_POINT, l, r),
+        2.0e-4,
+    );
+}
+
+#[test]
+fn autodiff_ranking_matches_cpu_linear_entropy_unweighted() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<AutodiffBackend, LinearEntropyMetric>(
+        spectra,
+        &device,
+        default_entropy_ranking_config::<LinearEntropyMetric>(false),
+        |l, r| cpu_linear_entropy(DEFAULT_TEST_POINT, false, l, r),
+        2.0e-4,
+    );
+}
+
+#[test]
+fn autodiff_ranking_matches_cpu_linear_entropy_weighted() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<AutodiffBackend, LinearEntropyMetric>(
+        spectra,
+        &device,
+        default_entropy_ranking_config::<LinearEntropyMetric>(true),
+        |l, r| cpu_linear_entropy(DEFAULT_TEST_POINT, true, l, r),
+        2.0e-4,
+    );
+}
+
+#[test]
+fn autodiff_ranking_matches_cpu_modified_linear_entropy_unweighted() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<AutodiffBackend, ModifiedLinearEntropyMetric>(
+        spectra,
+        &device,
+        default_entropy_ranking_config::<ModifiedLinearEntropyMetric>(false),
+        |l, r| cpu_modified_linear_entropy(DEFAULT_TEST_POINT, false, l, r),
+        2.0e-4,
+    );
+}
+
+#[test]
+fn autodiff_ranking_matches_cpu_modified_linear_entropy_weighted() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<AutodiffBackend, ModifiedLinearEntropyMetric>(
+        spectra,
+        &device,
+        default_entropy_ranking_config::<ModifiedLinearEntropyMetric>(true),
+        |l, r| cpu_modified_linear_entropy(DEFAULT_TEST_POINT, true, l, r),
+        2.0e-4,
+    );
+}
+
+/// Composition test: `Autodiff<Fusion<Cuda<...>>>`. Both wrapper layers are
+/// in the training-loop hot path simultaneously (fusion batches the
+/// surrounding tensor ops, autodiff carries the graph forward), but until
+/// now we only had per-layer tests in isolation. This guards against
+/// regressions where the layers compose in a way that breaks forward-pass
+/// value correctness, e.g. the fusion replay handing the wrong tensor IRs
+/// back through the autodiff wrapper after the recent four-output ranking
+/// custom-op change.
+#[cfg(feature = "burn-fusion")]
+#[test]
+fn autodiff_over_fusion_ranking_matches_cpu_linear_cosine() {
+    use burn_cubecl::CubeBackend;
+    use burn_cubecl::cubecl::cuda::CudaRuntime;
+    use burn_fusion::Fusion;
+
+    type RawCube = CubeBackend<CudaRuntime, f32, i32, u8>;
+    type Stacked = burn::backend::Autodiff<Fusion<RawCube>>;
+
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<Stacked, LinearCosineMetric>(
+        spectra,
+        &device,
+        default_ranking_config::<LinearCosineMetric>(),
+        |l, r| cpu_linear_cosine(DEFAULT_TEST_POINT, l, r),
+        1.0e-4,
+    );
+}
+
+/// The ranking kernel is non-differentiable by design (m/z matching is a
+/// discrete tolerance lookup, and the modified variants run DP on a discrete
+/// conflict graph). The autodiff wrapper installs `NoGradientBackward` stubs
+/// for `top2_gap` and `candidate_scores` so the kernel composes inside an
+/// `Autodiff<...>` context without panicking, but no gradient must reach the
+/// teacher tensors. This test drives a scalar loss off both float outputs,
+/// calls `.backward()`, and asserts that none of `mz`, `intensity`, or
+/// `precursor` end up with a gradient entry.
+#[test]
+fn autodiff_ranking_propagates_no_gradient_to_teacher() {
+    use burn::tensor::{Tensor as BurnTensor, TensorData};
+
+    use super::fixtures::spectrum_rows;
+
     let device = CudaDevice::default();
     let spectra = reference_spectra();
     let spectra = &spectra[..12];
     let rows = spectrum_rows(spectra);
+    let row_count = rows.precursor.len();
 
-    let config = LinearCosineMetric::ranking_config()
-        .with_batch_start(1)
-        .with_batch_items(10)
-        .with_candidates_per_anchor(7)
-        .with_mz_power(TEST_MZ_POWER)
-        .with_intensity_power(TEST_INTENSITY_POWER)
-        .with_mz_tolerance(TEST_MZ_TOLERANCE)
-        .with_max_peaks(TEST_MAX_PEAKS)
-        .with_seed(12_345)
-        .with_epsilon(TEST_EPSILON);
+    let mz = BurnTensor::<AutodiffBackend, 2>::from_data(
+        TensorData::new(rows.mz.clone(), [row_count, rows.peak_width]),
+        &device,
+    )
+    .require_grad();
+    let intensity = BurnTensor::<AutodiffBackend, 2>::from_data(
+        TensorData::new(rows.intensity.clone(), [row_count, rows.peak_width]),
+        &device,
+    )
+    .require_grad();
+    let precursor = BurnTensor::<AutodiffBackend, 1>::from_data(
+        TensorData::new(rows.precursor.clone(), [row_count]),
+        &device,
+    )
+    .require_grad();
 
-    let teacher = spectrum_batch::<AutodiffBackend>(&rows, &device);
-    let output = ranking_kernel::<AutodiffBackend, LinearCosineMetric>(teacher, config);
+    let teacher =
+        SpectrumBatch::<AutodiffBackend>::new(mz.clone(), intensity.clone(), precursor.clone());
 
-    let candidate_count = config.effective_candidates_per_anchor();
-    assert_eq!(
-        output.candidate_index.dims(),
-        [config.batch_items(), candidate_count]
+    let output = ranking_kernel::<AutodiffBackend, LinearCosineMetric>(
+        teacher,
+        default_ranking_config::<LinearCosineMetric>(),
     );
-    assert_eq!(output.best_position.dims(), [config.batch_items()]);
-    assert_eq!(output.top2_gap.dims(), [config.batch_items()]);
 
-    // Pull every value to make sure the autodiff wrapper hasn't broken
-    // round-tripping through the graph.
-    let _ = output
-        .candidate_index
-        .into_data()
-        .to_vec::<i32>()
-        .expect("candidate indices should be i32");
-    let _ = output
-        .best_position
-        .into_data()
-        .to_vec::<i32>()
-        .expect("best position should be i32");
-    let _ = output
-        .top2_gap
-        .into_data()
-        .to_vec::<f32>()
-        .expect("top-2 gap should be f32");
+    let loss = output.candidate_scores.mean() + output.top2_gap.mean();
+    let gradients = loss.backward();
+
+    assert!(
+        mz.grad(&gradients).is_none(),
+        "ranking_kernel must not register a gradient for teacher.mz \
+         under Autodiff (the kernel is non-differentiable by design)",
+    );
+    assert!(
+        intensity.grad(&gradients).is_none(),
+        "ranking_kernel must not register a gradient for teacher.intensity",
+    );
+    assert!(
+        precursor.grad(&gradients).is_none(),
+        "ranking_kernel must not register a gradient for teacher.precursor",
+    );
 }

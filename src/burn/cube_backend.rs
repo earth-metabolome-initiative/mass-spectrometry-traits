@@ -193,6 +193,7 @@ pub(crate) fn ranking_score_impl<R, F, I, BT, M>(
     IntTensor<CubeBackend<R, F, I, BT>>,
     IntTensor<CubeBackend<R, F, I, BT>>,
     FloatTensor<CubeBackend<R, F, I, BT>>,
+    FloatTensor<CubeBackend<R, F, I, BT>>,
 )
 where
     R: CubeRuntime,
@@ -237,6 +238,7 @@ where
     let candidate_shape = Shape::new([batch_items, candidate_count]);
     let position_shape = Shape::new([batch_items]);
     let gap_shape = Shape::new([batch_items]);
+    let scores_shape = Shape::new([batch_items, candidate_count]);
     let candidate_index = empty_device_dtype(
         teacher_mz.client.clone(),
         teacher_mz.device.clone(),
@@ -255,6 +257,12 @@ where
         gap_shape,
         teacher_mz.dtype,
     );
+    let candidate_scores = empty_device_dtype(
+        teacher_mz.client.clone(),
+        teacher_mz.device.clone(),
+        scores_shape,
+        teacher_mz.dtype,
+    );
 
     let cube_dim = CubeDim::new(&teacher_mz.client, batch_items);
     let cube_count = calculate_cube_count_elemwise(&teacher_mz.client, batch_items, cube_dim);
@@ -270,6 +278,7 @@ where
         candidate_index.clone().into_tensor_arg(),
         best_candidate_position.clone().into_tensor_arg(),
         top2_gap.clone().into_tensor_arg(),
+        candidate_scores.clone().into_tensor_arg(),
         batch_start as u32,
         batch_items as u32,
         config.candidates_per_anchor() as u32,
@@ -282,7 +291,12 @@ where
         config.weighted(),
     );
 
-    (candidate_index, best_candidate_position, top2_gap)
+    (
+        candidate_index,
+        best_candidate_position,
+        top2_gap,
+        candidate_scores,
+    )
 }
 
 impl<R, F, I, BT, M> SpectralKernelBackend<M> for CubeBackend<R, F, I, BT>
@@ -313,7 +327,12 @@ where
     fn ranking_score(
         teacher: SpectrumPrimitive<Self>,
         config: RankingConfig<M>,
-    ) -> (IntTensor<Self>, IntTensor<Self>, FloatTensor<Self>) {
+    ) -> (
+        IntTensor<Self>,
+        IntTensor<Self>,
+        FloatTensor<Self>,
+        FloatTensor<Self>,
+    ) {
         ranking_score_impl::<R, F, I, BT, M>(teacher, config)
     }
 }

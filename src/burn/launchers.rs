@@ -113,6 +113,10 @@ pub fn cross_forward<F: Float, M: SpectralPairScorer>(
 /// * `candidate_index[B, k]`: the `k` partner indices (in local slice coords).
 /// * `best_candidate_position[B]`: position of the highest-scoring candidate.
 /// * `top2_gap[B]`: clamped `best - second_best` score gap.
+/// * `candidate_scores[B, k]`: the per-candidate teacher score (column j is
+///   the score between anchor `i` and `candidate_index[i, j]`), surfaced so
+///   downstream consumers can compute rank-correlation diagnostics without
+///   re-running the scorer.
 ///
 /// Sampling uses an XOR-shift seed combined with a coprime stride so each
 /// anchor sees `k` distinct partners, skips itself, and the schedule is
@@ -125,6 +129,7 @@ pub fn ranking_forward<F: Float, I: Int, M: SpectralPairScorer>(
     candidate_index: &mut Tensor<I>,
     best_candidate_position: &mut Tensor<I>,
     top2_gap: &mut Tensor<F>,
+    candidate_scores: &mut Tensor<F>,
     batch_start: u32,
     batch_items: u32,
     candidates_per_anchor: u32,
@@ -216,6 +221,9 @@ pub fn ranking_forward<F: Float, I: Int, M: SpectralPairScorer>(
             max_peaks,
             weighted,
         );
+
+        candidate_scores[anchor * candidate_scores.stride(0)
+            + candidate_position * candidate_scores.stride(1)] = score;
 
         if score > best_score {
             second_best_score = best_score;

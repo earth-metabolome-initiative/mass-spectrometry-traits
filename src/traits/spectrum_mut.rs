@@ -133,7 +133,7 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::MutationError`] if constructing the new spectrum or
+    /// Returns [`SpectrumMut::MutationError`] if constructing the new spectrum or
     /// adding one of the retained peaks fails.
     ///
     /// # Example
@@ -186,7 +186,7 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
     /// intensity equals `1.0` (base-peak / L∞ normalization).
     ///
     /// The rescaled intensities are computed in `f64` and converted back to
-    /// [`Self::Precision`]. Peaks whose normalized intensity rounds to a
+    /// [`Spectrum::Precision`]. Peaks whose normalized intensity rounds to a
     /// non-positive value at the target precision are dropped, mirroring the
     /// underflow handling used elsewhere in the crate (e.g. `MsEntropyCleanSpectrum`).
     ///
@@ -195,7 +195,7 @@ pub trait SpectrumAlloc: SpectrumMut + Sized {
     ///
     /// # Errors
     ///
-    /// Returns [`Self::MutationError`] if constructing the new spectrum or
+    /// Returns [`SpectrumMut::MutationError`] if constructing the new spectrum or
     /// adding one of the rescaled peaks fails.
     ///
     /// # Example

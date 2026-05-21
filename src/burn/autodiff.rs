@@ -209,38 +209,53 @@ where
     fn ranking_score(
         teacher: SpectrumPrimitive<Self>,
         config: RankingConfig<M>,
-    ) -> (IntTensor<Self>, IntTensor<Self>, FloatTensor<Self>) {
-        match RankingNoGradient::<M>(PhantomData)
-            .prepare::<C>([
-                teacher.mz.node.clone(),
-                teacher.intensity.node.clone(),
-                teacher.precursor.node.clone(),
-            ])
+    ) -> (
+        IntTensor<Self>,
+        IntTensor<Self>,
+        FloatTensor<Self>,
+        FloatTensor<Self>,
+    ) {
+        // Both float outputs are non-differentiable in the spectra. We wrap
+        // each through its own no-grad backward node so the autodiff graph
+        // sees a defined identity for both tensors while propagating no
+        // gradient through them.
+        let nodes = [
+            teacher.mz.node.clone(),
+            teacher.intensity.node.clone(),
+            teacher.precursor.node.clone(),
+        ];
+
+        let (candidate_index, best_position, top2_gap, candidate_scores) = B::ranking_score(
+            SpectrumPrimitive {
+                mz: teacher.mz.primitive,
+                intensity: teacher.intensity.primitive,
+                precursor: teacher.precursor.primitive,
+            },
+            config,
+        );
+
+        let wrapped_top2_gap = match RankingNoGradient::<M>(PhantomData)
+            .prepare::<C>(nodes.clone())
             .compute_bound()
             .stateful()
         {
-            OpsKind::Tracked(prep) => {
-                let (candidate_index, best_position, top2_gap) = B::ranking_score(
-                    SpectrumPrimitive {
-                        mz: teacher.mz.primitive.clone(),
-                        intensity: teacher.intensity.primitive.clone(),
-                        precursor: teacher.precursor.primitive.clone(),
-                    },
-                    config,
-                );
-                (candidate_index, best_position, prep.finish((), top2_gap))
-            }
-            OpsKind::UnTracked(prep) => {
-                let (candidate_index, best_position, top2_gap) = B::ranking_score(
-                    SpectrumPrimitive {
-                        mz: teacher.mz.primitive,
-                        intensity: teacher.intensity.primitive,
-                        precursor: teacher.precursor.primitive,
-                    },
-                    config,
-                );
-                (candidate_index, best_position, prep.finish(top2_gap))
-            }
-        }
+            OpsKind::Tracked(prep) => prep.finish((), top2_gap),
+            OpsKind::UnTracked(prep) => prep.finish(top2_gap),
+        };
+        let wrapped_candidate_scores = match RankingNoGradient::<M>(PhantomData)
+            .prepare::<C>(nodes)
+            .compute_bound()
+            .stateful()
+        {
+            OpsKind::Tracked(prep) => prep.finish((), candidate_scores),
+            OpsKind::UnTracked(prep) => prep.finish(candidate_scores),
+        };
+
+        (
+            candidate_index,
+            best_position,
+            wrapped_top2_gap,
+            wrapped_candidate_scores,
+        )
     }
 }

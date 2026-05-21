@@ -13,7 +13,10 @@ use burn::tensor::backend::Backend;
 
 use geometric_traits::prelude::ScalarSimilarity;
 
-use crate::burn::api::{PairedConfig, PairwiseParams, SpectrumBatch};
+use crate::burn::api::{
+    PairedConfig, PairwiseParams, RankingConfig, SpectralKernelBackend, SpectrumBatch,
+    ranking_kernel,
+};
 use crate::burn::metrics::{EntropyMetric, KernelMetric};
 use crate::prelude::*;
 
@@ -537,4 +540,168 @@ pub fn cpu_modified_linear_entropy(
     .similarity(left, right)
     .map(|(s, _)| s as f32)
     .unwrap_or(0.0)
+}
+
+/// GPU-only self-consistency check on one ranking-kernel output row.
+/// Used by every ranking equivalence test (raw-backend sweep, wrapper
+/// smoke tests, the f16 smoke test) so the same set of invariants is
+/// enforced everywhere. The checks are:
+///
+/// * Every score is finite.
+/// * Every score is in `[-tolerance, 1 + tolerance]`.
+/// * `gpu_row_scores[gpu_best_position]` equals the row's top-1 score
+///   within `tolerance` (catches `best_position` wiring bugs).
+/// * `gpu_top2_gap` equals `(top1 - top2).clamp(0, 1)` within `tolerance`.
+///
+/// Caller passes a `context` string that gets prefixed onto every failure
+/// message, typically the metric name plus any sweep coordinates.
+pub fn assert_ranking_row_self_consistency(
+    context: &str,
+    anchor: usize,
+    gpu_row_scores: &[f32],
+    gpu_best_position: usize,
+    gpu_top2_gap: f32,
+    tolerance: f32,
+) {
+    for (column, &score) in gpu_row_scores.iter().enumerate() {
+        assert!(
+            score.is_finite(),
+            "{context}: non-finite gpu score at anchor {anchor} col {column}",
+        );
+        assert!(
+            (-tolerance..=1.0 + tolerance).contains(&score),
+            "{context}: gpu score {score} outside [0, 1] (slack {tolerance}) at anchor {anchor} col {column}",
+        );
+    }
+    let mut sorted = gpu_row_scores.to_vec();
+    sorted.sort_by(|a, b| b.partial_cmp(a).unwrap_or(core::cmp::Ordering::Equal));
+    let argmax_score = gpu_row_scores[gpu_best_position];
+    assert!(
+        (argmax_score - sorted[0]).abs() < tolerance,
+        "{context}: anchor {anchor}: argmax_score {argmax_score} != top-1 {}",
+        sorted[0],
+    );
+    let expected_gap = (sorted[0] - sorted[1]).clamp(0.0, 1.0);
+    assert!(
+        (gpu_top2_gap - expected_gap).abs() < tolerance,
+        "{context}: anchor {anchor}: top2_gap {gpu_top2_gap} != top1-top2 {expected_gap}",
+    );
+}
+
+/// Shared ranking-kernel config baked at [`DEFAULT_TEST_POINT`]. Mirrors
+/// the `cosine_ranking_config` / `entropy_ranking_config` helpers in
+/// `ranking.rs` but with the parameter point fixed, so every wrapper test
+/// (Autodiff, Fusion, their composition, the minimum-batch edge case)
+/// compares against the same CPU reference values used by the raw-backend
+/// sweep at that point.
+pub fn default_ranking_config<M: KernelMetric>() -> RankingConfig<M> {
+    M::ranking_config()
+        .with_batch_start(1)
+        .with_batch_items(10)
+        .with_candidates_per_anchor(7)
+        .with_mz_power(TEST_MZ_POWER)
+        .with_intensity_power(TEST_INTENSITY_POWER)
+        .with_mz_tolerance(TEST_MZ_TOLERANCE)
+        .with_max_peaks(TEST_MAX_PEAKS)
+        .with_seed(12_345)
+        .with_epsilon(TEST_EPSILON)
+}
+
+/// Entropy variant of [`default_ranking_config`] that also sets the
+/// weighted/unweighted prepass toggle.
+pub fn default_entropy_ranking_config<M: EntropyMetric>(weighted: bool) -> RankingConfig<M> {
+    default_ranking_config::<M>().with_weighted(weighted)
+}
+
+/// Per-cell ranking-kernel equivalence assertion. Shared by the raw-backend
+/// sweep and by each wrapper smoke-test (`Autodiff`, `Fusion`, and their
+/// composition) so the same correctness contract is enforced everywhere.
+///
+/// For each anchor in `[batch_start, batch_start + batch_items)` we trust the
+/// GPU's own `candidate_index` (independently verified by the LCG-replay test
+/// in `ranking.rs`) to identify the sampled partners, then score each pair on
+/// the CPU and compare per cell. We also rebuild the top-1 and top-2 of the
+/// row directly from the GPU scores to verify `best_position` and `top2_gap`
+/// without referencing the CPU reference for those two outputs.
+pub fn assert_ranking_matches_cpu<B, M>(
+    spectra: &[(&'static str, ReferenceSpectrum)],
+    device: &B::Device,
+    config: RankingConfig<M>,
+    cpu_score: impl Fn(&ReferenceSpectrum, &ReferenceSpectrum) -> f32,
+    tolerance: f32,
+) where
+    B: SpectralKernelBackend<M>,
+    M: KernelMetric,
+{
+    let rows = spectrum_rows(spectra);
+    let teacher = spectrum_batch::<B>(&rows, device);
+    let output = ranking_kernel::<B, M>(teacher, config);
+
+    let batch_items = config.batch_items();
+    let batch_start = config.batch_start();
+    let candidate_count = config.effective_candidates_per_anchor();
+    assert!(
+        batch_start + batch_items <= spectra.len(),
+        "test setup: batch slice [{batch_start}, {}) outside spectra (len={})",
+        batch_start + batch_items,
+        spectra.len(),
+    );
+    assert_eq!(
+        output.candidate_index.dims(),
+        [batch_items, candidate_count]
+    );
+    assert_eq!(output.best_position.dims(), [batch_items]);
+    assert_eq!(output.top2_gap.dims(), [batch_items]);
+    assert_eq!(
+        output.candidate_scores.dims(),
+        [batch_items, candidate_count]
+    );
+
+    let candidate_index = output
+        .candidate_index
+        .into_data()
+        .to_vec::<i32>()
+        .expect("candidate indices should be i32");
+    let best_position = output
+        .best_position
+        .into_data()
+        .to_vec::<i32>()
+        .expect("best position should be i32");
+    let top2_gap = output
+        .top2_gap
+        .into_data()
+        .to_vec::<f32>()
+        .expect("top-2 gap should be f32");
+    let candidate_scores = output
+        .candidate_scores
+        .into_data()
+        .to_vec::<f32>()
+        .expect("candidate scores should be f32");
+
+    for anchor in 0..batch_items {
+        let anchor_spectrum = &spectra[batch_start + anchor].1;
+        let row_start = anchor * candidate_count;
+        let row_candidates = &candidate_index[row_start..row_start + candidate_count];
+        let row_scores = &candidate_scores[row_start..row_start + candidate_count];
+
+        assert_ranking_row_self_consistency(
+            M::NAME,
+            anchor,
+            row_scores,
+            best_position[anchor] as usize,
+            top2_gap[anchor],
+            tolerance,
+        );
+
+        for (column, &gpu) in row_scores.iter().enumerate() {
+            let partner_idx = row_candidates[column] as usize;
+            let partner_spectrum = &spectra[batch_start + partner_idx].1;
+            let cpu = cpu_score(anchor_spectrum, partner_spectrum);
+            assert!(
+                (gpu - cpu).abs() < tolerance,
+                "{}: anchor {anchor} col {column}: gpu={gpu} cpu={cpu}",
+                M::NAME,
+            );
+        }
+    }
 }

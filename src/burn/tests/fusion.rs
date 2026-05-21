@@ -13,11 +13,16 @@ use burn_cubecl::CubeBackend;
 use burn_cubecl::cubecl::cuda::CudaRuntime;
 use burn_fusion::Fusion;
 
-use crate::burn::{KernelMetric, LinearCosineMetric, cross_kernel, paired_kernel, ranking_kernel};
+use crate::burn::{
+    KernelMetric, LinearCosineMetric, LinearEntropyMetric, ModifiedLinearCosineMetric,
+    ModifiedLinearEntropyMetric, cross_kernel, paired_kernel,
+};
 
 use super::fixtures::{
     DEFAULT_TEST_POINT, PAIR_CHUNK_SIZE, TEST_EPSILON, TEST_INTENSITY_POWER, TEST_MAX_PEAKS,
-    TEST_MZ_POWER, TEST_MZ_TOLERANCE, all_pair_indices, cpu_linear_cosine, pair_batches, pair_rows,
+    TEST_MZ_POWER, TEST_MZ_TOLERANCE, all_pair_indices, assert_ranking_matches_cpu,
+    cpu_linear_cosine, cpu_linear_entropy, cpu_modified_linear_cosine, cpu_modified_linear_entropy,
+    default_entropy_ranking_config, default_ranking_config, pair_batches, pair_rows,
     pairwise_params_constant, reference_spectra, spectrum_batch, spectrum_rows,
 };
 
@@ -105,44 +110,85 @@ fn fusion_cross_matches_cpu_linear_cosine() {
 }
 
 #[test]
-fn fusion_ranking_runs_and_returns_expected_shapes() {
+fn fusion_ranking_matches_cpu_linear_cosine() {
     let device = CudaDevice::default();
     let spectra = reference_spectra();
     let spectra = &spectra[..12];
-    let rows = spectrum_rows(spectra);
-
-    let config = LinearCosineMetric::ranking_config()
-        .with_batch_start(1)
-        .with_batch_items(10)
-        .with_candidates_per_anchor(7)
-        .with_mz_power(TEST_MZ_POWER)
-        .with_intensity_power(TEST_INTENSITY_POWER)
-        .with_mz_tolerance(TEST_MZ_TOLERANCE)
-        .with_max_peaks(TEST_MAX_PEAKS)
-        .with_seed(12_345)
-        .with_epsilon(TEST_EPSILON);
-
-    let teacher = spectrum_batch::<FusionBackend>(&rows, &device);
-    let output = ranking_kernel::<FusionBackend, LinearCosineMetric>(teacher, config);
-
-    let candidate_count = config.effective_candidates_per_anchor();
-    assert_eq!(
-        output.candidate_index.dims(),
-        [config.batch_items(), candidate_count]
+    assert_ranking_matches_cpu::<FusionBackend, LinearCosineMetric>(
+        spectra,
+        &device,
+        default_ranking_config::<LinearCosineMetric>(),
+        |l, r| cpu_linear_cosine(DEFAULT_TEST_POINT, l, r),
+        1.0e-4,
     );
-    assert_eq!(output.best_position.dims(), [config.batch_items()]);
-    assert_eq!(output.top2_gap.dims(), [config.batch_items()]);
+}
 
-    // Round-trip the data so the fusion runtime materialises everything.
-    let _ = output
-        .candidate_index
-        .into_data()
-        .to_vec::<i32>()
-        .expect("i32");
-    let _ = output
-        .best_position
-        .into_data()
-        .to_vec::<i32>()
-        .expect("i32");
-    let _ = output.top2_gap.into_data().to_vec::<f32>().expect("f32");
+#[test]
+fn fusion_ranking_matches_cpu_modified_linear_cosine() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<FusionBackend, ModifiedLinearCosineMetric>(
+        spectra,
+        &device,
+        default_ranking_config::<ModifiedLinearCosineMetric>(),
+        |l, r| cpu_modified_linear_cosine(DEFAULT_TEST_POINT, l, r),
+        2.0e-4,
+    );
+}
+
+#[test]
+fn fusion_ranking_matches_cpu_linear_entropy_unweighted() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<FusionBackend, LinearEntropyMetric>(
+        spectra,
+        &device,
+        default_entropy_ranking_config::<LinearEntropyMetric>(false),
+        |l, r| cpu_linear_entropy(DEFAULT_TEST_POINT, false, l, r),
+        2.0e-4,
+    );
+}
+
+#[test]
+fn fusion_ranking_matches_cpu_linear_entropy_weighted() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<FusionBackend, LinearEntropyMetric>(
+        spectra,
+        &device,
+        default_entropy_ranking_config::<LinearEntropyMetric>(true),
+        |l, r| cpu_linear_entropy(DEFAULT_TEST_POINT, true, l, r),
+        2.0e-4,
+    );
+}
+
+#[test]
+fn fusion_ranking_matches_cpu_modified_linear_entropy_unweighted() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<FusionBackend, ModifiedLinearEntropyMetric>(
+        spectra,
+        &device,
+        default_entropy_ranking_config::<ModifiedLinearEntropyMetric>(false),
+        |l, r| cpu_modified_linear_entropy(DEFAULT_TEST_POINT, false, l, r),
+        2.0e-4,
+    );
+}
+
+#[test]
+fn fusion_ranking_matches_cpu_modified_linear_entropy_weighted() {
+    let device = CudaDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..12];
+    assert_ranking_matches_cpu::<FusionBackend, ModifiedLinearEntropyMetric>(
+        spectra,
+        &device,
+        default_entropy_ranking_config::<ModifiedLinearEntropyMetric>(true),
+        |l, r| cpu_modified_linear_entropy(DEFAULT_TEST_POINT, true, l, r),
+        2.0e-4,
+    );
 }

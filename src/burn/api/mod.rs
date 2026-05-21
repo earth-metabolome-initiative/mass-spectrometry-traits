@@ -67,12 +67,20 @@ pub trait SpectralKernelBackend<M: KernelMetric>: Backend {
     /// anchor inside the teacher cache, plus top-2 reduce.
     ///
     /// `teacher` has shape `[N, P]`. Returns
-    /// `(candidate_index[B, k], best_position[B], top2_gap[B])` with
-    /// `B = config.batch_items()`.
+    /// `(candidate_index[B, k], best_position[B], top2_gap[B], candidate_scores[B, k])`
+    /// with `B = config.batch_items()`. `candidate_scores[i, j]` is the
+    /// teacher similarity between anchor `i` and `candidate_index[i, j]`,
+    /// surfaced so downstream consumers can compute rank-correlation
+    /// diagnostics without re-running the scorer.
     fn ranking_score(
         teacher: SpectrumPrimitive<Self>,
         config: RankingConfig<M>,
-    ) -> (IntTensor<Self>, IntTensor<Self>, FloatTensor<Self>);
+    ) -> (
+        IntTensor<Self>,
+        IntTensor<Self>,
+        FloatTensor<Self>,
+        FloatTensor<Self>,
+    );
 }
 
 /// Convenience super-trait satisfied by any backend that implements
@@ -266,7 +274,7 @@ where
     BurnTensor::from_primitive(TensorPrimitive::Float(out))
 }
 
-/// Named output of [`ranking_kernel`]. Mirrors the three-tensor result with
+/// Named output of [`ranking_kernel`]. Mirrors the four-tensor result with
 /// labelled fields so downstream callers don't repeat the tuple destructure
 /// at every call site.
 ///
@@ -277,11 +285,20 @@ where
 ///   `candidate_index` that holds the top-1 partner per anchor.
 /// * `top2_gap`: `[batch_items]` float tensor, `score(top-1) - score(top-2)`
 ///   per anchor, clamped to `[0, 1]`.
+/// * `candidate_scores`: `[batch_items, k]` float tensor, column `j` holds
+///   the teacher similarity between anchor `i` and `candidate_index[i, j]`,
+///   computed by the same `KernelMetric` used by the rest of the kernel.
+///   Surfaced so downstream consumers can compute rank-correlation
+///   diagnostics (Pearson, Spearman) against student logits without
+///   re-running the scorer. Values are in `[0, 1]` for the built-in cosine
+///   and entropy metrics. No gradient flows through this tensor under
+///   `Autodiff`.
 #[derive(Debug)]
 pub struct RankingOutput<B: Backend> {
     pub candidate_index: BurnTensor<B, 2, TensorInt>,
     pub best_position: BurnTensor<B, 1, TensorInt>,
     pub top2_gap: BurnTensor<B, 1>,
+    pub candidate_scores: BurnTensor<B, 2>,
 }
 
 /// Public wrapper around [`SpectralKernelBackend::ranking_score`].
@@ -344,6 +361,7 @@ pub struct RankingOutput<B: Backend> {
 ///     assert_eq!(output.candidate_index.dims(), [4, 2]);
 ///     assert_eq!(output.best_position.dims(), [4]);
 ///     assert_eq!(output.top2_gap.dims(), [4]);
+///     assert_eq!(output.candidate_scores.dims(), [4, 2]);
 /// }
 /// #[cfg(not(any(feature = "burn-cuda", feature = "burn-cpu")))]
 /// fn run() {}
@@ -357,12 +375,13 @@ where
     B: SpectralKernelBackend<M>,
     M: KernelMetric,
 {
-    let (candidate_index, best_position, top2_gap) =
+    let (candidate_index, best_position, top2_gap, candidate_scores) =
         B::ranking_score(teacher.into_primitive(), config);
 
     RankingOutput {
         candidate_index: BurnTensor::new(candidate_index),
         best_position: BurnTensor::new(best_position),
         top2_gap: BurnTensor::from_primitive(TensorPrimitive::Float(top2_gap)),
+        candidate_scores: BurnTensor::from_primitive(TensorPrimitive::Float(candidate_scores)),
     }
 }

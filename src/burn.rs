@@ -14,8 +14,8 @@
 //!   with scalar parameters.
 //! * [`ranking_kernel`] — deterministic LCG sampling of `k` non-self partners
 //!   per anchor inside a teacher cache, returning a [`RankingOutput<B>`] with
-//!   named `candidate_index[B, k]`, `best_position[B]`, and `top2_gap[B]`
-//!   fields.
+//!   named `candidate_index[B, k]`, `best_position[B]`, `top2_gap[B]`, and
+//!   `candidate_scores[B, k]` fields.
 //!
 //! ## Architecture
 //!
@@ -26,7 +26,8 @@
 //! `M: SpectralPairScorer` and call `M::score_rows::<F>(...)` from inside
 //! their respective grid topologies (1D for paired/ranking, 2D for cross).
 //! The bulk of the GPU pipeline (launch grid sizing, output allocation,
-//! device assertions) is written once in [`cube_backend`] as a blanket
+//! device assertions) is written once in the internal `cube_backend` module
+//! as a blanket
 //! `impl<R, F, I, BT, M> SpectralKernelBackend<M> for CubeBackend<R, F, I, BT>`,
 //! so a new metric marker that implements [`SpectralPairScorer`] +
 //! [`KernelMetric`] picks up every shape on every backend automatically.

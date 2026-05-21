@@ -132,7 +132,12 @@ where
     fn ranking_score(
         teacher: SpectrumPrimitive<Self>,
         config: RankingConfig<M>,
-    ) -> (IntTensor<Self>, IntTensor<Self>, FloatTensor<Self>) {
+    ) -> (
+        IntTensor<Self>,
+        IntTensor<Self>,
+        FloatTensor<Self>,
+        FloatTensor<Self>,
+    ) {
         let [teacher_rows, teacher_peaks] = teacher.mz.shape.dims();
         let [precursor_rows] = teacher.precursor.shape.dims();
         let max_peaks = config.max_peaks();
@@ -163,6 +168,7 @@ where
         let candidate_shape = Shape::new([batch_items, candidate_count]);
         let position_shape = Shape::new([batch_items]);
         let gap_shape = Shape::new([batch_items]);
+        let scores_shape = Shape::new([batch_items, candidate_count]);
         let dtype = teacher.mz.dtype;
         let candidate_index = TensorIr::uninit(
             client.create_empty_handle(),
@@ -175,6 +181,7 @@ where
             B::IntElem::dtype(),
         );
         let top2_gap = TensorIr::uninit(client.create_empty_handle(), gap_shape, dtype);
+        let candidate_scores = TensorIr::uninit(client.create_empty_handle(), scores_shape, dtype);
         let desc = CustomOpIr::new(
             M::RANKING_FUSION_NAME,
             &[
@@ -182,7 +189,12 @@ where
                 teacher.intensity.into_ir(),
                 teacher.precursor.into_ir(),
             ],
-            &[candidate_index, best_candidate_position, top2_gap],
+            &[
+                candidate_index,
+                best_candidate_position,
+                top2_gap,
+                candidate_scores,
+            ],
         );
 
         let mut outputs = client.register(
@@ -195,6 +207,9 @@ where
                 metric: PhantomData,
             },
         );
+        let candidate_scores = outputs
+            .pop()
+            .expect("ranking custom op has candidate-scores output");
         let top2_gap = outputs
             .pop()
             .expect("ranking custom op has top-2 gap output");
@@ -205,7 +220,12 @@ where
             .pop()
             .expect("ranking custom op has candidate-index output");
 
-        (candidate_index, best_candidate_position, top2_gap)
+        (
+            candidate_index,
+            best_candidate_position,
+            top2_gap,
+            candidate_scores,
+        )
     }
 }
 
@@ -292,17 +312,19 @@ where
     M: KernelMetric,
 {
     fn execute(&self, handles: &mut HandleContainer<B::Handle>) {
-        let (inputs, outputs) = self.desc.as_fixed::<3, 3>();
-        let (candidate_index, best_candidate_position, top2_gap) = B::ranking_score(
-            SpectrumPrimitive {
-                mz: handles.get_float_tensor::<B>(&inputs[0]),
-                intensity: handles.get_float_tensor::<B>(&inputs[1]),
-                precursor: handles.get_float_tensor::<B>(&inputs[2]),
-            },
-            self.config,
-        );
+        let (inputs, outputs) = self.desc.as_fixed::<3, 4>();
+        let (candidate_index, best_candidate_position, top2_gap, candidate_scores) =
+            B::ranking_score(
+                SpectrumPrimitive {
+                    mz: handles.get_float_tensor::<B>(&inputs[0]),
+                    intensity: handles.get_float_tensor::<B>(&inputs[1]),
+                    precursor: handles.get_float_tensor::<B>(&inputs[2]),
+                },
+                self.config,
+            );
         handles.register_int_tensor::<B>(&outputs[0].id, candidate_index);
         handles.register_int_tensor::<B>(&outputs[1].id, best_candidate_position);
         handles.register_float_tensor::<B>(&outputs[2].id, top2_gap);
+        handles.register_float_tensor::<B>(&outputs[3].id, candidate_scores);
     }
 }

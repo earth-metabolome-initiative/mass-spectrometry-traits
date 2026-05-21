@@ -10,8 +10,10 @@ use crate::burn::{
 };
 
 use super::fixtures::{
-    CANONICAL_PARAMETER_POINTS, ParameterPoint, ReferenceSpectrum, TEST_EPSILON, TEST_MAX_PEAKS,
-    cpu_linear_cosine, cpu_linear_entropy, cpu_modified_linear_cosine, cpu_modified_linear_entropy,
+    CANONICAL_PARAMETER_POINTS, DEFAULT_TEST_POINT, ParameterPoint, ReferenceSpectrum,
+    TEST_EPSILON, TEST_INTENSITY_POWER, TEST_MAX_PEAKS, TEST_MZ_POWER, TEST_MZ_TOLERANCE,
+    assert_ranking_matches_cpu, assert_ranking_row_self_consistency, cpu_linear_cosine,
+    cpu_linear_entropy, cpu_modified_linear_cosine, cpu_modified_linear_entropy, reference_spectra,
     reference_spectra_at, spectrum_batch, spectrum_rows,
 };
 
@@ -76,6 +78,21 @@ where
             .into_data()
             .to_vec::<f32>()
             .expect("top-2 gaps should be f32");
+        let candidate_scores_shape = output.candidate_scores.dims();
+        let candidate_scores = output
+            .candidate_scores
+            .into_data()
+            .to_vec::<f32>()
+            .expect("candidate scores should be f32");
+        assert_eq!(
+            candidate_scores_shape,
+            [
+                config.batch_items(),
+                config.effective_candidates_per_anchor()
+            ],
+            "{}: candidate_scores must be [batch_items, k]",
+            M::NAME,
+        );
 
         let candidate_count = config.effective_candidates_per_anchor();
         for anchor in 0..config.batch_items() {
@@ -84,6 +101,7 @@ where
             });
             let start = anchor * candidate_count;
             let actual_candidates = &candidate_index[start..start + candidate_count];
+            let actual_scores = &candidate_scores[start..start + candidate_count];
             assert_eq!(
                 actual_candidates,
                 expected.candidate_indices.as_slice(),
@@ -118,12 +136,41 @@ where
                     );
                 }
             }
+
+            // GPU-only self-consistency: finite + range + argmax-score
+            // == top-1 + gap == top1-top2. Catches argmax wiring / gap
+            // reduction regressions independently of the CPU reference.
+            let context = alloc::format!("{} at {point:?}", M::NAME);
+            assert_ranking_row_self_consistency(
+                &context,
+                anchor,
+                actual_scores,
+                best_position[anchor] as usize,
+                top2_gap[anchor],
+                tolerance,
+            );
+
+            // Per-candidate score equivalence against the LCG-replayed CPU
+            // reference. Catches divergence inside the score reduction even
+            // when the argmax happens to land on the right row.
+            for (column, (&gpu, &cpu)) in actual_scores
+                .iter()
+                .zip(expected.candidate_scores.iter())
+                .enumerate()
+            {
+                assert!(
+                    (gpu - cpu).abs() < tolerance,
+                    "anchor {anchor} col {column} ({}) at {point:?}: gpu={gpu} cpu={cpu}",
+                    M::NAME,
+                );
+            }
         }
     }
 }
 
 struct RankingReference {
     candidate_indices: Vec<i32>,
+    candidate_scores: Vec<f32>,
     best_candidate_position: usize,
     top2_gap: f32,
 }
@@ -168,6 +215,7 @@ fn ranking_reference<M: KernelMetric>(
     let candidates = config.effective_candidates_per_anchor();
     let anchor_spectrum = &spectra[batch_start + anchor].1;
     let mut candidate_indices = Vec::with_capacity(candidates);
+    let mut candidate_scores = Vec::with_capacity(candidates);
 
     for candidate_position in 0..candidates {
         let mut local_partner =
@@ -179,6 +227,7 @@ fn ranking_reference<M: KernelMetric>(
 
         let partner_spectrum = &spectra[batch_start + local_partner].1;
         let score = cpu_score(anchor_spectrum, partner_spectrum);
+        candidate_scores.push(score);
         if score > best_score {
             second_best_score = best_score;
             best_score = score;
@@ -190,6 +239,7 @@ fn ranking_reference<M: KernelMetric>(
 
     RankingReference {
         candidate_indices,
+        candidate_scores,
         best_candidate_position,
         top2_gap: (best_score - second_best_score).clamp(0.0, 1.0),
     }
@@ -255,5 +305,154 @@ fn ranking_matches_cpu_modified_linear_entropy_weighted() {
         |p, l, r| cpu_modified_linear_entropy(p, true, l, r),
         2.0e-4,
         |p| entropy_ranking_config::<ModifiedLinearEntropyMetric>(p, true),
+    );
+}
+
+/// Half-precision smoke test on the CUDA runtime. We instantiate the
+/// ranking kernel under `Cuda<half::f16, i32>` to exercise the
+/// type-genericism of the `F: FloatElement` plumbing across the kernel,
+/// the CubeBackend impl, the `[N, k]` write into `candidate_scores`, and
+/// the readback path. f16 dot products lose ~3 decimal digits versus
+/// f32, so we relax the equivalence tolerance accordingly and only
+/// assert: shape, finiteness, value in `[0, 1]` (with f16 slack), and
+/// argmax/gap relationships that should hold regardless of precision.
+/// The `cargo doc` API claims half precision is available, this test
+/// proves the kernel surfaces it cleanly.
+#[cfg(feature = "burn-cuda")]
+#[test]
+fn ranking_kernel_runs_on_f16() {
+    use crate::burn::api::SpectrumBatch;
+    use burn::tensor::Tensor as BurnTensor;
+    use burn::tensor::TensorData;
+
+    type F16Backend = burn::backend::Cuda<half::f16, i32>;
+    type F16Device = burn::tensor::Device<F16Backend>;
+
+    let device = F16Device::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..8];
+    let rows = spectrum_rows(spectra);
+    let row_count = rows.precursor.len();
+
+    let mz_data: alloc::vec::Vec<half::f16> =
+        rows.mz.iter().copied().map(half::f16::from_f32).collect();
+    let intensity_data: alloc::vec::Vec<half::f16> = rows
+        .intensity
+        .iter()
+        .copied()
+        .map(half::f16::from_f32)
+        .collect();
+    let precursor_data: alloc::vec::Vec<half::f16> = rows
+        .precursor
+        .iter()
+        .copied()
+        .map(half::f16::from_f32)
+        .collect();
+
+    let teacher = SpectrumBatch::<F16Backend>::new(
+        BurnTensor::<F16Backend, 2>::from_data(
+            TensorData::new(mz_data, [row_count, rows.peak_width]),
+            &device,
+        ),
+        BurnTensor::<F16Backend, 2>::from_data(
+            TensorData::new(intensity_data, [row_count, rows.peak_width]),
+            &device,
+        ),
+        BurnTensor::<F16Backend, 1>::from_data(
+            TensorData::new(precursor_data, [row_count]),
+            &device,
+        ),
+    );
+
+    let config = LinearCosineMetric::ranking_config()
+        .with_batch_start(0)
+        .with_batch_items(row_count)
+        .with_candidates_per_anchor(3)
+        .with_mz_power(TEST_MZ_POWER)
+        .with_intensity_power(TEST_INTENSITY_POWER)
+        .with_mz_tolerance(TEST_MZ_TOLERANCE)
+        .with_max_peaks(TEST_MAX_PEAKS)
+        .with_seed(42)
+        .with_epsilon(TEST_EPSILON);
+
+    let output = ranking_kernel::<F16Backend, LinearCosineMetric>(teacher, config);
+
+    let candidate_count = config.effective_candidates_per_anchor();
+    assert_eq!(output.candidate_index.dims(), [row_count, candidate_count]);
+    assert_eq!(output.best_position.dims(), [row_count]);
+    assert_eq!(output.top2_gap.dims(), [row_count]);
+    assert_eq!(output.candidate_scores.dims(), [row_count, candidate_count]);
+
+    // `Cuda<half::f16, i32>` may store intermediate float tensors in F32
+    // (`Flex32`) for compute stability, so explicitly convert the readback
+    // to F32 before draining. We assert only the precision-tolerant
+    // invariants (finiteness, range, ordering), not bit equality.
+    let candidate_scores: alloc::vec::Vec<f32> = output
+        .candidate_scores
+        .into_data()
+        .convert::<f32>()
+        .to_vec::<f32>()
+        .expect("candidate scores should round-trip as f32 after convert");
+    let top2_gap: alloc::vec::Vec<f32> = output
+        .top2_gap
+        .into_data()
+        .convert::<f32>()
+        .to_vec::<f32>()
+        .expect("top2_gap should round-trip as f32 after convert");
+    let best_position = output
+        .best_position
+        .into_data()
+        .to_vec::<i32>()
+        .expect("best position should be i32");
+
+    let f16_slack = 5.0e-2;
+    for (anchor, row_scores) in candidate_scores.chunks(candidate_count).enumerate() {
+        assert_ranking_row_self_consistency(
+            "f16 ranking",
+            anchor,
+            row_scores,
+            best_position[anchor] as usize,
+            top2_gap[anchor],
+            f16_slack,
+        );
+    }
+}
+
+/// Exercise the kernel's lower boundary: `batch_items = 3` (the assert
+/// floor) and `candidates_per_anchor = 2` (also the floor, after the
+/// kernel's `max(2).min(batch_items - 1)` clamp). With three anchors and
+/// two non-self partners each, the coprime-stride LCG has a single
+/// possible schedule per anchor (the two other rows in some order), so
+/// this is the test most likely to surface off-by-one bugs in the stride
+/// math, the `local_partner >= anchor` skip, or the score-write indexing.
+#[test]
+fn ranking_minimum_batch() {
+    let device = TestDevice::default();
+    let spectra = reference_spectra();
+    let spectra = &spectra[..3];
+
+    let config = LinearCosineMetric::ranking_config()
+        .with_batch_start(0)
+        .with_batch_items(3)
+        .with_candidates_per_anchor(2)
+        .with_mz_power(TEST_MZ_POWER)
+        .with_intensity_power(TEST_INTENSITY_POWER)
+        .with_mz_tolerance(TEST_MZ_TOLERANCE)
+        .with_max_peaks(TEST_MAX_PEAKS)
+        .with_seed(7)
+        .with_epsilon(TEST_EPSILON);
+
+    assert_eq!(
+        config.effective_candidates_per_anchor(),
+        2,
+        "effective k must clamp to batch_items-1 at the minimum boundary"
+    );
+
+    assert_ranking_matches_cpu::<TestBackend, LinearCosineMetric>(
+        spectra,
+        &device,
+        config,
+        |l, r| cpu_linear_cosine(DEFAULT_TEST_POINT, l, r),
+        1.0e-4,
     );
 }
