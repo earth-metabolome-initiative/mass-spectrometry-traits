@@ -545,28 +545,29 @@ where
             profile.intensity_power,
             profile.mz_tolerance,
         )?;
-        let progress = self.options.progress();
         #[cfg(feature = "rayon")]
-        let prepared = if self.options.parallel() {
-            prepare_entropy_library_parallel::<P, S, _>(
+        if self.options.parallel() {
+            let progress = self
+                .options
+                .parallel_progress()
+                .map_err(FlashEntropyIndexError::Config)?;
+            let prepared = prepare_entropy_library_parallel::<P, S, _>(
                 profile.mz_power,
                 profile.intensity_power,
                 profile.mz_tolerance,
                 profile.weighted,
                 spectra,
                 progress,
-            )?
-        } else {
-            prepare_entropy_library::<P, S>(
-                profile.mz_power,
-                profile.intensity_power,
-                profile.mz_tolerance,
-                profile.weighted,
-                spectra,
+            )?;
+            return FlashEntropyIndex::from_prepared_library_with_builder(
+                profile,
+                prepared,
                 progress,
-            )?
-        };
-        #[cfg(not(feature = "rayon"))]
+                FlashIndex::<EntropyKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
+            );
+        }
+
+        let progress = self.options.progress_local();
         let prepared = prepare_entropy_library::<P, S>(
             profile.mz_power,
             profile.intensity_power,
@@ -575,16 +576,6 @@ where
             spectra,
             progress,
         )?;
-
-        #[cfg(feature = "rayon")]
-        if self.options.parallel() {
-            return FlashEntropyIndex::from_prepared_library_with_builder(
-                profile,
-                prepared,
-                progress,
-                FlashIndex::<EntropyKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
-            );
-        }
         FlashEntropyIndex::from_prepared_library_with_builder(
             profile,
             prepared,

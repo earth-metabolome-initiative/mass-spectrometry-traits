@@ -44,9 +44,24 @@ pub trait SpectraIndexBuilder<'a>: Sized {
     }
 
     /// Report construction progress to the provided sink.
+    ///
+    /// The sink must be `Sync` so the parallel build can share it across worker
+    /// threads. Single-threaded consumers that cannot satisfy `Sync` should use
+    /// [`Self::progress_local`] instead.
     #[inline]
     fn progress(mut self, progress: &'a (dyn FlashIndexBuildProgress + Sync + 'a)) -> Self {
         self.options_mut().set_progress(progress);
+        self
+    }
+
+    /// Report construction progress to a non-`Sync` sink on the sequential build
+    /// path.
+    ///
+    /// Combining this with [`Self::parallel`] makes [`Self::build`] return a
+    /// configuration error.
+    #[inline]
+    fn progress_local(mut self, progress: &'a (dyn FlashIndexBuildProgress + 'a)) -> Self {
+        self.options_mut().set_progress_local(progress);
         self
     }
 

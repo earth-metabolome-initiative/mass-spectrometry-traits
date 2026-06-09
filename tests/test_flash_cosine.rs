@@ -21,6 +21,34 @@ mod progress;
 
 use progress::{ProgressEvent, RecordingProgress, assert_progress_reports_phase};
 
+/// A deliberately `!Sync` progress sink, usable only via `progress_local`.
+#[derive(Default)]
+struct LocalRecordingProgress {
+    events: core::cell::RefCell<Vec<ProgressEvent>>,
+}
+
+impl LocalRecordingProgress {
+    fn events(&self) -> Vec<ProgressEvent> {
+        self.events.borrow().clone()
+    }
+}
+
+impl FlashIndexBuildProgress for LocalRecordingProgress {
+    fn start_phase(&self, phase: FlashIndexBuildPhase, len: Option<u64>) {
+        self.events
+            .borrow_mut()
+            .push(ProgressEvent::Phase(phase, len));
+    }
+
+    fn inc(&self, delta: u64) {
+        self.events.borrow_mut().push(ProgressEvent::Inc(delta));
+    }
+
+    fn finish(&self) {
+        self.events.borrow_mut().push(ProgressEvent::Finish);
+    }
+}
+
 fn make_spectrum_f64(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
     let mut spectrum =
         GenericSpectrum::with_capacity(precursor, peaks.len()).expect("valid spectrum allocation");
@@ -2171,4 +2199,63 @@ fn modified_search_anti_double_counting() {
     assert_eq!(direct[0].n_matches, 1);
     assert_eq!(modified[0].n_matches, 1);
     assert!((direct[0].score - modified[0].score).abs() < 1e-12);
+}
+
+#[test]
+fn sequential_build_accepts_a_non_sync_progress_sink() {
+    let library = [
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(501.0, &[(100.0, 10.0), (300.0, 20.0)]),
+    ];
+
+    // A `!Sync` sink can only attach through `progress_local`, never `progress`.
+    let local_progress = LocalRecordingProgress::default();
+    let index = FlashCosineIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .sequential()
+        .progress_local(&local_progress)
+        .build(&library)
+        .expect("sequential build should accept a non-Sync progress sink");
+    assert_eq!(index.n_spectra(), 2);
+
+    let events = local_progress.events();
+    assert_progress_reports_phase(&events, FlashIndexBuildPhase::PackFlashPeaks, Some(2));
+    assert_progress_reports_phase(&events, FlashIndexBuildPhase::PrepareSpectra, Some(2));
+    assert!(
+        events.contains(&ProgressEvent::Finish),
+        "non-Sync sink should observe the finish event: {events:?}"
+    );
+}
+
+#[cfg(feature = "rayon")]
+#[test]
+fn parallel_build_with_a_local_progress_sink_is_a_config_error() {
+    let library = [
+        make_spectrum_f64(500.0, &[(100.0, 10.0), (200.0, 20.0)]),
+        make_spectrum_f64(501.0, &[(100.0, 10.0), (300.0, 20.0)]),
+    ];
+
+    let local_progress = LocalRecordingProgress::default();
+    let result = FlashCosineIndex::<f64>::builder()
+        .mz_power(0.0)
+        .intensity_power(1.0)
+        .mz_tolerance(0.1)
+        .parallel()
+        .progress_local(&local_progress)
+        .build(&library);
+    assert!(
+        matches!(
+            result,
+            Err(FlashCosineIndexError::Config(
+                SimilarityConfigError::InvalidParameter("progress_local")
+            ))
+        ),
+        "expected a progress_local config error from the parallel build with a non-Sync sink"
+    );
+    assert!(
+        local_progress.events().is_empty(),
+        "rejected parallel build should not emit progress events"
+    );
 }

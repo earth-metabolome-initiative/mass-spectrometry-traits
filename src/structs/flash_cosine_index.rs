@@ -562,36 +562,20 @@ where
         S: Spectrum + Sync,
     {
         validate_cosine_index_config(self.mz_power, self.intensity_power, self.mz_tolerance)?;
-        let progress = self.options.progress();
-        #[cfg(feature = "rayon")]
-        let prepared = if self.options.parallel() {
-            prepare_cosine_library_parallel::<P, S, _>(
-                self.mz_power,
-                self.intensity_power,
-                self.mz_tolerance,
-                spectra,
-                progress,
-            )?
-        } else {
-            prepare_cosine_library::<P, S>(
-                self.mz_power,
-                self.intensity_power,
-                self.mz_tolerance,
-                spectra,
-                progress,
-            )?
-        };
-        #[cfg(not(feature = "rayon"))]
-        let prepared = prepare_cosine_library::<P, S>(
-            self.mz_power,
-            self.intensity_power,
-            self.mz_tolerance,
-            spectra,
-            progress,
-        )?;
 
         #[cfg(feature = "rayon")]
         if self.options.parallel() {
+            let progress = self
+                .options
+                .parallel_progress()
+                .map_err(FlashCosineIndexError::Config)?;
+            let prepared = prepare_cosine_library_parallel::<P, S, _>(
+                self.mz_power,
+                self.intensity_power,
+                self.mz_tolerance,
+                spectra,
+                progress,
+            )?;
             return FlashCosineIndex::from_prepared_library_with_builder(
                 self.mz_power,
                 self.intensity_power,
@@ -602,6 +586,15 @@ where
                 FlashIndex::<CosineKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
             );
         }
+
+        let progress = self.options.progress_local();
+        let prepared = prepare_cosine_library::<P, S>(
+            self.mz_power,
+            self.intensity_power,
+            self.mz_tolerance,
+            spectra,
+            progress,
+        )?;
         FlashCosineIndex::from_prepared_library_with_builder(
             self.mz_power,
             self.intensity_power,
@@ -1271,36 +1264,19 @@ where
             profile.mz_tolerance,
             profile.score_threshold,
         )?;
-        let progress = self.options.progress();
-        #[cfg(feature = "rayon")]
-        let prepared = if self.options.parallel() {
-            prepare_cosine_library_parallel::<P, S, _>(
-                profile.mz_power,
-                profile.intensity_power,
-                profile.mz_tolerance,
-                spectra,
-                progress,
-            )?
-        } else {
-            prepare_cosine_library::<P, S>(
-                profile.mz_power,
-                profile.intensity_power,
-                profile.mz_tolerance,
-                spectra,
-                progress,
-            )?
-        };
-        #[cfg(not(feature = "rayon"))]
-        let prepared = prepare_cosine_library::<P, S>(
-            profile.mz_power,
-            profile.intensity_power,
-            profile.mz_tolerance,
-            spectra,
-            progress,
-        )?;
-
         #[cfg(feature = "rayon")]
         if self.options.parallel() {
+            let progress = self
+                .options
+                .parallel_progress()
+                .map_err(FlashCosineIndexError::Config)?;
+            let prepared = prepare_cosine_library_parallel::<P, S, _>(
+                profile.mz_power,
+                profile.intensity_power,
+                profile.mz_tolerance,
+                spectra,
+                progress,
+            )?;
             return FlashCosineThresholdIndex::from_prepared_threshold_library_with_builder(
                 profile,
                 prepared,
@@ -1308,6 +1284,15 @@ where
                 FlashIndex::<CosineKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
             );
         }
+
+        let progress = self.options.progress_local();
+        let prepared = prepare_cosine_library::<P, S>(
+            profile.mz_power,
+            profile.intensity_power,
+            profile.mz_tolerance,
+            spectra,
+            progress,
+        )?;
         FlashCosineThresholdIndex::from_prepared_threshold_library_with_builder(
             profile,
             prepared,
@@ -2053,25 +2038,19 @@ where
             self.options.pepmass_filter(),
         );
         validate_cosine_self_similarity_index_config(profile)?;
-        let progress = self.options.progress();
-        let prepared = if self.options.parallel() {
-            prepare_cosine_library_parallel::<P, S, _>(
-                self.mz_power,
-                self.intensity_power,
-                self.mz_tolerance,
-                spectra,
-                progress,
-            )?
-        } else {
-            prepare_cosine_library::<P, S>(
-                self.mz_power,
-                self.intensity_power,
-                self.mz_tolerance,
-                spectra,
-                progress,
-            )?
-        };
+
         if self.options.parallel() {
+            let progress = self
+                .options
+                .parallel_progress()
+                .map_err(FlashCosineIndexError::Config)?;
+            let prepared = prepare_cosine_library_parallel::<P, S, _>(
+                self.mz_power,
+                self.intensity_power,
+                self.mz_tolerance,
+                spectra,
+                progress,
+            )?;
             return FlashCosineSelfSimilarityIndex::from_prepared_self_similarity_library(
                 profile,
                 prepared,
@@ -2079,6 +2058,15 @@ where
                 FlashIndex::<CosineKernel, P>::build_parallel_with_spectrum_id_map_and_progress,
             );
         }
+
+        let progress = self.options.progress_local();
+        let prepared = prepare_cosine_library::<P, S>(
+            self.mz_power,
+            self.intensity_power,
+            self.mz_tolerance,
+            spectra,
+            progress,
+        )?;
         FlashCosineSelfSimilarityIndex::from_prepared_self_similarity_library(
             profile,
             prepared,
@@ -2254,7 +2242,7 @@ impl<P: SpectrumFloat + Send + Sync> FlashCosineSelfSimilarityIndex<P> {
         build_inner: BuildInner,
     ) -> Result<Self, FlashCosineIndexError>
     where
-        G: FlashIndexBuildProgress + Sync + ?Sized,
+        G: FlashIndexBuildProgress + ?Sized,
         BuildInner: FnOnce(
             f64,
             PreparedFlashSpectra<P>,
