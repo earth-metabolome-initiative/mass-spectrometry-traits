@@ -15,10 +15,16 @@ pub mod traits;
 #[cfg(feature = "burn")]
 pub mod burn;
 
+#[cfg(feature = "bhtsne")]
+pub mod tsne;
+
 /// Prelude module for the mass_spectrometry crate.
 pub mod prelude {
     pub use geometric_traits::prelude::ScalarSimilarity;
 
     pub use crate::numeric_validation::{ELECTRON_MASS, MAX_MZ};
     pub use crate::{structs::*, traits::*};
+
+    #[cfg(feature = "bhtsne")]
+    pub use crate::tsne::{SpectralNeighbors, SpectralTsne, SpectralTsneError};
 }
