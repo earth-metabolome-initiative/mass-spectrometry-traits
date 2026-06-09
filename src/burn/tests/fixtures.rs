@@ -594,6 +594,7 @@ pub fn assert_ranking_row_self_consistency(
 /// (Autodiff, Fusion, their composition, the minimum-batch edge case)
 /// compares against the same CPU reference values used by the raw-backend
 /// sweep at that point.
+#[cfg(any(feature = "burn-autodiff", feature = "burn-fusion"))]
 pub fn default_ranking_config<M: KernelMetric>() -> RankingConfig<M> {
     M::ranking_config()
         .with_batch_start(1)
@@ -609,6 +610,7 @@ pub fn default_ranking_config<M: KernelMetric>() -> RankingConfig<M> {
 
 /// Entropy variant of [`default_ranking_config`] that also sets the
 /// weighted/unweighted prepass toggle.
+#[cfg(any(feature = "burn-autodiff", feature = "burn-fusion"))]
 pub fn default_entropy_ranking_config<M: EntropyMetric>(weighted: bool) -> RankingConfig<M> {
     default_ranking_config::<M>().with_weighted(weighted)
 }
