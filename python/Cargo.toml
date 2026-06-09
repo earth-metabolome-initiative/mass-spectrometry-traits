@@ -1,0 +1,14 @@
+[package]
+name = "mass_spectrometry_python"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "mass_spectrometry"
+crate-type = ["cdylib"]
+test = false
+
+[dependencies]
+mass_spectrometry = { path = "..", features = ["std"] }
+pyo3 = { version = "0.28.3", features = ["abi3-py39", "extension-module"] }

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.9.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "mass_spectrometry"
+version = "0.1.0"
+description = "Traits, spectra, similarity metrics, indices, and SPLASH fingerprints for mass spectrometry."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.urls]
+Repository = "https://github.com/earth-metabolome-initiative/mass-spectrometry-traits"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.maturin]
+bindings = "pyo3"
+manifest-path = "python/Cargo.toml"
