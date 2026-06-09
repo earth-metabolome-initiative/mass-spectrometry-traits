@@ -16,7 +16,7 @@ concurrency:
 # CI topology:
 #
 #   prek (fmt only, ~30 s)
-#     ├── test              (cargo test, CPU feature set)
+#     ├── test              (cargo test + benchmark smoke test, CPU feature set)
 #     ├── clippy            (cargo clippy, CPU feature set)
 #     ├── docs              (cargo doc, CPU feature set)
 #     ├── cuda-check        (cargo check + clippy + doc under GPU features)
@@ -69,8 +69,27 @@ jobs:
         with:
           key: test
 
+      # Plain `cargo test` runs the lib unit tests, the integration tests in
+      # `tests/`, and the doctests. It deliberately does NOT use `--all-targets`,
+      # because that pulls in `--benches` and `cargo test` then executes every
+      # Criterion benchmark. Even in Criterion's one-iteration test mode the
+      # per-benchmark setup runs at full scale, and the index benchmarks default
+      # to a one-million-spectrum library, which made this job run for an hour.
+      # Benchmarks are compile-checked by the `clippy` job (which keeps
+      # `--all-targets`) and smoke-run separately below.
       - name: Run tests
-        run: cargo test --all-targets --features ${{ env.CPU_FEATURES }} --locked
+        run: cargo test --features ${{ env.CPU_FEATURES }} --locked
+
+      # Validate that every benchmark still compiles and runs one iteration
+      # without panicking, via Criterion's `--test` mode. The index benchmarks
+      # default to a one-million-spectrum library, so shrink them to tiny inputs
+      # here: this is a correctness smoke test, not a measurement.
+      - name: Smoke-test benchmarks
+        env:
+          INDEX_CONSTRUCTION_SIZES: "64"
+          INDEX_SEARCH_TOP_K_LIBRARY_SIZE: "256"
+          INDEX_SEARCH_TOP_K_QUERY_COUNT: "8"
+        run: cargo bench --benches --features ${{ env.CPU_FEATURES }} --locked -- --test
 
   clippy:
     name: clippy
