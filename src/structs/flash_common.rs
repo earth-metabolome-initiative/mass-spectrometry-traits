@@ -163,6 +163,7 @@ pub trait FlashIndexBuildProgress {
 pub struct FlashIndexBuildOptions<'a> {
     parallel: bool,
     progress: Option<&'a (dyn FlashIndexBuildProgress + Sync + 'a)>,
+    progress_local: Option<&'a (dyn FlashIndexBuildProgress + 'a)>,
     pepmass_filter: PepmassFilter,
 }
 
@@ -171,6 +172,7 @@ impl<'a> Default for FlashIndexBuildOptions<'a> {
         Self {
             parallel: false,
             progress: None,
+            progress_local: None,
             pepmass_filter: PepmassFilter::disabled(),
         }
     }
@@ -192,17 +194,44 @@ impl<'a> FlashIndexBuildOptions<'a> {
         self.parallel = parallel;
     }
 
-    /// Returns the progress sink configured for index construction.
+    /// Returns the `Sync` progress sink for the parallel build path, or an error
+    /// if a sequential-only sink was set, which the parallel build cannot share.
+    #[cfg(feature = "rayon")]
     #[inline]
-    pub(crate) fn progress(&self) -> &(dyn FlashIndexBuildProgress + Sync + 'a) {
+    pub(crate) fn parallel_progress(
+        &self,
+    ) -> Result<&(dyn FlashIndexBuildProgress + Sync + 'a), SimilarityConfigError> {
         static NOOP_PROGRESS: NoopFlashIndexBuildProgress = NoopFlashIndexBuildProgress;
-        self.progress.unwrap_or(&NOOP_PROGRESS)
+        if self.progress_local.is_some() {
+            return Err(SimilarityConfigError::InvalidParameter("progress_local"));
+        }
+        Ok(self.progress.unwrap_or(&NOOP_PROGRESS))
     }
 
-    /// Sets the progress sink used during construction.
+    /// Returns the progress sink for the sequential build path, preferring a
+    /// sequential-only sink and falling back to the `Sync` sink.
+    #[inline]
+    pub(crate) fn progress_local(&self) -> &(dyn FlashIndexBuildProgress + 'a) {
+        static NOOP_PROGRESS: NoopFlashIndexBuildProgress = NoopFlashIndexBuildProgress;
+        if let Some(local) = self.progress_local {
+            local
+        } else if let Some(progress) = self.progress {
+            progress
+        } else {
+            &NOOP_PROGRESS
+        }
+    }
+
+    /// Sets the `Sync` progress sink used during construction.
     #[inline]
     pub(crate) fn set_progress(&mut self, progress: &'a (dyn FlashIndexBuildProgress + Sync + 'a)) {
         self.progress = Some(progress);
+    }
+
+    /// Sets a sequential-only progress sink that need not be `Sync`.
+    #[inline]
+    pub(crate) fn set_progress_local(&mut self, progress: &'a (dyn FlashIndexBuildProgress + 'a)) {
+        self.progress_local = Some(progress);
     }
 
     /// Returns the precursor-mass filter requested at construction time.
