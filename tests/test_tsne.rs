@@ -134,6 +134,86 @@ fn embeds_a_larger_library_with_k_above_one() {
 }
 
 #[test]
+fn embedding_is_deterministic_and_seed_changes_it() {
+    let library = reference_library();
+    let scorer = LinearCosine::new(1.0, 1.0, 0.1).unwrap();
+    let run = |tsne: SpectralTsne| tsne.embed(&library, &scorer).unwrap();
+
+    // Same configuration (default seed) is bit-for-bit reproducible.
+    let a = run(SpectralTsne::new()
+        .perplexity(1.0)
+        .epochs(250)
+        .mz_tolerance(0.1));
+    let b = run(SpectralTsne::new()
+        .perplexity(1.0)
+        .epochs(250)
+        .mz_tolerance(0.1));
+    assert_eq!(a, b, "the default seed must give a reproducible embedding");
+
+    // A different seed changes the layout.
+    let c = run(SpectralTsne::new()
+        .perplexity(1.0)
+        .epochs(250)
+        .mz_tolerance(0.1)
+        .seed(42));
+    assert_ne!(a, c, "a different seed should change the embedding");
+}
+
+#[test]
+fn progress_reports_each_phase_in_order() {
+    let library: Vec<GenericSpectrum> = (0..2).flat_map(|_| reference_library()).collect();
+    let scorer = LinearCosine::new(1.0, 1.0, 0.1).unwrap();
+
+    let mut events: Vec<(SpectralTsnePhase, usize, usize)> = Vec::new();
+    let embedding = SpectralTsne::new()
+        .perplexity(2.0)
+        .epochs(250)
+        .mz_tolerance(0.1)
+        .embed_with_progress(&library, &scorer, &mut |phase, done, total| {
+            events.push((phase, done, total));
+        })
+        .expect("embedding with progress should succeed");
+
+    assert_eq!(embedding.len(), library.len());
+    // Every phase is reported at least once.
+    for phase in [
+        SpectralTsnePhase::Cleaning,
+        SpectralTsnePhase::Indexing,
+        SpectralTsnePhase::Searching,
+        SpectralTsnePhase::Fitting,
+    ] {
+        assert!(
+            events.iter().any(|&(p, _, _)| p == phase),
+            "phase {phase:?} was never reported: {events:?}"
+        );
+    }
+    // Cleaning and Searching reach their totals (one tick per spectrum).
+    assert!(events.contains(&(SpectralTsnePhase::Cleaning, library.len(), library.len())));
+    assert!(events.contains(&(SpectralTsnePhase::Searching, library.len(), library.len())));
+}
+
+#[test]
+fn embed_from_neighbors_matches_the_full_embed() {
+    let library = reference_library();
+    let scorer = LinearCosine::new(1.0, 1.0, 0.1).unwrap();
+    let tsne = SpectralTsne::new()
+        .perplexity(1.0)
+        .epochs(250)
+        .mz_tolerance(0.1);
+
+    // Reproduce the neighbors embed() would compute internally, then feed them
+    // back: same seed and parameters must give the same embedding.
+    let merger = SiriusMergeClosePeaks::new(0.1).unwrap();
+    let cleaned: Vec<GenericSpectrum> = library.iter().map(|s| merger.process(s)).collect();
+    let k = (3.0_f64 * 1.0_f64.min((cleaned.len() as f64 - 1.0) / 3.0)) as usize;
+    let neighbors = scorer.top_k_neighbors(&cleaned, k.max(1)).unwrap();
+
+    let from_neighbors = tsne.embed_from_neighbors(&neighbors, &scorer).unwrap();
+    let full = tsne.embed(&library, &scorer).unwrap();
+    assert_eq!(from_neighbors, full);
+}
+
+#[test]
 fn perplexity_is_clamped_to_the_data_size() {
     // A perplexity far larger than (n - 1) / 3 would otherwise panic inside
     // bhtsne; the wrapper clamps it instead.
