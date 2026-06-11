@@ -66,7 +66,7 @@ pub enum SpectralTsnePhase {
     Indexing,
     /// Searching each spectrum's neighbors, one tick per spectrum.
     Searching,
-    /// Fitting the embedding (a single marker; bhtsne runs the epochs opaquely).
+    /// Fitting the embedding, one tick per epoch.
     Fitting,
 }
 
@@ -423,9 +423,8 @@ impl SpectralTsne {
 
     /// Like [`Self::embed`], reporting [`SpectralTsnePhase`] progress.
     ///
-    /// The Cleaning, Indexing, and Searching phases tick per spectrum; Fitting
-    /// is a single marker, since bhtsne runs the gradient-descent epochs
-    /// internally.
+    /// Cleaning, Indexing, and Searching tick once per spectrum, and Fitting
+    /// ticks once per epoch.
     ///
     /// # Errors
     ///
@@ -460,10 +459,9 @@ impl SpectralTsne {
         let neighbor_sims = scorer.top_k_neighbors_with_progress(&cleaned, k, on_progress)?;
         let neighbors = build_neighbor_rows(n, k, &neighbor_sims, scorer);
 
+        // Opens the band immediately; run_fit then ticks once per epoch.
         on_progress(SpectralTsnePhase::Fitting, 0, self.epochs);
-        let embedding = self.run_fit(n, perplexity, &neighbors);
-        on_progress(SpectralTsnePhase::Fitting, self.epochs, self.epochs);
-        Ok(embedding)
+        Ok(self.run_fit(n, perplexity, &neighbors, on_progress))
     }
 
     /// Embeds from precomputed top-k neighbors, skipping cleaning, the index
@@ -485,7 +483,7 @@ impl SpectralTsne {
     ) -> Result<Vec<[f64; 2]>, SpectralTsneError> {
         let (n, perplexity, k) = self.validate(neighbors.len())?;
         let rows = build_neighbor_rows(n, k, neighbors, distance);
-        Ok(self.run_fit(n, perplexity, &rows))
+        Ok(self.run_fit(n, perplexity, &rows, &mut |_, _, _| {}))
     }
 
     /// Validates the inputs, returning `(n, clamped perplexity, neighbors k)`.
@@ -510,24 +508,31 @@ impl SpectralTsne {
     }
 
     /// Runs the bhtsne fit from fixed-length neighbor rows and a seeded initial
-    /// embedding (so the result is deterministic).
+    /// embedding (so the result is deterministic), ticking
+    /// [`SpectralTsnePhase::Fitting`] once per epoch.
     fn run_fit(
         &self,
         n: usize,
         perplexity: f64,
         neighbors: &[Vec<bhtsne::Neighbor<f64>>],
+        on_progress: &mut ProgressFn<'_>,
     ) -> Vec<[f64; 2]> {
         let initial = self.seeded_initial_embedding(n);
         // One placeholder sample per point; only the count is used here.
         let index_samples: Vec<[f64; 1]> = (0..n).map(|i| [i as f64]).collect();
         let samples: Vec<&[f64]> = index_samples.iter().map(|s| s.as_slice()).collect();
 
+        let epochs = self.epochs;
         let mut tsne = bhtsne::tSNE::new(&samples);
         tsne.embedding_dim(2)
             .perplexity(perplexity)
-            .epochs(self.epochs)
+            .epochs(epochs)
             .learning_rate(self.learning_rate)
-            .initial_embedding(initial);
+            .initial_embedding(initial)
+            // bhtsne calls this sequentially once per epoch on this thread.
+            .epoch_callback(move |epoch, _embedding| {
+                on_progress(SpectralTsnePhase::Fitting, epoch + 1, epochs);
+            });
         tsne.barnes_hut_with_neighbors(self.theta, neighbors);
 
         tsne.embedding()

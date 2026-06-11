@@ -229,9 +229,9 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "bhtsne"
-version = "0.5.9"
+version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58f972a516a9d908ac503ec96bc9f074c582b3a7a9cdbb0d36af2b90ae81db15"
+checksum = "2039d265dab032aee1964a4b0ed1f9504a64b3568a949159a1272434b4e076c9"
 dependencies = [
  "crossbeam",
  "getrandom 0.3.4",

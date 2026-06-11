@@ -190,6 +190,17 @@ fn progress_reports_each_phase_in_order() {
     // Cleaning and Searching reach their totals (one tick per spectrum).
     assert!(events.contains(&(SpectralTsnePhase::Cleaning, library.len(), library.len())));
     assert!(events.contains(&(SpectralTsnePhase::Searching, library.len(), library.len())));
+
+    // Fitting ticks once per epoch and reaches the final epoch.
+    let fitting: Vec<_> = events
+        .iter()
+        .filter(|&&(p, _, _)| p == SpectralTsnePhase::Fitting)
+        .collect();
+    assert!(
+        fitting.len() > 2,
+        "Fitting should tick per epoch, got {fitting:?}"
+    );
+    assert!(events.contains(&(SpectralTsnePhase::Fitting, 250, 250)));
 }
 
 #[test]
