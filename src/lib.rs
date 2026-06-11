@@ -26,5 +26,7 @@ pub mod prelude {
     pub use crate::{structs::*, traits::*};
 
     #[cfg(feature = "bhtsne")]
-    pub use crate::tsne::{SpectralNeighbors, SpectralTsne, SpectralTsneError, SpectralTsnePhase};
+    pub use crate::tsne::{
+        FrameFn, ProgressFn, SpectralNeighbors, SpectralTsne, SpectralTsneError, SpectralTsnePhase,
+    };
 }

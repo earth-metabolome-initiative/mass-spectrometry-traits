@@ -10,8 +10,10 @@
 //! [`LinearEntropy`], [`ModifiedLinearEntropy`].
 //!
 //! [`SpectralTsne::embed_with_progress`] reports coarse [`SpectralTsnePhase`]s,
-//! and [`SpectralTsne::embed_from_neighbors`] reuses neighbors a caller already
-//! has (for example from the same index a similarity graph built).
+//! [`SpectralTsne::embed_with_frames`] also streams the layout once per epoch so
+//! a caller can animate the fit, and [`SpectralTsne::embed_from_neighbors`]
+//! reuses neighbors a caller already has (for example from the same index a
+//! similarity graph built).
 //!
 //! # Example
 //!
@@ -72,6 +74,11 @@ pub enum SpectralTsnePhase {
 
 /// A progress sink: `(phase, done, total)`.
 pub type ProgressFn<'a> = dyn FnMut(SpectralTsnePhase, usize, usize) + 'a;
+
+/// A frame sink: `(epoch, embedding)`, where `embedding` is the current flat
+/// layout (`2 * n` values, `x0, y0, x1, y1, ...`). Borrowed, so streaming the
+/// fit costs no allocation per epoch.
+pub type FrameFn<'a> = dyn FnMut(usize, &[f64]) + 'a;
 
 /// Error returned by [`SpectralTsne::embed`].
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -440,6 +447,28 @@ impl SpectralTsne {
         S: Spectrum<Precision = P>,
         Sim: SpectralNeighbors<P> + SpectralDistanceMetric,
     {
+        self.embed_with_frames(spectra, scorer, on_progress, &mut |_, _| {})
+    }
+
+    /// Like [`Self::embed_with_progress`], also calling `on_frame` once per epoch
+    /// with the current flat embedding (`2 * n` values), so a caller can animate
+    /// the fit converging.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::embed`].
+    pub fn embed_with_frames<P, S, Sim>(
+        &self,
+        spectra: &[S],
+        scorer: &Sim,
+        on_progress: &mut ProgressFn<'_>,
+        on_frame: &mut FrameFn<'_>,
+    ) -> Result<Vec<[f64; 2]>, SpectralTsneError>
+    where
+        P: SpectrumFloat + Send + Sync,
+        S: Spectrum<Precision = P>,
+        Sim: SpectralNeighbors<P> + SpectralDistanceMetric,
+    {
         let (n, perplexity, k) = self.validate(spectra.len())?;
 
         // Clean and own every spectrum for the index.
@@ -461,7 +490,7 @@ impl SpectralTsne {
 
         // Opens the band immediately; run_fit then ticks once per epoch.
         on_progress(SpectralTsnePhase::Fitting, 0, self.epochs);
-        Ok(self.run_fit(n, perplexity, &neighbors, on_progress))
+        Ok(self.run_fit(n, perplexity, &neighbors, on_progress, on_frame))
     }
 
     /// Embeds from precomputed top-k neighbors, skipping cleaning, the index
@@ -483,7 +512,7 @@ impl SpectralTsne {
     ) -> Result<Vec<[f64; 2]>, SpectralTsneError> {
         let (n, perplexity, k) = self.validate(neighbors.len())?;
         let rows = build_neighbor_rows(n, k, neighbors, distance);
-        Ok(self.run_fit(n, perplexity, &rows, &mut |_, _, _| {}))
+        Ok(self.run_fit(n, perplexity, &rows, &mut |_, _, _| {}, &mut |_, _| {}))
     }
 
     /// Validates the inputs, returning `(n, clamped perplexity, neighbors k)`.
@@ -509,13 +538,14 @@ impl SpectralTsne {
 
     /// Runs the bhtsne fit from fixed-length neighbor rows and a seeded initial
     /// embedding (so the result is deterministic), ticking
-    /// [`SpectralTsnePhase::Fitting`] once per epoch.
+    /// [`SpectralTsnePhase::Fitting`] and emitting the layout once per epoch.
     fn run_fit(
         &self,
         n: usize,
         perplexity: f64,
         neighbors: &[Vec<bhtsne::Neighbor<f64>>],
         on_progress: &mut ProgressFn<'_>,
+        on_frame: &mut FrameFn<'_>,
     ) -> Vec<[f64; 2]> {
         let initial = self.seeded_initial_embedding(n);
         // One placeholder sample per point; only the count is used here.
@@ -530,8 +560,9 @@ impl SpectralTsne {
             .learning_rate(self.learning_rate)
             .initial_embedding(initial)
             // bhtsne calls this sequentially once per epoch on this thread.
-            .epoch_callback(move |epoch, _embedding| {
+            .epoch_callback(move |epoch, embedding| {
                 on_progress(SpectralTsnePhase::Fitting, epoch + 1, epochs);
+                on_frame(epoch, embedding);
             });
         tsne.barnes_hut_with_neighbors(self.theta, neighbors);
 

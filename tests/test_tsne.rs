@@ -204,6 +204,42 @@ fn progress_reports_each_phase_in_order() {
 }
 
 #[test]
+fn embed_with_frames_streams_one_layout_per_epoch() {
+    let library = reference_library();
+    let scorer = LinearCosine::new(1.0, 1.0, 0.1).unwrap();
+    let epochs = 250;
+
+    let mut frames: Vec<(usize, Vec<f64>)> = Vec::new();
+    let embedding = SpectralTsne::new()
+        .perplexity(1.0)
+        .epochs(epochs)
+        .mz_tolerance(0.1)
+        .embed_with_frames(
+            &library,
+            &scorer,
+            &mut |_, _, _| {},
+            &mut |epoch, layout| frames.push((epoch, layout.to_vec())),
+        )
+        .expect("embedding with frames should succeed");
+
+    // One frame per epoch, each a full flat 2D layout of finite coordinates.
+    assert_eq!(frames.len(), epochs);
+    assert_eq!(frames.last().unwrap().0, epochs - 1);
+    for (epoch, layout) in &frames {
+        assert_eq!(
+            layout.len(),
+            library.len() * 2,
+            "frame {epoch} has the wrong length"
+        );
+        assert!(layout.iter().all(|v| v.is_finite()));
+    }
+
+    // The final frame is the returned layout, flattened (same coordinate space).
+    let final_flat: Vec<f64> = embedding.iter().flatten().copied().collect();
+    assert_eq!(frames.last().unwrap().1, final_flat);
+}
+
+#[test]
 fn embed_from_neighbors_matches_the_full_embed() {
     let library = reference_library();
     let scorer = LinearCosine::new(1.0, 1.0, 0.1).unwrap();
