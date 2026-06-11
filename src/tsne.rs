@@ -41,13 +41,11 @@
 //! ```
 
 use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
 
 use crate::structs::{
     FlashCosineIndex, FlashCosineIndexError, FlashEntropyIndex, FlashEntropyIndexError,
-    FlashIndexBuildPhase, FlashIndexBuildProgress, FlashSearchResult, GenericSpectrum,
-    GenericSpectrumMutationError, LinearCosine, LinearEntropy, ModifiedLinearCosine,
-    ModifiedLinearEntropy, SimilarityComputationError, SimilarityConfigError,
+    FlashSearchResult, GenericSpectrum, GenericSpectrumMutationError, LinearCosine, LinearEntropy,
+    ModifiedLinearCosine, ModifiedLinearEntropy, SimilarityComputationError, SimilarityConfigError,
     SiriusMergeClosePeaks,
 };
 use crate::traits::{
@@ -64,7 +62,8 @@ const DEFAULT_SEED: u64 = 0x6D61_7373_7370_6563;
 pub enum SpectralTsnePhase {
     /// Merging close peaks, one tick per spectrum.
     Cleaning,
-    /// Building the FLASH index, one tick per spectrum.
+    /// Building the FLASH index (coarse: it runs in parallel, so it reports
+    /// `0/1` then `1/1` rather than per spectrum).
     Indexing,
     /// Searching each spectrum's neighbors, one tick per spectrum.
     Searching,
@@ -138,54 +137,6 @@ pub trait SpectralNeighbors<P: SpectrumFloat> {
     }
 }
 
-/// Forwards a FLASH index build's per-spectrum ticks as
-/// [`SpectralTsnePhase::Indexing`]. `!Sync`, so it attaches through
-/// [`SpectraIndexBuilder::progress_local`].
-struct IndexingProgress<'a, F: ?Sized> {
-    on_progress: RefCell<&'a mut F>,
-    total: Cell<usize>,
-    done: Cell<usize>,
-    packing: Cell<bool>,
-}
-
-impl<'a, F: ?Sized> IndexingProgress<'a, F> {
-    fn new(on_progress: &'a mut F) -> Self {
-        Self {
-            on_progress: RefCell::new(on_progress),
-            total: Cell::new(0),
-            done: Cell::new(0),
-            packing: Cell::new(false),
-        }
-    }
-}
-
-impl<F> FlashIndexBuildProgress for IndexingProgress<'_, F>
-where
-    F: ?Sized + FnMut(SpectralTsnePhase, usize, usize),
-{
-    fn start_phase(&self, phase: FlashIndexBuildPhase, len: Option<u64>) {
-        // Only the per-spectrum packing phase maps cleanly to a spectrum count.
-        let packing = matches!(phase, FlashIndexBuildPhase::PackFlashPeaks);
-        self.packing.set(packing);
-        if packing {
-            self.total.set(len.unwrap_or(0) as usize);
-            self.done.set(0);
-        }
-    }
-
-    fn inc(&self, delta: u64) {
-        if !self.packing.get() {
-            return;
-        }
-        let done = self.done.get() + delta as usize;
-        self.done.set(done);
-        let mut callback = self.on_progress.borrow_mut();
-        (*callback)(SpectralTsnePhase::Indexing, done, self.total.get());
-    }
-
-    fn finish(&self) {}
-}
-
 /// Per-spectrum top-k neighbors from a search closure, self-hit dropped,
 /// reporting [`SpectralTsnePhase::Searching`].
 fn collect_neighbors(
@@ -234,16 +185,15 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for LinearCosine {
         k: usize,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
-        let index = {
-            let reporter = IndexingProgress::new(on_progress);
-            FlashCosineIndex::<P>::builder()
-                .mz_power(self.mz_power())
-                .intensity_power(self.intensity_power())
-                .mz_tolerance(self.mz_tolerance())
-                .progress_local(&reporter)
-                .build(spectra)
-                .map_err(map_cosine_build_error)?
-        };
+        on_progress(SpectralTsnePhase::Indexing, 0, 1);
+        let index = FlashCosineIndex::<P>::builder()
+            .mz_power(self.mz_power())
+            .intensity_power(self.intensity_power())
+            .mz_tolerance(self.mz_tolerance())
+            .parallel()
+            .build(spectra)
+            .map_err(map_cosine_build_error)?;
+        on_progress(SpectralTsnePhase::Indexing, 1, 1);
         collect_neighbors(spectra.len(), k, on_progress, |i| {
             index.search_top_k(&spectra[i], k + 1)
         })
@@ -257,16 +207,15 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for ModifiedLinearCosi
         k: usize,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
-        let index = {
-            let reporter = IndexingProgress::new(on_progress);
-            FlashCosineIndex::<P>::builder()
-                .mz_power(self.mz_power())
-                .intensity_power(self.intensity_power())
-                .mz_tolerance(self.mz_tolerance())
-                .progress_local(&reporter)
-                .build(spectra)
-                .map_err(map_cosine_build_error)?
-        };
+        on_progress(SpectralTsnePhase::Indexing, 0, 1);
+        let index = FlashCosineIndex::<P>::builder()
+            .mz_power(self.mz_power())
+            .intensity_power(self.intensity_power())
+            .mz_tolerance(self.mz_tolerance())
+            .parallel()
+            .build(spectra)
+            .map_err(map_cosine_build_error)?;
+        on_progress(SpectralTsnePhase::Indexing, 1, 1);
         collect_neighbors(spectra.len(), k, on_progress, |i| {
             index.search_modified_top_k(&spectra[i], k + 1)
         })
@@ -280,17 +229,16 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for LinearEntropy {
         k: usize,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
-        let index = {
-            let reporter = IndexingProgress::new(on_progress);
-            FlashEntropyIndex::<P>::builder()
-                .mz_power(self.mz_power())
-                .intensity_power(self.intensity_power())
-                .mz_tolerance(self.mz_tolerance())
-                .weighted(self.is_weighted())
-                .progress_local(&reporter)
-                .build(spectra)
-                .map_err(map_entropy_build_error)?
-        };
+        on_progress(SpectralTsnePhase::Indexing, 0, 1);
+        let index = FlashEntropyIndex::<P>::builder()
+            .mz_power(self.mz_power())
+            .intensity_power(self.intensity_power())
+            .mz_tolerance(self.mz_tolerance())
+            .weighted(self.is_weighted())
+            .parallel()
+            .build(spectra)
+            .map_err(map_entropy_build_error)?;
+        on_progress(SpectralTsnePhase::Indexing, 1, 1);
         collect_neighbors(spectra.len(), k, on_progress, |i| {
             index.search_top_k(&spectra[i], k + 1)
         })
@@ -304,17 +252,16 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for ModifiedLinearEntr
         k: usize,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
-        let index = {
-            let reporter = IndexingProgress::new(on_progress);
-            FlashEntropyIndex::<P>::builder()
-                .mz_power(self.mz_power())
-                .intensity_power(self.intensity_power())
-                .mz_tolerance(self.mz_tolerance())
-                .weighted(self.is_weighted())
-                .progress_local(&reporter)
-                .build(spectra)
-                .map_err(map_entropy_build_error)?
-        };
+        on_progress(SpectralTsnePhase::Indexing, 0, 1);
+        let index = FlashEntropyIndex::<P>::builder()
+            .mz_power(self.mz_power())
+            .intensity_power(self.intensity_power())
+            .mz_tolerance(self.mz_tolerance())
+            .weighted(self.is_weighted())
+            .parallel()
+            .build(spectra)
+            .map_err(map_entropy_build_error)?;
+        on_progress(SpectralTsnePhase::Indexing, 1, 1);
         collect_neighbors(spectra.len(), k, on_progress, |i| {
             index.search_modified_top_k(&spectra[i], k + 1)
         })
