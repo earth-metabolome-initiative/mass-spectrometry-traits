@@ -239,6 +239,50 @@ fn embed_with_frames_streams_one_layout_per_epoch() {
     assert_eq!(frames.last().unwrap().1, final_flat);
 }
 
+fn spectrum(precursor: f64, peaks: &[(f64, f64)]) -> GenericSpectrum {
+    let mut s = GenericSpectrum::with_capacity(precursor, peaks.len()).unwrap();
+    for &(mz, intensity) in peaks {
+        s.add_peak(mz, intensity).unwrap();
+    }
+    s
+}
+
+#[test]
+fn sparse_neighbors_and_similarity_floor_stay_finite() {
+    // s0 and s1 overlap; s2, s3, s4 are disjoint isolates with zero matches, so
+    // their rows are fully padded (exercising the no-neighbor anchor fallback)
+    // and s0/s1 are padded past their single real neighbor. The large finite
+    // neutral distance must not produce NaN/Inf coordinates.
+    let library = vec![
+        spectrum(350.0, &[(100.0, 1.0), (200.0, 2.0), (300.0, 3.0)]),
+        spectrum(350.0, &[(100.0, 1.0), (200.0, 2.0), (300.0, 3.0)]),
+        spectrum(1250.0, &[(1000.0, 1.0), (1100.0, 2.0), (1200.0, 3.0)]),
+        spectrum(2250.0, &[(2000.0, 1.0), (2100.0, 2.0), (2200.0, 3.0)]),
+        spectrum(3250.0, &[(3000.0, 1.0), (3100.0, 2.0), (3200.0, 3.0)]),
+    ];
+    let scorer = LinearCosine::new(1.0, 1.0, 0.1).unwrap();
+
+    // Default (padding neutralization only) and an aggressive similarity floor
+    // (neutralizing weak real neighbors too) must both stay finite.
+    for floor in [0.0, 0.9] {
+        let embedding = SpectralTsne::new()
+            .perplexity(1.0)
+            .epochs(250)
+            .mz_tolerance(0.1)
+            .min_neighbor_similarity(floor)
+            .embed(&library, &scorer)
+            .unwrap_or_else(|e| panic!("embed with floor {floor} should succeed: {e:?}"));
+
+        assert_eq!(embedding.len(), library.len());
+        assert!(
+            embedding
+                .iter()
+                .all(|[x, y]| x.is_finite() && y.is_finite()),
+            "floor {floor} produced non-finite coordinates: {embedding:?}"
+        );
+    }
+}
+
 #[test]
 fn embed_from_neighbors_matches_the_full_embed() {
     let library = reference_library();

@@ -57,6 +57,11 @@ use crate::traits::{
 /// reproducible out of the box.
 const DEFAULT_SEED: u64 = 0x6D61_7373_7370_6563;
 
+/// Padded and floored neighbor slots get this multiple of the maximum metric
+/// distance, large enough that bhtsne's Gaussian affinity underflows to zero,
+/// but finite so the perplexity search never sees `INF`/`NaN`.
+const NEUTRAL_DISTANCE_FACTOR: f64 = 1.0e3;
+
 /// A coarse phase reported by [`SpectralTsne::embed_with_progress`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpectralTsnePhase {
@@ -277,6 +282,7 @@ pub struct SpectralTsne {
     learning_rate: f64,
     mz_tolerance: f64,
     seed: u64,
+    min_neighbor_similarity: f64,
     auto_clean: bool,
 }
 
@@ -289,6 +295,7 @@ impl Default for SpectralTsne {
             learning_rate: 200.0,
             mz_tolerance: 0.1,
             seed: DEFAULT_SEED,
+            min_neighbor_similarity: 0.0,
             auto_clean: true,
         }
     }
@@ -341,6 +348,20 @@ impl SpectralTsne {
     #[must_use]
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
+        self
+    }
+
+    /// Sets a similarity floor below which a neighbor contributes no affinity.
+    ///
+    /// Real neighbors with similarity below `floor` are given an
+    /// effectively-infinite distance, so a spectrum whose matches are all weak
+    /// collapses toward its single nearest neighbor instead of forming an
+    /// equidistant "crown" at the plot edge. The nearest neighbor of each
+    /// spectrum is always kept, so no row becomes all-zero affinity. Defaults to
+    /// `0.0` (off; only the always-on padding neutralization applies).
+    #[must_use]
+    pub fn min_neighbor_similarity(mut self, floor: f64) -> Self {
+        self.min_neighbor_similarity = floor;
         self
     }
 
@@ -433,7 +454,8 @@ impl SpectralTsne {
         }
 
         let neighbor_sims = scorer.top_k_neighbors_with_progress(&cleaned, k, on_progress)?;
-        let neighbors = build_neighbor_rows(n, k, &neighbor_sims, scorer);
+        let neighbors =
+            build_neighbor_rows(n, k, &neighbor_sims, scorer, self.min_neighbor_similarity);
 
         // Opens the band immediately; run_fit then ticks once per epoch.
         on_progress(SpectralTsnePhase::Fitting, 0, self.epochs);
@@ -458,7 +480,7 @@ impl SpectralTsne {
         distance: &D,
     ) -> Result<Vec<[f64; 2]>, SpectralTsneError> {
         let (n, perplexity, k) = self.validate(neighbors.len())?;
-        let rows = build_neighbor_rows(n, k, neighbors, distance);
+        let rows = build_neighbor_rows(n, k, neighbors, distance, self.min_neighbor_similarity);
         Ok(self.run_fit(n, perplexity, &rows, &mut |_, _, _| {}, &mut |_, _| {}))
     }
 
@@ -545,31 +567,56 @@ fn build_neighbor_rows<D: SpectralDistanceMetric>(
     k: usize,
     neighbor_sims: &[Vec<(u32, f64)>],
     distance: &D,
+    min_similarity: f64,
 ) -> Vec<Vec<bhtsne::Neighbor<f64>>> {
     let max_distance = distance.distance(0.0);
+    let neutral_distance = max_distance * NEUTRAL_DISTANCE_FACTOR;
     neighbor_sims
         .iter()
         .enumerate()
-        .map(|(i, row_sims)| neighbor_row(i, n, k, row_sims, distance, max_distance))
+        .map(|(i, row_sims)| {
+            neighbor_row(
+                i,
+                n,
+                k,
+                row_sims,
+                distance,
+                neutral_distance,
+                min_similarity,
+            )
+        })
         .collect()
 }
 
-/// Spectrum `i`'s row of exactly `k` neighbors at their metric distance, padded
-/// with distinct other indices at `max_distance`.
+/// Spectrum `i`'s row of exactly `k` neighbors. Real neighbors get their metric
+/// distance, except weak ones (similarity below `min_similarity`) and padded
+/// slots get `neutral_distance` so they contribute no affinity. The nearest
+/// neighbor is always kept finite, so the row is never all-zero affinity.
 fn neighbor_row<D: SpectralDistanceMetric>(
     i: usize,
     n: usize,
     k: usize,
     row_sims: &[(u32, f64)],
     distance: &D,
-    max_distance: f64,
+    neutral_distance: f64,
+    min_similarity: f64,
 ) -> Vec<bhtsne::Neighbor<f64>> {
     let mut row: Vec<bhtsne::Neighbor<f64>> = row_sims
         .iter()
         .take(k)
-        .map(|&(id, similarity)| bhtsne::Neighbor {
-            index: id as usize,
-            distance: distance.distance(similarity),
+        .enumerate()
+        .map(|(rank, &(id, similarity))| {
+            // Keep the nearest neighbor (rank 0) finite so the row always has at
+            // least one real attractor; neutralize weaker ones below the floor.
+            let neighbor_distance = if rank > 0 && similarity < min_similarity {
+                neutral_distance
+            } else {
+                distance.distance(similarity)
+            };
+            bhtsne::Neighbor {
+                index: id as usize,
+                distance: neighbor_distance,
+            }
         })
         .collect();
 
@@ -579,6 +626,9 @@ fn neighbor_row<D: SpectralDistanceMetric>(
         for neighbor in &row {
             used[neighbor.index] = true;
         }
+        // If the search returned nothing, the first padded slot must stay finite
+        // so the row is not all-zero affinity.
+        let mut needs_anchor = row.is_empty();
         // k <= n - 1, so there are always enough distinct other indices to pad.
         let mut candidate = 0;
         while row.len() < k {
@@ -586,9 +636,15 @@ fn neighbor_row<D: SpectralDistanceMetric>(
                 candidate += 1;
             }
             used[candidate] = true;
+            let padded_distance = if needs_anchor {
+                needs_anchor = false;
+                distance.distance(0.0)
+            } else {
+                neutral_distance
+            };
             row.push(bhtsne::Neighbor {
                 index: candidate,
-                distance: max_distance,
+                distance: padded_distance,
             });
         }
     }
