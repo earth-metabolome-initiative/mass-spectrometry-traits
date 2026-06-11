@@ -142,25 +142,42 @@ pub trait SpectralNeighbors<P: SpectrumFloat> {
     }
 }
 
-/// Per-spectrum top-k neighbors from a search closure, self-hit dropped,
-/// reporting [`SpectralTsnePhase::Searching`].
+/// Per-spectrum top-k neighbors from a read-only search closure, self-hit
+/// dropped, reporting [`SpectralTsnePhase::Searching`].
+///
+/// The queries are independent read-only lookups against the already-built
+/// index, so they run in parallel within chunks; progress is reported once per
+/// chunk from the calling thread, keeping the sink single-threaded (no `Send`,
+/// no lock). `into_par_iter().collect()` preserves order, so `rows[i]` is still
+/// spectrum `i`'s neighbors and the result is identical to a serial run.
 fn collect_neighbors(
     n: usize,
     k: usize,
     on_progress: &mut ProgressFn<'_>,
-    mut query: impl FnMut(usize) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>,
+    query: impl Fn(usize) -> Result<Vec<FlashSearchResult>, SimilarityComputationError> + Sync,
 ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
-    let mut rows = Vec::with_capacity(n);
-    for i in 0..n {
-        let hits = query(i).map_err(SpectralTsneError::Computation)?;
-        rows.push(
-            hits.into_iter()
-                .filter(|hit| hit.spectrum_id as usize != i)
-                .take(k)
-                .map(|hit| (hit.spectrum_id, hit.score))
-                .collect(),
-        );
-        on_progress(SpectralTsnePhase::Searching, i + 1, n);
+    use rayon::prelude::*;
+
+    let chunk = (n / 100).max(1);
+    let mut rows: Vec<Vec<(u32, f64)>> = Vec::with_capacity(n);
+    let mut start = 0;
+    while start < n {
+        let end = (start + chunk).min(n);
+        let part: Result<Vec<Vec<(u32, f64)>>, SimilarityComputationError> = (start..end)
+            .into_par_iter()
+            .map(|i| {
+                let hits = query(i)?;
+                Ok(hits
+                    .into_iter()
+                    .filter(|hit| hit.spectrum_id as usize != i)
+                    .take(k)
+                    .map(|hit| (hit.spectrum_id, hit.score))
+                    .collect())
+            })
+            .collect();
+        rows.extend(part.map_err(SpectralTsneError::Computation)?);
+        on_progress(SpectralTsnePhase::Searching, end, n);
+        start = end;
     }
     Ok(rows)
 }
