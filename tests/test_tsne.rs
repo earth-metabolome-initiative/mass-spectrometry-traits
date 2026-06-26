@@ -60,6 +60,31 @@ fn embeds_a_cosine_library_into_finite_2d_points() {
 }
 
 #[test]
+fn embeds_modified_cosine_with_approximate_neighbor_search() {
+    let library: Vec<GenericSpectrum> = (0..3).flat_map(|_| reference_library()).collect();
+    let scorer = ModifiedLinearCosine::new(1.0, 1.0, 0.1).expect("valid modified cosine config");
+
+    let embedding = SpectralTsne::new()
+        .perplexity(1.0)
+        .epochs(100)
+        .mz_tolerance(0.1)
+        .neighbor_search(NeighborSearch::Approximate {
+            max_query_peaks: 8,
+            rerank_candidates: 64,
+        })
+        .embed(&library, &scorer)
+        .expect("approximate modified embedding should succeed");
+
+    assert_eq!(embedding.len(), library.len());
+    assert!(
+        embedding
+            .iter()
+            .all(|[x, y]| x.is_finite() && y.is_finite()),
+        "all embedded coordinates must be finite: {embedding:?}"
+    );
+}
+
+#[test]
 fn embeds_an_entropy_library_into_finite_2d_points() {
     let library = reference_library();
     let scorer = LinearEntropy::new(0.0, 1.0, 0.1, true).expect("valid entropy config");
@@ -90,7 +115,7 @@ fn top_k_neighbors_excludes_self_and_ranks_by_similarity() {
 
     let k = 2;
     let rows = scorer
-        .top_k_neighbors(&cleaned, k)
+        .top_k_neighbors(&cleaned, k, NeighborSearch::Exact)
         .expect("neighbor search should succeed");
 
     assert_eq!(rows.len(), cleaned.len());
@@ -297,7 +322,9 @@ fn embed_from_neighbors_matches_the_full_embed() {
     let merger = SiriusMergeClosePeaks::new(0.1).unwrap();
     let cleaned: Vec<GenericSpectrum> = library.iter().map(|s| merger.process(s)).collect();
     let k = (3.0_f64 * 1.0_f64.min((cleaned.len() as f64 - 1.0) / 3.0)) as usize;
-    let neighbors = scorer.top_k_neighbors(&cleaned, k.max(1)).unwrap();
+    let neighbors = scorer
+        .top_k_neighbors(&cleaned, k.max(1), NeighborSearch::Exact)
+        .unwrap();
 
     let from_neighbors = tsne.embed_from_neighbors(&neighbors, &scorer).unwrap();
     let full = tsne.embed(&library, &scorer).unwrap();

@@ -1130,6 +1130,98 @@ impl<P: SpectrumFloat + Sync> FlashCosineIndex<P> {
         Ok(())
     }
 
+    /// Approximate modified top-k: a two-stage search that seeds candidate
+    /// generation from the `max_query_peaks` heaviest query peaks (direct and
+    /// precursor-shifted windows), accumulates approximate scores, then exactly
+    /// re-ranks only the `rerank_candidates` best of them.
+    ///
+    /// Both budgets at [`usize::MAX`] are exact (recall 1.0 against
+    /// [`Self::search_modified_top_k`]); smaller values scan fewer postings and
+    /// re-score fewer candidates. This is the index's scalable neighbor-search
+    /// path for the modified metric.
+    pub fn search_modified_top_k_approx<S>(
+        &self,
+        query: &S,
+        k: usize,
+        max_query_peaks: usize,
+        rerank_candidates: usize,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut state = self.new_search_state();
+        self.search_modified_top_k_approx_with_state(
+            query,
+            k,
+            max_query_peaks,
+            rerank_candidates,
+            &mut state,
+        )
+    }
+
+    /// Approximate modified top-k using caller-provided scratch state.
+    pub fn search_modified_top_k_approx_with_state<S>(
+        &self,
+        query: &S,
+        k: usize,
+        max_query_peaks: usize,
+        rerank_candidates: usize,
+        state: &mut SearchState,
+    ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+    where
+        S: Spectrum,
+    {
+        let mut top_k_state = TopKSearchState::new();
+        let mut results = Vec::new();
+        self.for_each_modified_top_k_approx_with_state(
+            query,
+            k,
+            max_query_peaks,
+            rerank_candidates,
+            state,
+            &mut top_k_state,
+            |result| results.push(result),
+        )?;
+        Ok(results)
+    }
+
+    /// Stream approximate modified top-k results using caller-provided scratch.
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_each_modified_top_k_approx_with_state<S, Emit>(
+        &self,
+        query: &S,
+        k: usize,
+        max_query_peaks: usize,
+        rerank_candidates: usize,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) -> Result<(), SimilarityComputationError>
+    where
+        S: Spectrum,
+        Emit: FnMut(FlashSearchResult),
+    {
+        let (query_mz, query_data) = self.prepare_query(query)?;
+        let query_meta = CosineKernel::spectrum_meta(&query_data);
+        let precursor_f64 = ensure_finite(query.precursor_mz().to_f64(), "query_precursor_mz")?;
+        self.inner.for_each_modified_top_k_candidates_with_state(
+            DirectThresholdSearch {
+                query_mz: &query_mz,
+                query_data: &query_data,
+                query_meta: &query_meta,
+                score_threshold: 0.0,
+                query_precursor_mz: Some(precursor_f64),
+            },
+            k,
+            max_query_peaks,
+            rerank_candidates,
+            state,
+            top_k_state,
+            emit,
+        );
+        Ok(())
+    }
+
     /// Prepare query peaks: compute products, collect m/z, validate.
     fn prepare_query<S>(
         &self,
@@ -2999,6 +3091,254 @@ pub enum FlashCosineIndexError {
     #[error(transparent)]
     Computation(SimilarityComputationError),
 }
+
+// ---------------------------------------------------------------------------
+// FlashCosineSketchIndex - sketch-LSH-accelerated modified-cosine search
+// ---------------------------------------------------------------------------
+
+mod sketch_index {
+    use core::marker::PhantomData;
+
+    use super::*;
+    use crate::traits::LshSketcher;
+    use crate::traits::sketcher::{mz_bucket_keys_from_mz, neutral_loss_bucket_keys_from_mz};
+
+    /// Default LSH band count.
+    const DEFAULT_BANDS: usize = 16;
+
+    /// Sketch-LSH-accelerated modified-cosine top-k neighbor index, generic over
+    /// the sketch backend `K`.
+    ///
+    /// Each library spectrum is summarized by two sketches of type `K`, one over
+    /// its m/z buckets (direct matches) and one over its neutral-loss buckets
+    /// `precursor - mz` (shifted matches), and each is banded into its own LSH
+    /// tables. A query retrieves every spectrum that collides in at least one
+    /// band of either space, then exactly re-scores those candidates with the
+    /// modified cosine and ranks them. Banding the two spaces separately is what
+    /// makes modified analogs retrievable: an analog shares the neutral-loss
+    /// buckets but not the m/z buckets, so a single combined sketch dilutes the
+    /// shared keys (its Jaccard is capped near 1/3 however high the modified
+    /// cosine), while the neutral-loss bands collide on the analog directly.
+    /// Recall is governed by the band count and the backend's sketch resolution,
+    /// and is validated against the exact modified top-k.
+    ///
+    /// `K` is any [`LshSketcher`], for example `MinHash<u64, 128>` under the
+    /// `minhash` feature. A bandable HyperLogLog-family sketch (SetSketch or
+    /// HyperMinHash) would implement the same trait and drop in unchanged.
+    pub struct FlashCosineSketchIndex<P: SpectrumFloat, K> {
+        inner: FlashCosineIndex<P>,
+        band_tables: Vec<Vec<(u64, u32)>>,
+        bands: usize,
+        sketcher: PhantomData<K>,
+    }
+
+    impl<P, K> FlashCosineSketchIndex<P, K>
+    where
+        P: SpectrumFloat + Send + Sync,
+        K: LshSketcher,
+    {
+        /// Build with the default band count.
+        pub fn build<S>(
+            spectra: &[S],
+            mz_power: f64,
+            intensity_power: f64,
+            mz_tolerance: f64,
+        ) -> Result<Self, FlashCosineIndexError>
+        where
+            S: Spectrum<Precision = P> + Send + Sync,
+        {
+            Self::build_with_bands(
+                spectra,
+                mz_power,
+                intensity_power,
+                mz_tolerance,
+                DEFAULT_BANDS,
+            )
+        }
+
+        /// Build with an explicit band count. More bands gives higher recall and
+        /// a larger candidate set.
+        pub fn build_with_bands<S>(
+            spectra: &[S],
+            mz_power: f64,
+            intensity_power: f64,
+            mz_tolerance: f64,
+            bands: usize,
+        ) -> Result<Self, FlashCosineIndexError>
+        where
+            S: Spectrum<Precision = P> + Send + Sync,
+        {
+            let inner = FlashCosineIndex::<P>::builder()
+                .mz_power(mz_power)
+                .intensity_power(intensity_power)
+                .mz_tolerance(mz_tolerance)
+                .build(spectra)?;
+
+            let n_spectra = inner.n_spectra() as usize;
+            let tolerance = inner.tolerance();
+
+            let mut band_tables: Vec<Vec<(u64, u32)>> = Vec::new();
+            let mut band_scratch: Vec<u64> = Vec::new();
+            for spec_id in 0..n_spectra as u32 {
+                let (mz, precursor) = inner.inner.spectrum_mz_and_precursor(spec_id);
+                let mz_values: Vec<f64> = mz.collect();
+                band_scratch.clear();
+                // Band the m/z-space and neutral-loss-space sketches separately so
+                // a collision in either space generates a candidate: direct matches
+                // collide in m/z space, modified analogs in neutral-loss space.
+                K::from_keys(mz_bucket_keys_from_mz(mz_values.iter().copied(), tolerance))
+                    .band_hashes_into(bands, &mut band_scratch);
+                K::from_keys(neutral_loss_bucket_keys_from_mz(
+                    mz_values.iter().copied(),
+                    precursor,
+                    tolerance,
+                ))
+                .band_hashes_into(bands, &mut band_scratch);
+                if band_tables.len() != band_scratch.len() {
+                    band_tables = (0..band_scratch.len())
+                        .map(|_| Vec::with_capacity(n_spectra))
+                        .collect();
+                }
+                for (band, &hash) in band_scratch.iter().enumerate() {
+                    band_tables[band].push((hash, spec_id));
+                }
+            }
+
+            for table in &mut band_tables {
+                table.sort_unstable_by_key(|&(hash, _)| hash);
+            }
+
+            Ok(Self {
+                inner,
+                band_tables,
+                bands,
+                sketcher: PhantomData,
+            })
+        }
+
+        /// Number of indexed library spectra.
+        pub fn n_spectra(&self) -> u32 {
+            self.inner.n_spectra()
+        }
+
+        /// Reusable scratch state for repeated queries.
+        pub fn new_search_state(&self) -> SearchState {
+            self.inner.new_search_state()
+        }
+
+        /// Approximate modified-cosine top-k via LSH candidate retrieval and
+        /// exact re-ranking.
+        pub fn search_modified_top_k<S>(
+            &self,
+            query: &S,
+            k: usize,
+        ) -> Result<Vec<FlashSearchResult>, SimilarityComputationError>
+        where
+            S: Spectrum,
+        {
+            let mut state = self.new_search_state();
+            let mut top_k_state = TopKSearchState::new();
+            let mut results = Vec::new();
+            self.for_each_modified_top_k_with_state(
+                query,
+                k,
+                &mut state,
+                &mut top_k_state,
+                |result| results.push(result),
+            )?;
+            Ok(results)
+        }
+
+        /// Stream the LSH modified-cosine top-k using caller-provided scratch.
+        pub fn for_each_modified_top_k_with_state<S, Emit>(
+            &self,
+            query: &S,
+            k: usize,
+            state: &mut SearchState,
+            top_k_state: &mut TopKSearchState,
+            emit: Emit,
+        ) -> Result<(), SimilarityComputationError>
+        where
+            S: Spectrum,
+            Emit: FnMut(FlashSearchResult),
+        {
+            state.reset_diagnostics();
+            let mut top_k = TopKSearchResults::new(k, 0.0, top_k_state);
+            if k == 0 || self.n_spectra() == 0 {
+                top_k.emit(emit);
+                return Ok(());
+            }
+
+            let (query_mz, query_data) = self.inner.prepare_query(query)?;
+            if query_mz.is_empty() {
+                top_k.emit(emit);
+                return Ok(());
+            }
+            let query_meta = CosineKernel::spectrum_meta(&query_data);
+            let precursor = ensure_finite(query.precursor_mz().to_f64(), "query_precursor_mz")?;
+
+            let mut band_scratch: Vec<u64> = Vec::new();
+            // Match the build: band the m/z-space then the neutral-loss-space
+            // sketch, so a collision in either space retrieves the candidate.
+            K::from_keys(mz_bucket_keys_from_mz(
+                query_mz.iter().copied(),
+                self.inner.tolerance(),
+            ))
+            .band_hashes_into(self.bands, &mut band_scratch);
+            K::from_keys(neutral_loss_bucket_keys_from_mz(
+                query_mz.iter().copied(),
+                precursor,
+                self.inner.tolerance(),
+            ))
+            .band_hashes_into(self.bands, &mut band_scratch);
+
+            // Stage 1: LSH candidate retrieval. A candidate is any spectrum that
+            // collides with the query in at least one band.
+            state.ensure_candidate_capacity(self.n_spectra() as usize);
+            for (band, table) in self.band_tables.iter().enumerate() {
+                let Some(&hash) = band_scratch.get(band) else {
+                    break;
+                };
+                let lo = table.partition_point(|&(table_hash, _)| table_hash < hash);
+                let hi = table.partition_point(|&(table_hash, _)| table_hash <= hash);
+                for &(_, spec_id) in &table[lo..hi] {
+                    state.mark_candidate(spec_id);
+                }
+            }
+
+            // Stage 2: exact modified re-rank of the candidate set.
+            let flash = &self.inner.inner;
+            let mut rescore_scratch: Vec<(u32, f64)> = Vec::new();
+            let mut candidates_rescored = 0usize;
+            for &spec_id in state.candidate_touched() {
+                candidates_rescored += 1;
+                let lib_meta = flash.spectrum_meta(spec_id);
+                let (raw, count) = flash.modified_score_for_spectrum(
+                    &query_mz,
+                    &query_data,
+                    precursor,
+                    spec_id,
+                    &mut rescore_scratch,
+                );
+                let score = CosineKernel::finalize(raw, count, &query_meta, lib_meta);
+                if score > 0.0 {
+                    top_k.push(FlashSearchResult {
+                        spectrum_id: flash.public_spectrum_id(spec_id),
+                        score,
+                        n_matches: count,
+                    });
+                }
+            }
+            state.add_candidates_rescored(candidates_rescored);
+            state.reset_candidates();
+            state.add_results_emitted(top_k.len());
+            top_k.emit(emit);
+            Ok(())
+        }
+    }
+}
+
+pub use sketch_index::FlashCosineSketchIndex;
 
 #[cfg(test)]
 mod tests {

@@ -25,8 +25,13 @@ pub mod prelude {
     pub use crate::numeric_validation::{ELECTRON_MASS, MAX_MZ};
     pub use crate::{structs::*, traits::*};
 
+    /// The MinHash sketcher backend for [`crate::structs::FlashCosineSketchIndex`].
+    #[cfg(feature = "minhash")]
+    pub use minhash_rs::prelude::MinHash;
+
     #[cfg(feature = "bhtsne")]
     pub use crate::tsne::{
-        FrameFn, ProgressFn, SpectralNeighbors, SpectralTsne, SpectralTsneError, SpectralTsnePhase,
+        FrameFn, NeighborSearch, ProgressFn, SpectralNeighbors, SpectralTsne, SpectralTsneError,
+        SpectralTsnePhase,
     };
 }

@@ -42,6 +42,8 @@
 
 use alloc::vec::Vec;
 
+#[cfg(feature = "minhash")]
+use crate::structs::FlashCosineSketchIndex;
 use crate::structs::{
     FlashCosineIndex, FlashCosineIndexError, FlashEntropyIndex, FlashEntropyIndexError,
     FlashSearchResult, GenericSpectrum, GenericSpectrumMutationError, LinearCosine, LinearEntropy,
@@ -52,6 +54,8 @@ use crate::traits::{
     SpectraIndexBuilder, SpectralDistanceMetric, SpectralProcessor, Spectrum, SpectrumFloat,
     SpectrumMut,
 };
+#[cfg(feature = "minhash")]
+use minhash_rs::prelude::MinHash;
 
 /// Default RNG seed for the initial embedding, so [`SpectralTsne::embed`] is
 /// reproducible out of the box.
@@ -83,6 +87,46 @@ pub type ProgressFn<'a> = dyn FnMut(SpectralTsnePhase, usize, usize) + 'a;
 /// layout (`2 * n` values, `x0, y0, x1, y1, ...`). Borrowed, so streaming the
 /// fit costs no allocation per epoch.
 pub type FrameFn<'a> = dyn FnMut(usize, &[f64]) + 'a;
+
+/// Speed versus accuracy dial for neighbor search.
+///
+/// Only the modified-cosine scorer ([`ModifiedLinearCosine`]) approximates
+/// today. The other scorers always return exact neighbors and ignore an
+/// [`NeighborSearch::Approximate`] setting.
+///
+/// [`NeighborSearch::Approximate`] runs a two-stage search: candidate
+/// generation is seeded from the `max_query_peaks` heaviest query peaks, and the
+/// best `rerank_candidates` of those are re-scored exactly before ranking. Both
+/// budgets larger means closer to exact (higher recall) and slower. Recall is
+/// measured against the exact modified top-k.
+///
+/// An `Lsh` variant (under the `minhash` feature) retrieves candidates from a
+/// banded MinHash sketch index, banding the m/z and neutral-loss bucket spaces
+/// separately so direct matches and modified analogs both collide, then
+/// re-scores those candidates exactly. Its candidate volume stays roughly flat
+/// as the library grows, so it scales sublinearly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NeighborSearch {
+    /// Exact neighbors: identical to the scorer's exact top-k, just faster than
+    /// all-pairs scoring.
+    Exact,
+    /// Approximate neighbors for the modified-cosine scorer.
+    Approximate {
+        /// Heaviest query peaks that seed candidate generation.
+        max_query_peaks: usize,
+        /// Best partial-score candidates re-scored exactly.
+        rerank_candidates: usize,
+    },
+    /// LSH neighbors for the modified-cosine scorer, from a banded MinHash
+    /// sketch index over the m/z and neutral-loss bucket spaces.
+    #[cfg(feature = "minhash")]
+    Lsh {
+        /// LSH bands per key space. Fewer bands means a looser, higher-recall,
+        /// larger candidate set. The m/z and neutral-loss spaces each get this
+        /// many bands.
+        bands: usize,
+    },
+}
 
 /// Error returned by [`SpectralTsne::embed`].
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -125,6 +169,7 @@ pub trait SpectralNeighbors<P: SpectrumFloat> {
         &self,
         spectra: &[GenericSpectrum<P>],
         k: usize,
+        search: NeighborSearch,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError>;
 
@@ -137,8 +182,9 @@ pub trait SpectralNeighbors<P: SpectrumFloat> {
         &self,
         spectra: &[GenericSpectrum<P>],
         k: usize,
+        search: NeighborSearch,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
-        self.top_k_neighbors_with_progress(spectra, k, &mut |_, _, _| {})
+        self.top_k_neighbors_with_progress(spectra, k, search, &mut |_, _, _| {})
     }
 }
 
@@ -205,6 +251,7 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for LinearCosine {
         &self,
         spectra: &[GenericSpectrum<P>],
         k: usize,
+        _search: NeighborSearch,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
         on_progress(SpectralTsnePhase::Indexing, 0, 1);
@@ -227,9 +274,25 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for ModifiedLinearCosi
         &self,
         spectra: &[GenericSpectrum<P>],
         k: usize,
+        search: NeighborSearch,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
         on_progress(SpectralTsnePhase::Indexing, 0, 1);
+        #[cfg(feature = "minhash")]
+        if let NeighborSearch::Lsh { bands } = search {
+            let lsh = FlashCosineSketchIndex::<P, MinHash<u32, 128>>::build_with_bands(
+                spectra,
+                self.mz_power(),
+                self.intensity_power(),
+                self.mz_tolerance(),
+                bands,
+            )
+            .map_err(map_cosine_build_error)?;
+            on_progress(SpectralTsnePhase::Indexing, 1, 1);
+            return collect_neighbors(spectra.len(), k, on_progress, |i| {
+                lsh.search_modified_top_k(&spectra[i], k + 1)
+            });
+        }
         let index = FlashCosineIndex::<P>::builder()
             .mz_power(self.mz_power())
             .intensity_power(self.intensity_power())
@@ -238,8 +301,21 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for ModifiedLinearCosi
             .build(spectra)
             .map_err(map_cosine_build_error)?;
         on_progress(SpectralTsnePhase::Indexing, 1, 1);
-        collect_neighbors(spectra.len(), k, on_progress, |i| {
-            index.search_modified_top_k(&spectra[i], k + 1)
+        collect_neighbors(spectra.len(), k, on_progress, |i| match search {
+            NeighborSearch::Exact => index.search_modified_top_k(&spectra[i], k + 1),
+            NeighborSearch::Approximate {
+                max_query_peaks,
+                rerank_candidates,
+            } => index.search_modified_top_k_approx(
+                &spectra[i],
+                k + 1,
+                max_query_peaks,
+                rerank_candidates,
+            ),
+            #[cfg(feature = "minhash")]
+            NeighborSearch::Lsh { .. } => {
+                unreachable!("Lsh is handled before the exact index build")
+            }
         })
     }
 }
@@ -249,6 +325,7 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for LinearEntropy {
         &self,
         spectra: &[GenericSpectrum<P>],
         k: usize,
+        _search: NeighborSearch,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
         on_progress(SpectralTsnePhase::Indexing, 0, 1);
@@ -272,6 +349,7 @@ impl<P: SpectrumFloat + Send + Sync> SpectralNeighbors<P> for ModifiedLinearEntr
         &self,
         spectra: &[GenericSpectrum<P>],
         k: usize,
+        _search: NeighborSearch,
         on_progress: &mut ProgressFn<'_>,
     ) -> Result<Vec<Vec<(u32, f64)>>, SpectralTsneError> {
         on_progress(SpectralTsnePhase::Indexing, 0, 1);
@@ -301,6 +379,7 @@ pub struct SpectralTsne {
     seed: u64,
     min_neighbor_similarity: f64,
     auto_clean: bool,
+    neighbor_search: NeighborSearch,
 }
 
 impl Default for SpectralTsne {
@@ -314,6 +393,7 @@ impl Default for SpectralTsne {
             seed: DEFAULT_SEED,
             min_neighbor_similarity: 0.0,
             auto_clean: true,
+            neighbor_search: NeighborSearch::Exact,
         }
     }
 }
@@ -387,6 +467,15 @@ impl SpectralTsne {
     #[must_use]
     pub fn auto_clean(mut self, auto_clean: bool) -> Self {
         self.auto_clean = auto_clean;
+        self
+    }
+
+    /// Sets the neighbor-search speed/accuracy dial. Defaults to
+    /// [`NeighborSearch::Exact`]. Only the modified-cosine scorer approximates;
+    /// other scorers ignore an [`NeighborSearch::Approximate`] setting.
+    #[must_use]
+    pub fn neighbor_search(mut self, neighbor_search: NeighborSearch) -> Self {
+        self.neighbor_search = neighbor_search;
         self
     }
 
@@ -470,7 +559,8 @@ impl SpectralTsne {
             on_progress(SpectralTsnePhase::Cleaning, i + 1, n);
         }
 
-        let neighbor_sims = scorer.top_k_neighbors_with_progress(&cleaned, k, on_progress)?;
+        let neighbor_sims =
+            scorer.top_k_neighbors_with_progress(&cleaned, k, self.neighbor_search, on_progress)?;
         let neighbors =
             build_neighbor_rows(n, k, &neighbor_sims, scorer, self.min_neighbor_similarity);
 
@@ -539,9 +629,8 @@ impl SpectralTsne {
         let samples: Vec<&[f64]> = index_samples.iter().map(|s| s.as_slice()).collect();
 
         let epochs = self.epochs;
-        let mut tsne = bhtsne::tSNE::new(&samples);
-        tsne.embedding_dim(2)
-            .perplexity(perplexity)
+        let mut tsne = bhtsne::tSNE::<f64, &[f64], 2>::new(&samples);
+        tsne.perplexity(perplexity)
             .epochs(epochs)
             .learning_rate(self.learning_rate)
             .initial_embedding(initial)

@@ -23,6 +23,7 @@ pub use flash_common::{
     FlashSearchDiagnostics, FlashSearchResult, NoopFlashIndexBuildProgress,
     NoopFlashRowSearchProgress, PepmassFilter, SearchState, TopKSearchState,
 };
+pub use flash_cosine_index::FlashCosineSketchIndex;
 pub use flash_cosine_index::{
     FlashCosineIndex, FlashCosineIndexBuilder, FlashCosineIndexError, FlashCosineThresholdIndex,
     FlashCosineThresholdIndexBuilder,

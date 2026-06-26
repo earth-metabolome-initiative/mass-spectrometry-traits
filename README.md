@@ -61,6 +61,8 @@ Flash indices are generic over their stored peak precision, so the default `f64`
 
 Index construction uses builders so parallel construction, progress reporting, and optional PEPMASS filtering stay on one API path. The crate provides small `FlashIndexBuildProgress` and `FlashRowSearchProgress` traits for custom reporters, and with the `indicatif` feature enabled an `indicatif::ProgressBar` can be passed directly. The PEPMASS precursor index is only built when a PEPMASS filter is enabled on the builder. The one-shot self-similarity index can be consumed as a Rayon parallel iterator, and row selections can attach progress that reports one tick per completed query row.
 
+For modified-cosine neighbor search at scale, `FlashCosineIndex::search_modified_top_k_approx` is a two-stage approximate path. It seeds candidate generation from the `max_query_peaks` heaviest query peaks (their direct and precursor-shifted windows), then re-scores only the `rerank_candidates` best of those exactly before ranking. Both budgets set to `usize::MAX` reproduce the exact `search_modified_top_k` result. Smaller budgets scan fewer postings and re-score fewer candidates, trading recall (the share of the exact top-k neighbors recovered) for speed. The same dial is exposed to the t-SNE wrapper through `SpectralTsne::neighbor_search` with `NeighborSearch::Approximate { max_query_peaks, rerank_candidates }`, which defaults to `NeighborSearch::Exact`.
+
 ```rust
 use mass_spectrometry::prelude::*;
 

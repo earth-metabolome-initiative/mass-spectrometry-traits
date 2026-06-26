@@ -1,6 +1,7 @@
 //! Submodule defining traits for Mass Spectrometry
 
 pub mod reference_spectra;
+pub mod sketcher;
 pub mod spectra;
 pub mod spectra_index;
 pub mod spectra_index_builder;
@@ -35,6 +36,7 @@ pub use reference_spectra::{
     TebufenozideSpectrum, TeflubenzuronSpectrum, ThidiazuronSpectrum, ThiophanateSpectrum,
     TriadimefonSpectrum, TriflumuronSpectrum,
 };
+pub use sketcher::{LshSketcher, Sketcher, sketch_spectrum, spectrum_sketch_keys};
 pub use spectra::Spectra;
 pub use spectra_index::SpectraIndex;
 pub use spectra_index_builder::SpectraIndexBuilder;

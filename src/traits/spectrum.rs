@@ -561,7 +561,6 @@ pub trait AnnotatedSpectrum: Spectrum {
 
 #[cfg(test)]
 mod tests {
-    use geometric_traits::prelude::*;
     use multi_ranged::SimpleRange;
 
     use super::*;

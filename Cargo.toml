@@ -17,6 +17,7 @@ indicatif = ["std", "dep:indicatif"]
 mem_size = ["dep:mem_dbg_crate", "mem_dbg_crate/derive", "mem_dbg_crate/half", "geometric-traits/mem_size"]
 mem_dbg = ["std", "mem_size", "mem_dbg_crate/std", "geometric-traits/mem_dbg"]
 proptest = ["dep:proptest"]
+minhash = ["dep:minhash-rs"]
 rayon = ["std", "dep:rayon"]
 bhtsne = ["std", "rayon", "dep:bhtsne"]
 bhtsne-wasm = ["bhtsne", "bhtsne/wasm_js"]
@@ -28,7 +29,7 @@ burn-cpu = ["burn", "burn/cpu"]
 burn-wgpu = ["burn", "burn/wgpu"]
 
 [dependencies]
-geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", default-features = false, features = ["alloc"] }
+geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", branch = "main", default-features = false, features = ["alloc"] }
 num-traits = { version = "0.2", default-features = false }
 half = { version = "2.7.1", default-features = false, features = ["num-traits"] }
 multi_ranged = { version = "0.1.1", default-features = false }
@@ -40,18 +41,35 @@ mem_dbg_crate = { package = "mem_dbg", version = "0.4.1", default-features = fal
 indicatif = { version = "0.18", optional = true }
 proptest = { version = "1.6", optional = true }
 rayon = { version = "1.11", optional = true }
-bhtsne = { version = "0.5.10", default-features = false, optional = true }
+bhtsne = { git = "https://github.com/frjnn/bhtsne", branch = "master", default-features = false, optional = true }
 burn = { version = "=0.21.0", default-features = false, optional = true }
 burn-cubecl = { version = "=0.21.0", default-features = false, optional = true }
 burn-fusion = { version = "=0.21.0", default-features = false, optional = true }
 burn-ir = { version = "=0.21.0", default-features = false, optional = true }
 cubecl = { version = "=0.10.0", default-features = false, optional = true }
+minhash-rs = { version = "0.3.2", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.6"
 csv = "1"
 zstd = "0.13"
+# For the spectral_tsne_timing example: the harmonized MS2 dataset loader. The [patch] below
+# redirects mascot-rs's git dependency on this crate back to this local working copy, so the example
+# exercises the local sources and the spectrum types unify.
+mascot-rs = { path = "../mascot-rs" }
+pollster = "0.4"
+# For the fitsne_npc_plot example: the GPU FIt-SNE crate, driven on the CUDA runtime. Only the
+# direct-cosine neighbor graph is built here (via the Flash index), then handed to fitsne. The
+# CudaRuntime type is named through fitsne's own cubecl re-export, so no direct cubecl dep is needed
+# (which would clash with the optional `cubecl =0.10.0` burn dependency above).
+fitsne = { path = "../fitsne", features = ["cuda"] }
+
+# mascot-rs depends on this crate from git. Patch it to the local working copy so the example builds
+# against these sources, not the published branch. Only dev builds (the example) pull mascot-rs, so a
+# plain `cargo build` reports this patch as unused, which is expected.
+[patch."https://github.com/earth-metabolome-initiative/mass-spectrometry-traits"]
+mass_spectrometry = { path = "." }
 
 [[bench]]
 name = "hungarian_cosine"
@@ -82,6 +100,10 @@ name = "index_top_k_large"
 harness = false
 
 [[bench]]
+name = "index_modified_top_k"
+harness = false
+
+[[bench]]
 name = "pairwise_linear_cosine_graph"
 harness = false
 
@@ -96,3 +118,47 @@ harness = false
 [[example]]
 name = "pairwise_timing"
 required-features = ["burn", "burn-cuda", "rayon"]
+
+[[example]]
+name = "spectral_tsne_timing"
+required-features = ["bhtsne"]
+
+[[example]]
+name = "pairwise_index_timing"
+required-features = ["rayon"]
+
+[[example]]
+name = "spectral_tsne_npc_plot"
+required-features = ["bhtsne"]
+
+[[example]]
+name = "fitsne_npc_plot"
+required-features = ["rayon"]
+
+[[example]]
+name = "bhtsne_npc_plot"
+required-features = ["bhtsne"]
+
+[[example]]
+name = "tsne_recall_effect"
+required-features = ["bhtsne", "minhash"]
+
+[[example]]
+name = "minhash_analog_behavior"
+required-features = ["minhash"]
+
+[[example]]
+name = "spectral_tsne_lsh_timing"
+required-features = ["bhtsne", "minhash"]
+
+[[example]]
+name = "spectral_tsne_lsh_npc_plot"
+required-features = ["bhtsne", "minhash"]
+
+[[example]]
+name = "spectral_tsne_stratified_control"
+required-features = ["bhtsne", "minhash"]
+
+[[example]]
+name = "lsh_vs_exact_metrics"
+required-features = ["rayon", "minhash"]

@@ -1866,6 +1866,9 @@ pub struct SearchState {
     acc: DenseAccumulator,
     matched_products: SearchBitVec,
     direct_scores: Vec<f64>,
+    modified_rescore_scratch: Vec<(u32, f64)>,
+    modified_shortlist: Vec<(f64, u32, u32)>,
+    matched_product_touched: Vec<u32>,
     candidate_spectra: SearchBitVec,
     candidate_touched: Vec<u32>,
     block_upper_bounds: Vec<f64>,
@@ -1884,6 +1887,9 @@ impl SearchState {
             acc: DenseAccumulator::new(),
             matched_products: SearchBitVec::new(),
             direct_scores: Vec::new(),
+            modified_rescore_scratch: Vec::new(),
+            modified_shortlist: Vec::new(),
+            matched_product_touched: Vec::new(),
             candidate_spectra: SearchBitVec::new(),
             candidate_touched: Vec::new(),
             block_upper_bounds: Vec::new(),
@@ -2923,6 +2929,119 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
         (raw, n_matches)
     }
 
+    /// Exact modified (direct + precursor-shifted) score for a single library
+    /// spectrum, reproducing [`Self::accumulate_modified_matches_with_state`]
+    /// for that spectrum: direct matches, then shifted matches with the same
+    /// anti-double-counting upgrade rule (a library peak matched both ways keeps
+    /// the larger of the two pair scores, counted once).
+    ///
+    /// `direct_scratch` is reusable scratch holding the direct `(library peak,
+    /// pair score)` matches in ascending peak order so the shifted pass can
+    /// merge against them without per-call allocation.
+    pub(crate) fn modified_score_for_spectrum<Q: SpectrumFloat>(
+        &self,
+        query_mz: &[Q],
+        query_data: &[Q],
+        query_precursor_mz: f64,
+        spec_id: u32,
+        direct_scratch: &mut Vec<(u32, f64)>,
+    ) -> (f64, usize) {
+        let offset_start = self.spectrum_offsets[spec_id as usize] as usize;
+        let offset_end = self.spectrum_offsets[spec_id as usize + 1] as usize;
+        let library_mz = &self.spectrum_mz[offset_start..offset_end];
+        let library_data = &self.spectrum_data[offset_start..offset_end];
+        let library_precursor = self.spectrum_precursor_mz[spec_id as usize].to_f64();
+        let tolerance = self.tolerance;
+
+        direct_scratch.clear();
+        let mut raw = 0.0_f64;
+        let mut n_matches = 0usize;
+
+        // Phase 1: direct matches (library m/z within tolerance of query m/z).
+        // Records every in-window match, including zero-score ones, matching the
+        // dense path's unconditional accumulate-and-count.
+        let mut library_index = 0usize;
+        for (query_index, &query_mz_value) in query_mz.iter().enumerate() {
+            let qmz = query_mz_value.to_f64();
+            while library_index < library_mz.len()
+                && library_mz[library_index].to_f64() < qmz - tolerance
+            {
+                library_index += 1;
+            }
+            if library_index < library_mz.len()
+                && library_mz[library_index].to_f64() <= qmz + tolerance
+            {
+                let score = K::pair_score(
+                    query_data[query_index].to_f64(),
+                    library_data[library_index].to_f64(),
+                );
+                raw += score;
+                n_matches += 1;
+                direct_scratch.push((library_index as u32, score));
+                library_index += 1;
+            }
+        }
+
+        // Phase 2: shifted (neutral-loss) matches. A library peak `p` matches a
+        // query peak `q` when `p_mz ~= q_mz + shift`, `shift = library_precursor
+        // - query_precursor`, which is exactly the neutral-loss condition
+        // `|（library_precursor - p_mz) - (query_precursor - q_mz)| <= tolerance`.
+        let shift = library_precursor - query_precursor_mz;
+        let mut library_index = 0usize;
+        let mut direct_index = 0usize;
+        for (query_index, &query_mz_value) in query_mz.iter().enumerate() {
+            let target = query_mz_value.to_f64() + shift;
+            while library_index < library_mz.len()
+                && library_mz[library_index].to_f64() < target - tolerance
+            {
+                library_index += 1;
+            }
+            if library_index < library_mz.len()
+                && library_mz[library_index].to_f64() <= target + tolerance
+            {
+                let peak = library_index as u32;
+                let shifted_score = K::pair_score(
+                    query_data[query_index].to_f64(),
+                    library_data[library_index].to_f64(),
+                );
+                while direct_index < direct_scratch.len() && direct_scratch[direct_index].0 < peak {
+                    direct_index += 1;
+                }
+                if direct_index < direct_scratch.len() && direct_scratch[direct_index].0 == peak {
+                    // Already matched directly: upgrade to the larger pair score.
+                    let direct_score = direct_scratch[direct_index].1;
+                    if shifted_score > direct_score {
+                        raw += shifted_score - direct_score;
+                    }
+                } else {
+                    raw += shifted_score;
+                    n_matches += 1;
+                }
+                library_index += 1;
+            }
+        }
+
+        (raw, n_matches)
+    }
+
+    /// The packed product m/z values (as `f64`) and precursor m/z of one library
+    /// spectrum, used to derive its sketch bucket keys at index build time.
+    pub(crate) fn spectrum_mz_and_precursor(
+        &self,
+        spec_id: u32,
+    ) -> (impl Iterator<Item = f64> + '_, f64) {
+        let offset_start = self.spectrum_offsets[spec_id as usize] as usize;
+        let offset_end = self.spectrum_offsets[spec_id as usize + 1] as usize;
+        let precursor = self.spectrum_precursor_mz[spec_id as usize].to_f64();
+        (
+            self.spectrum_mz[offset_start..offset_end]
+                .iter()
+                .copied()
+                .map(SpectrumFloat::to_f64),
+            precursor,
+        )
+    }
+
     fn for_each_neutral_loss_peak_in_window(
         &self,
         neutral_loss: f64,
@@ -3241,6 +3360,174 @@ impl<K: FlashKernel, P: SpectrumFloat + Sync> FlashIndex<K, P> {
             }
         });
 
+        state.add_results_emitted(top_k.len());
+        top_k.emit(emit);
+    }
+
+    /// Two-stage modified top-k. Stage 1 runs the dense modified accumulation,
+    /// but only over the `max_query_peaks` heaviest query peaks, producing an
+    /// approximate score for every candidate those peaks touch. Stage 2 takes
+    /// the `rerank_candidates` best of those by approximate score and re-scores
+    /// only them exactly with [`Self::modified_score_for_spectrum`] before
+    /// ranking the final top-k.
+    ///
+    /// Both budgets at [`usize::MAX`] reproduce the dense path exactly (Stage 1
+    /// then accumulates every peak, so the approximate score is already exact and
+    /// every candidate is re-scored), giving recall 1.0 against
+    /// [`Self::for_each_modified_top_k_with_state`]. Smaller budgets trade recall
+    /// for speed: fewer peaks scan fewer postings, and a smaller shortlist runs
+    /// fewer exact re-scores.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn for_each_modified_top_k_candidates_with_state<Q, Emit>(
+        &self,
+        search: DirectThresholdSearch<'_, K, Q>,
+        k: usize,
+        max_query_peaks: usize,
+        rerank_candidates: usize,
+        state: &mut SearchState,
+        top_k_state: &mut TopKSearchState,
+        emit: Emit,
+    ) where
+        Q: SpectrumFloat,
+        Emit: FnMut(FlashSearchResult),
+    {
+        state.reset_diagnostics();
+        let mut top_k = TopKSearchResults::new(k, search.score_threshold, top_k_state);
+        if k == 0
+            || search.score_threshold > 1.0
+            || self.n_spectra == 0
+            || search.query_mz.is_empty()
+        {
+            state.add_results_emitted(top_k.len());
+            top_k.emit(emit);
+            return;
+        }
+        let query_precursor_mz = search
+            .query_precursor_mz
+            .expect("modified search requires a query precursor m/z");
+
+        state.prepare_threshold_order(search.query_data);
+        state.acc.ensure_capacity(self.n_spectra as usize);
+        state.ensure_modified_capacity(self.product_mz.len());
+
+        let peak_budget = max_query_peaks.min(state.query_order().len());
+
+        // Stage 1: partial modified accumulation over the heaviest query peaks.
+        // This is the dense path's cheap per-posting accumulate restricted to a
+        // peak budget, with the same direct/shifted anti-double-count upgrade.
+        let mut product_postings_visited = 0usize;
+        {
+            let SearchState {
+                acc,
+                matched_products,
+                direct_scores,
+                matched_product_touched,
+                query_order,
+                ..
+            } = &mut *state;
+            matched_product_touched.clear();
+
+            for &query_index in &query_order[..peak_budget] {
+                let query_mz_value = search.query_mz[query_index];
+                let query_data_value = search.query_data[query_index].to_f64();
+                product_postings_visited =
+                    product_postings_visited.saturating_add(self.for_each_product_peak_in_window(
+                        query_mz_value,
+                        Some(query_precursor_mz),
+                        |product_index, spec_id, library_data| {
+                            let score = K::pair_score(query_data_value, library_data.to_f64());
+                            acc.accumulate(spec_id, score);
+                            matched_products.set(product_index, true);
+                            direct_scores[product_index] = score;
+                            matched_product_touched.push(product_index as u32);
+                        },
+                    ));
+            }
+
+            for &query_index in &query_order[..peak_budget] {
+                let query_mz_value = search.query_mz[query_index];
+                let query_data_value = search.query_data[query_index].to_f64();
+                let query_neutral_loss = query_precursor_mz - query_mz_value.to_f64();
+                self.for_each_neutral_loss_peak_in_window(
+                    query_neutral_loss,
+                    Some(query_precursor_mz),
+                    |_, spec_id, library_data, product_idx| {
+                        let nl_score = K::pair_score(query_data_value, library_data.to_f64());
+                        if matched_products.get(product_idx) {
+                            if nl_score > direct_scores[product_idx] {
+                                acc.upgrade(spec_id, direct_scores[product_idx], nl_score);
+                            }
+                            return;
+                        }
+                        acc.accumulate(spec_id, nl_score);
+                    },
+                );
+            }
+
+            for &product_index in matched_product_touched.iter() {
+                matched_products.set(product_index as usize, false);
+                direct_scores[product_index as usize] = 0.0;
+            }
+            matched_product_touched.clear();
+        }
+        state.add_product_postings_visited(product_postings_visited);
+
+        // Stage 1.5: drain partial scores into a shortlist, keeping only the
+        // `rerank_candidates` best by approximate score.
+        {
+            let SearchState {
+                acc,
+                modified_shortlist,
+                ..
+            } = &mut *state;
+            modified_shortlist.clear();
+            acc.drain(|spec_id, raw, count| {
+                let score = K::finalize(
+                    raw,
+                    count as usize,
+                    search.query_meta,
+                    &self.spectrum_meta[spec_id as usize],
+                );
+                if score > 0.0 {
+                    modified_shortlist.push((score, spec_id, count));
+                }
+            });
+            if modified_shortlist.len() > rerank_candidates {
+                modified_shortlist
+                    .select_nth_unstable_by(rerank_candidates, |a, b| b.0.total_cmp(&a.0));
+                modified_shortlist.truncate(rerank_candidates);
+            }
+        }
+
+        // Stage 2: exact modified re-rank of the shortlist.
+        let mut candidates_rescored = 0usize;
+        {
+            let SearchState {
+                modified_shortlist,
+                modified_rescore_scratch,
+                ..
+            } = &mut *state;
+            for &(_, spec_id, _) in modified_shortlist.iter() {
+                candidates_rescored += 1;
+                let lib_meta = &self.spectrum_meta[spec_id as usize];
+                let (raw, count) = self.modified_score_for_spectrum(
+                    search.query_mz,
+                    search.query_data,
+                    query_precursor_mz,
+                    spec_id,
+                    modified_rescore_scratch,
+                );
+                let score = K::finalize(raw, count, search.query_meta, lib_meta);
+                if score > 0.0 && score >= search.score_threshold {
+                    top_k.push(FlashSearchResult {
+                        spectrum_id: self.public_spectrum_id(spec_id),
+                        score,
+                        n_matches: count,
+                    });
+                }
+            }
+        }
+        state.add_candidates_rescored(candidates_rescored);
         state.add_results_emitted(top_k.len());
         top_k.emit(emit);
     }
@@ -3672,5 +3959,166 @@ mod tests {
         let repeated =
             index.search_modified_with_state(&[100.0, 110.0], &[1.0, 5.0], &(), 210.0, &mut state);
         assert_eq!(repeated, upgraded);
+    }
+
+    /// The per-candidate modified rescorer must reproduce the dense modified
+    /// accumulation exactly: same raw score and match count for every spectrum.
+    #[test]
+    fn modified_score_for_spectrum_matches_dense_handbuilt() {
+        let index = build_test_index(
+            vec![
+                prepared(200.0, vec![100.0, 150.0, 180.0], vec![1.0, 2.0, 3.0]),
+                prepared(210.0, vec![100.0, 160.0, 190.0], vec![1.5, 2.5, 0.5]),
+                prepared(150.0, vec![80.0, 110.0, 140.0], vec![2.0, 1.0, 4.0]),
+                prepared(205.0, vec![90.0, 100.0, 110.0], vec![1.0, 5.0, 2.0]),
+            ],
+            0.1,
+        );
+
+        let queries: [(Vec<f64>, Vec<f64>, f64); 4] = [
+            (vec![100.0, 110.0], vec![1.0, 5.0], 210.0),
+            (vec![100.0, 150.0, 180.0], vec![1.0, 2.0, 3.0], 200.0),
+            (vec![90.0, 140.0], vec![3.0, 1.0], 150.0),
+            (vec![110.0], vec![3.0], 210.0),
+        ];
+
+        for (query_mz, query_data, precursor) in &queries {
+            assert_rescorer_matches_dense(&index, query_mz, query_data, *precursor);
+        }
+    }
+
+    /// Same parity property over randomly generated well-separated spectra and
+    /// queries, covering direct-only, shifted-only, upgrade, and no-match mixes.
+    #[test]
+    fn modified_score_for_spectrum_matches_dense_randomized() {
+        let tolerance = 0.05;
+        let mut rng = 0x1234_5678_9abc_def0u64;
+        for _ in 0..200 {
+            let library: PreparedFlashSpectra<f64> =
+                (0..6).map(|_| random_prepared_spectrum(&mut rng)).collect();
+            let index = build_test_index(library, tolerance);
+            for _ in 0..4 {
+                let query = random_prepared_spectrum(&mut rng);
+                assert_rescorer_matches_dense(&index, &query.mz, &query.data, query.precursor_mz);
+            }
+        }
+    }
+
+    fn assert_rescorer_matches_dense(
+        index: &FlashIndex<TestKernel>,
+        query_mz: &[f64],
+        query_data: &[f64],
+        precursor: f64,
+    ) {
+        let mut state = index.new_search_state();
+        let mut dense =
+            index.search_modified_with_state(query_mz, query_data, &(), precursor, &mut state);
+        dense.sort_by_key(|result| result.spectrum_id);
+
+        let mut scratch = Vec::new();
+        let mut rescored = Vec::new();
+        for spec_id in 0..index.n_spectra {
+            let (raw, count) = index.modified_score_for_spectrum(
+                query_mz,
+                query_data,
+                precursor,
+                spec_id,
+                &mut scratch,
+            );
+            let score = TestKernel::finalize(raw, count, &(), &());
+            if score > 0.0 {
+                rescored.push(FlashSearchResult {
+                    spectrum_id: index.public_spectrum_id(spec_id),
+                    score,
+                    n_matches: count,
+                });
+            }
+        }
+        rescored.sort_by_key(|result| result.spectrum_id);
+
+        assert_eq!(
+            dense, rescored,
+            "rescorer diverged from dense path for query mz={query_mz:?} precursor={precursor}"
+        );
+    }
+
+    fn random_prepared_spectrum(rng: &mut u64) -> PreparedFlashSpectrum<f64> {
+        let next = |state: &mut u64| {
+            let mut x = *state;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *state = x;
+            x
+        };
+        let unit = |state: &mut u64| ((next(state) >> 11) as f64) / ((1u64 << 53) as f64);
+
+        let n_peaks = 1 + (next(rng) % 8) as usize;
+        // Well-separated ascending m/z: each step is at least 0.3 (> 2 * 0.05).
+        let mut mz = Vec::with_capacity(n_peaks);
+        let mut current = 50.0 + unit(rng) * 20.0;
+        for _ in 0..n_peaks {
+            mz.push(current);
+            current += 0.3 + unit(rng) * 12.0;
+        }
+        let data = (0..n_peaks).map(|_| 0.1 + unit(rng) * 5.0).collect();
+        let precursor_mz = current + 5.0 + unit(rng) * 80.0;
+        prepared(precursor_mz, mz, data)
+    }
+
+    /// With every query peak kept (`max_query_peaks = usize::MAX`), the
+    /// two-stage candidate path marks the same candidate set the dense path
+    /// touches, so its top-k must be byte-identical to the dense top-k.
+    #[test]
+    fn modified_top_k_candidates_lossless_matches_dense_top_k() {
+        let tolerance = 0.05;
+        let mut rng = 0x0bad_c0de_f00d_1357u64;
+        for _ in 0..150 {
+            let library: PreparedFlashSpectra<f64> = (0..12)
+                .map(|_| random_prepared_spectrum(&mut rng))
+                .collect();
+            let index = build_test_index(library, tolerance);
+            for k in [1usize, 3, 8, 100] {
+                for _ in 0..3 {
+                    let query = random_prepared_spectrum(&mut rng);
+                    let search = || DirectThresholdSearch::<TestKernel, f64> {
+                        query_mz: &query.mz,
+                        query_data: &query.data,
+                        query_meta: &(),
+                        score_threshold: 0.0,
+                        query_precursor_mz: Some(query.precursor_mz),
+                    };
+
+                    let mut dense_state = index.new_search_state();
+                    let mut dense_top_k = TopKSearchState::new();
+                    let mut dense = Vec::new();
+                    index.for_each_modified_top_k_with_state(
+                        search(),
+                        k,
+                        &mut dense_state,
+                        &mut dense_top_k,
+                        |result| dense.push(result),
+                    );
+
+                    let mut approx_state = index.new_search_state();
+                    let mut approx_top_k = TopKSearchState::new();
+                    let mut approx = Vec::new();
+                    index.for_each_modified_top_k_candidates_with_state(
+                        search(),
+                        k,
+                        usize::MAX,
+                        usize::MAX,
+                        &mut approx_state,
+                        &mut approx_top_k,
+                        |result| approx.push(result),
+                    );
+
+                    assert_eq!(
+                        dense, approx,
+                        "lossless two-stage diverged from dense top-k for k={k}"
+                    );
+                }
+            }
+        }
     }
 }
