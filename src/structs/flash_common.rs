@@ -1503,20 +1503,14 @@ impl Pepmass2DPostingIndex {
     }
 }
 
-/// Sparse spectrum-block upper bounds over coarse m/z bins.
-///
-/// This is a shared pruning-only index. Each m/z bin stores, per contiguous
-/// spectrum-id block, the maximum metric-specific peak value observed in that
-/// block. Query code supplies the metric-specific function that turns a query
-/// peak and a stored block maximum into a safe score upper-bound contribution.
+/// Per-block peak maxima in occupied m/z bins for conservative score pruning.
 #[cfg_attr(feature = "mem_size", derive(mem_dbg::MemSize))]
 #[cfg_attr(feature = "mem_size", mem_size(rec))]
 #[cfg_attr(feature = "mem_dbg", derive(mem_dbg::MemDbg))]
 pub(crate) struct SpectrumBlockUpperBoundIndex {
     bin_width: f64,
-    min_bin: i64,
+    bin_ids: Vec<i64>,
     bins: UpperBoundCsr,
-    n_bins: usize,
     n_blocks: usize,
 }
 
@@ -1542,32 +1536,8 @@ impl SpectrumBlockUpperBoundIndex {
             1.0
         };
 
-        let mut min_bin = i64::MAX;
-        let mut max_bin = i64::MIN;
-        for spectrum in spectra {
-            for &mz in &spectrum.mz {
-                let bin = Self::bin_id(mz.to_f64(), bin_width);
-                min_bin = min_bin.min(bin);
-                max_bin = max_bin.max(bin);
-            }
-        }
-
-        if min_bin == i64::MAX {
-            return Ok(Self {
-                bin_width,
-                min_bin: 0,
-                bins: upper_bound_csr(0, n_blocks_u32, Vec::new())?,
-                n_bins: 0,
-                n_blocks,
-            });
-        }
-
-        let n_bins = usize::try_from(max_bin - min_bin + 1)
-            .map_err(|_| SimilarityComputationError::IndexOverflow)?;
-        let n_bins_u32 =
-            u32::try_from(n_bins).map_err(|_| SimilarityComputationError::IndexOverflow)?;
         let total_peaks = spectra.iter().map(|spectrum| spectrum.mz.len()).sum();
-        let mut entries: Vec<(usize, u32, f64)> = Vec::with_capacity(total_peaks);
+        let mut entries: Vec<(i64, u32, f64)> = Vec::with_capacity(total_peaks);
 
         for (spec_id, spectrum) in spectra.iter().enumerate() {
             let spec_id_u32 =
@@ -1587,9 +1557,7 @@ impl SpectrumBlockUpperBoundIndex {
                     continue;
                 }
 
-                let bin_index = usize::try_from(Self::bin_id(mz.to_f64(), bin_width) - min_bin)
-                    .map_err(|_| SimilarityComputationError::IndexOverflow)?;
-                entries.push((bin_index, block_id, value));
+                entries.push((Self::bin_id(mz.to_f64(), bin_width), block_id, value));
             }
         }
 
@@ -1601,9 +1569,16 @@ impl SpectrumBlockUpperBoundIndex {
         });
 
         let mut upper_bound_entries: Vec<(u32, u32, f64)> = Vec::with_capacity(entries.len());
-        for (bin_index, block_id, value) in entries {
-            let bin_index =
-                u32::try_from(bin_index).map_err(|_| SimilarityComputationError::IndexOverflow)?;
+        let mut bin_ids = Vec::new();
+        for (bin_id, block_id, value) in entries {
+            let bin_index = if bin_ids.last() == Some(&bin_id) {
+                u32::try_from(bin_ids.len() - 1)
+            } else {
+                let index = u32::try_from(bin_ids.len());
+                bin_ids.push(bin_id);
+                index
+            }
+            .map_err(|_| SimilarityComputationError::IndexOverflow)?;
             if let Some(last) = upper_bound_entries.last_mut()
                 && last.0 == bin_index
                 && last.1 == block_id
@@ -1613,12 +1588,13 @@ impl SpectrumBlockUpperBoundIndex {
             }
             upper_bound_entries.push((bin_index, block_id, value));
         }
+        let n_bins =
+            u32::try_from(bin_ids.len()).map_err(|_| SimilarityComputationError::IndexOverflow)?;
 
         Ok(Self {
             bin_width,
-            min_bin,
-            bins: upper_bound_csr(n_bins_u32, n_blocks_u32, upper_bound_entries)?,
-            n_bins,
+            bin_ids,
+            bins: upper_bound_csr(n_bins, n_blocks_u32, upper_bound_entries)?,
             n_blocks,
         })
     }
@@ -1639,7 +1615,7 @@ impl SpectrumBlockUpperBoundIndex {
         let evaluated_blocks = block_range.as_ref().map_or(self.n_blocks, |range| {
             range.end.saturating_sub(range.start) as usize
         });
-        if self.n_blocks == 0 || self.n_bins == 0 {
+        if self.n_blocks == 0 || self.bin_ids.is_empty() {
             state.add_spectrum_block_filter_stats(evaluated_blocks, 0);
             return;
         }
@@ -1654,7 +1630,8 @@ impl SpectrumBlockUpperBoundIndex {
 
         for (query_index, &mz) in query_mz.iter().enumerate() {
             for bin_index in self.bin_indices_for_window(mz.to_f64(), tolerance) {
-                let bin_index = bin_index as u32;
+                debug_assert!(u32::try_from(bin_index).is_ok());
+                let bin_index = bin_index as u32; // Row count is checked during construction.
                 let (block_ids, max_values) = self.bins.sparse_row_entries_slice(bin_index);
                 let start = block_ids.partition_point(|&block_id| block_id < block_range.start);
                 let end = start
@@ -1678,19 +1655,8 @@ impl SpectrumBlockUpperBoundIndex {
     fn bin_indices_for_window(&self, mz: f64, tolerance: f64) -> impl Iterator<Item = usize> + '_ {
         let lo_bin = Self::bin_id(mz - tolerance, self.bin_width);
         let hi_bin = Self::bin_id(mz + tolerance, self.bin_width);
-        let start = lo_bin.max(self.min_bin);
-        let end = hi_bin.min(self.min_bin + self.n_bins as i64 - 1);
-
-        let (start, end) = if start <= end {
-            (
-                (start - self.min_bin) as usize,
-                (end - self.min_bin) as usize,
-            )
-        } else {
-            (1, 0)
-        };
-
-        start..=end
+        let start = self.bin_ids.partition_point(|&bin| bin < lo_bin);
+        (start..self.bin_ids.len()).take_while(move |&index| self.bin_ids[index] <= hi_bin)
     }
 
     #[inline]
