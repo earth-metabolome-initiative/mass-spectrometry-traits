@@ -1,0 +1,61 @@
+[package]
+name = "mass_spectrometry-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mass_spectrometry = { path = ".." }
+
+[[bin]]
+name = "hungarian_cosine"
+path = "fuzz_targets/hungarian_cosine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "modified_hungarian_cosine"
+path = "fuzz_targets/modified_hungarian_cosine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "linear_entropy"
+path = "fuzz_targets/linear_entropy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "modified_linear_entropy"
+path = "fuzz_targets/modified_linear_entropy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flash_cosine"
+path = "fuzz_targets/flash_cosine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flash_entropy"
+path = "fuzz_targets/flash_entropy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ms_entropy_clean_spectrum"
+path = "fuzz_targets/ms_entropy_clean_spectrum.rs"
+test = false
+doc = false
+bench = false

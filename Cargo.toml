@@ -1,0 +1,95 @@
+[package]
+name = "mass_spectrometry"
+version = "0.1.0"
+edition = "2024"
+description = "Traits, spectra, similarity metrics, indices, and SPLASH fingerprints for mass spectrometry."
+license = "MIT"
+repository = "https://github.com/earth-metabolome-initiative/mass-spectrometry-traits"
+readme = "README.md"
+
+[workspace]
+members = ["fuzz"]
+
+[features]
+default = []
+std = []
+indicatif = ["std", "dep:indicatif"]
+mem_size = ["dep:mem_dbg_crate", "mem_dbg_crate/derive", "mem_dbg_crate/half", "geometric-traits/mem_size"]
+mem_dbg = ["std", "mem_size", "mem_dbg_crate/std", "geometric-traits/mem_dbg"]
+proptest = ["dep:proptest"]
+rayon = ["std", "dep:rayon"]
+burn = ["std", "dep:burn", "dep:burn-cubecl", "dep:cubecl"]
+burn-autodiff = ["burn", "burn/autodiff"]
+burn-fusion = ["burn", "burn/fusion", "dep:burn-fusion", "dep:burn-ir"]
+burn-cuda = ["burn", "burn/cuda"]
+burn-cpu = ["burn", "burn/cpu"]
+burn-wgpu = ["burn", "burn/wgpu"]
+
+[dependencies]
+geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", default-features = false, features = ["alloc"] }
+num-traits = { version = "0.2", default-features = false }
+half = { version = "2.7.1", default-features = false, features = ["num-traits"] }
+multi_ranged = { version = "0.1.1", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+itoa = { version = "1", default-features = false }
+thiserror = { version = "2", default-features = false }
+arbitrary = { version = "1", default-features = false }
+mem_dbg_crate = { package = "mem_dbg", version = "0.4.1", default-features = false, optional = true }
+indicatif = { version = "0.18", optional = true }
+proptest = { version = "1.6", optional = true }
+rayon = { version = "1.11", optional = true }
+burn = { version = "=0.21.0", default-features = false, optional = true }
+burn-cubecl = { version = "=0.21.0", default-features = false, optional = true }
+burn-fusion = { version = "=0.21.0", default-features = false, optional = true }
+burn-ir = { version = "=0.21.0", default-features = false, optional = true }
+cubecl = { version = "=0.10.0", default-features = false, optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1.6"
+csv = "1"
+zstd = "0.13"
+
+[[bench]]
+name = "hungarian_cosine"
+harness = false
+
+[[bench]]
+name = "entropy_similarity"
+harness = false
+
+[[bench]]
+name = "modified_hungarian_cosine"
+harness = false
+
+[[bench]]
+name = "linear_cosine"
+harness = false
+
+[[bench]]
+name = "modified_linear_cosine"
+harness = false
+
+[[bench]]
+name = "index_search"
+harness = false
+
+[[bench]]
+name = "index_top_k_large"
+harness = false
+
+[[bench]]
+name = "pairwise_linear_cosine_graph"
+harness = false
+
+[[bench]]
+name = "index_construction"
+harness = false
+
+[[bench]]
+name = "splash"
+harness = false
+
+[[example]]
+name = "pairwise_timing"
+required-features = ["burn", "burn-cuda", "rayon"]

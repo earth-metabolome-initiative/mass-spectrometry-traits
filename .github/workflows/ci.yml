@@ -1,0 +1,255 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# CI topology:
+#
+#   prek (fmt only, ~30 s)
+#     ├── test              (cargo test + benchmark smoke test, CPU feature set)
+#     ├── clippy            (cargo clippy, CPU feature set)
+#     ├── docs              (cargo doc, CPU feature set)
+#     ├── cuda-check        (cargo check + clippy + doc under GPU features)
+#     ├── cpu-runtime-test  (cargo test on the burn-cpu MLIR runtime)
+#     └── ci-success        (aggregator for branch-protection rules)
+#
+# prek is a fast pre-gate: it only runs `cargo fmt --check`, so PRs with
+# style drift fail in seconds without spinning up the heavy jobs. The five
+# worker jobs run in parallel after prek and each has its own Swatinem
+# cache namespace so they don't thrash each other. `prek.toml` keeps the
+# full hook list (fmt + clippy + test + doc) for local `git commit`
+# validation where incremental compilation makes that fast.
+#
+# CPU-only feature set: everything that compiles and runs without a CUDA
+# toolkit or GPU. The Burn-kernel module (gated by `burn`) is included for
+# compile coverage. Its integration tests are gated separately so they
+# don't run in this build.
+env:
+  CPU_FEATURES: std,indicatif,mem_size,mem_dbg,proptest,rayon,burn,burn-autodiff,burn-fusion
+
+jobs:
+  prek:
+    name: prek
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable toolchain with rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: prek
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: test
+
+      # Plain `cargo test` runs the lib unit tests, the integration tests in
+      # `tests/`, and the doctests. It deliberately does NOT use `--all-targets`,
+      # because that pulls in `--benches` and `cargo test` then executes every
+      # Criterion benchmark. Even in Criterion's one-iteration test mode the
+      # per-benchmark setup runs at full scale, and the index benchmarks default
+      # to a one-million-spectrum library, which made this job run for an hour.
+      # Benchmarks are compile-checked by the `clippy` job (which keeps
+      # `--all-targets`) and smoke-run separately below.
+      - name: Run tests
+        run: cargo test --features ${{ env.CPU_FEATURES }} --locked
+
+      # Validate that every benchmark still compiles and runs one iteration
+      # without panicking, via Criterion's `--test` mode. The index benchmarks
+      # default to a one-million-spectrum library, so shrink them to tiny inputs
+      # here: this is a correctness smoke test, not a measurement.
+      - name: Smoke-test benchmarks
+        env:
+          INDEX_CONSTRUCTION_SIZES: "64"
+          INDEX_SEARCH_TOP_K_LIBRARY_SIZE: "256"
+          INDEX_SEARCH_TOP_K_QUERY_COUNT: "8"
+        run: cargo bench --benches --features ${{ env.CPU_FEATURES }} --locked -- --test
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    needs: prek
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: clippy
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --features ${{ env.CPU_FEATURES }} -- -D warnings
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    needs: prek
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: docs
+
+      - name: Build docs
+        run: cargo doc --features ${{ env.CPU_FEATURES }} --no-deps
+
+  # Type-check + clippy + rustdoc the Burn-kernel GPU feature set without
+  # running anything. No GPU runtime is required: `cudarc` (transitively
+  # pulled in by `burn-cuda`) only loads `libcuda.so` at runtime via dlopen,
+  # but its build script generates FFI bindings against CUDA headers, so we
+  # install the CUDA toolkit (`nvcc` + `cudart`) for the bindgen step only.
+  #
+  # Pinned to ubuntu-22.04 because NVIDIA's CUDA apt repository only began
+  # shipping `ubuntu2404` packages from CUDA 12.5 onwards. The 12.4.1 install
+  # path used here fails on ubuntu-latest (24.04).
+  cuda-check:
+    name: cuda-check
+    runs-on: ubuntu-22.04
+    needs: prek
+    env:
+      CUDARC_CUDA_VERSION: "12040"
+      GPU_FEATURES: burn,burn-cuda,burn-autodiff,burn-fusion,proptest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
+        with:
+          cuda: "12.4.1"
+          method: network
+          sub-packages: '["nvcc", "cudart"]'
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: cuda
+
+      # Two cargo check invocations because `src/burn/autodiff.rs`,
+      # `src/burn/fusion.rs`, and `src/burn/tests/{autodiff,fusion,proptest}.rs`
+      # are gated on their respective optional features. Running with both
+      # configurations ensures the `#[cfg]` gating actually compiles in
+      # either direction, e.g. a `use` that needs `feature = "burn-autodiff"`
+      # to gate it would be caught by the minimal-set check.
+      - name: cargo check (full GPU feature set)
+        run: cargo check --locked --features ${{ env.GPU_FEATURES }} --all-targets
+
+      - name: cargo check (minimal, only burn + burn-cuda)
+        run: cargo check --locked --features burn,burn-cuda --all-targets
+
+      - name: cargo clippy (full GPU feature set)
+        run: cargo clippy --locked --features ${{ env.GPU_FEATURES }} --all-targets -- -D warnings
+
+      - name: cargo doc (full GPU feature set)
+        run: cargo doc --locked --features ${{ env.GPU_FEATURES }} --no-deps
+
+  # Run the Burn-kernel equivalence test suite (`src/burn/tests/`) against the
+  # `cubecl-cpu` MLIR runtime instead of CUDA. The tests are parameterized so
+  # the same assertions hold on either backend; this job catches kernel logic
+  # regressions on every PR without GPU hardware. `tracel-llvm-bundler` pulls a
+  # ~580 MB prebuilt LLVM 20.1.4 tarball from `tracel-ai/tracel-llvm` releases
+  # on cold cache. The autodiff and fusion test files stay CUDA-only (gated in
+  # `src/burn/tests/autodiff.rs` and `src/burn/tests/fusion.rs`) since they
+  # exercise CUDA-specific wrapper integration, not portable kernel logic.
+  cpu-runtime-test:
+    name: cpu-runtime-test
+    runs-on: ubuntu-latest
+    needs: prek
+    env:
+      CPU_RUNTIME_FEATURES: burn,burn-cpu,proptest,rayon
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache tracel-llvm prebuilt artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/tracel
+          key: tracel-llvm-20.1.4-7-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: cpu-runtime
+
+      - name: Run kernel equivalence tests on CPU runtime
+        run: cargo test --release --locked --features ${{ env.CPU_RUNTIME_FEATURES }} --lib burn::tests
+
+      - name: Clippy under burn-cpu feature set
+        run: cargo clippy --all-targets --locked --features ${{ env.CPU_RUNTIME_FEATURES }} -- -D warnings
+
+  # Aggregator: single required check for branch protection. Reports the
+  # combined success/failure of every worker job. Use this name (not the
+  # individual job names) in branch protection rules so adding or renaming
+  # workers doesn't require updating those rules.
+  ci-success:
+    name: ci-success
+    runs-on: ubuntu-latest
+    needs: [test, clippy, docs, cuda-check, cpu-runtime-test]
+    if: always()
+    steps:
+      - name: Confirm all required jobs succeeded
+        run: |
+          fail=0
+          for job in test clippy docs cuda-check cpu-runtime-test; do
+            case "$job" in
+              test)             result="${{ needs.test.result }}";;
+              clippy)           result="${{ needs.clippy.result }}";;
+              docs)             result="${{ needs.docs.result }}";;
+              cuda-check)       result="${{ needs.cuda-check.result }}";;
+              cpu-runtime-test) result="${{ needs.cpu-runtime-test.result }}";;
+            esac
+            echo "$job: $result"
+            if [ "$result" != "success" ]; then
+              fail=1
+            fi
+          done
+          exit $fail

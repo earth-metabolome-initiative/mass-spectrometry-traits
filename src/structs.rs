@@ -1,0 +1,50 @@
+//! Structures for mass spectrometry data.
+
+mod cosine_common;
+mod entropy_common;
+mod flash_common;
+pub mod flash_cosine_index;
+pub mod flash_entropy_index;
+pub mod generic_spectrum;
+pub mod hungarian_cosine;
+pub mod iterators;
+pub mod linear_cosine;
+pub mod linear_entropy;
+pub mod modified_hungarian_cosine;
+pub mod modified_linear_cosine;
+pub mod modified_linear_entropy;
+pub mod ms_entropy_clean_spectrum;
+pub mod similarity_errors;
+pub mod sirius_merge_close_peaks;
+pub mod splash;
+
+pub use flash_common::{
+    FlashIndexBuildOptions, FlashIndexBuildPhase, FlashIndexBuildProgress, FlashRowSearchProgress,
+    FlashSearchDiagnostics, FlashSearchResult, NoopFlashIndexBuildProgress,
+    NoopFlashRowSearchProgress, PepmassFilter, SearchState, TopKSearchState,
+};
+pub use flash_cosine_index::{
+    FlashCosineIndex, FlashCosineIndexBuilder, FlashCosineIndexError, FlashCosineThresholdIndex,
+    FlashCosineThresholdIndexBuilder,
+};
+#[cfg(feature = "rayon")]
+pub use flash_cosine_index::{
+    FlashCosineSelfSimilarityDiagnosticRows, FlashCosineSelfSimilarityIndex,
+    FlashCosineSelfSimilarityIndexBuilder, FlashCosineSelfSimilarityParDiagnosticRows,
+    FlashCosineSelfSimilarityParRows, FlashCosineSelfSimilarityRow, FlashCosineSelfSimilarityRows,
+};
+pub use flash_entropy_index::{
+    FlashEntropyIndex, FlashEntropyIndexBuilder, FlashEntropyIndexError,
+};
+pub use generic_spectrum::{GenericSpectrum, GenericSpectrumMutationError};
+pub use hungarian_cosine::HungarianCosine;
+pub use iterators::GreedySharedPeaks;
+pub use linear_cosine::LinearCosine;
+pub use linear_entropy::LinearEntropy;
+pub use modified_hungarian_cosine::ModifiedHungarianCosine;
+pub use modified_linear_cosine::ModifiedLinearCosine;
+pub use modified_linear_entropy::ModifiedLinearEntropy;
+pub use ms_entropy_clean_spectrum::{MsEntropyCleanSpectrum, MsEntropyCleanSpectrumBuilder};
+pub use similarity_errors::{SimilarityComputationError, SimilarityConfigError};
+pub use sirius_merge_close_peaks::SiriusMergeClosePeaks;
+pub use splash::{SpectrumSplash, SplashError, SplashSpectrumType};
