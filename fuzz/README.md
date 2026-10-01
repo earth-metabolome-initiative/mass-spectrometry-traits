@@ -19,6 +19,8 @@ cargo fuzz run flash_entropy
 
 Every target decodes binary input using `arbitrary` and has a committed corpus in `fuzz/seeds/<target>/`, with one input per file. The ClusterFuzzLite build rejects missing or empty seed directories. Pass the seeds as a second corpus directory to start a local run.
 
+`ClusterFuzzLite` stores generated corpora on the dedicated `fuzz-corpus` branch.
+
 ```bash
 cargo fuzz run hungarian_cosine fuzz/corpus/hungarian_cosine fuzz/seeds/hungarian_cosine
 ```
