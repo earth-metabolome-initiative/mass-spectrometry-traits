@@ -723,6 +723,73 @@ fn thresholded_top_k_matches_filtered_direct_search() {
     }
 }
 
+// ---------- occupied-bin allocation at tight tolerance ----------
+
+#[test]
+fn tight_tolerance_wide_mz_span_builds_and_top_k_threshold_matches_linear_entropy() {
+    let tolerance = 1.0e-9_f64;
+    let library = [
+        make_spectrum_f64(2.0e6, &[(100.0, 10.0), (1.0e6, 20.0)]),
+        make_spectrum_f64(2.0e6, &[(100.0, 5.0), (1.0e6, 15.0)]),
+        make_spectrum_f64(2.0e6, &[(5.0e5, 7.0)]),
+        make_spectrum_f64(2.0e6, &[(5.0e4, 3.0)]),
+    ];
+    let query = make_spectrum_f64(2.0e6, &[(100.0, 8.0), (5.0e5, 6.0), (1.0e6, 12.0)]);
+
+    let index = build_entropy_index(0.0_f64, 1.0_f64, tolerance, true, library.iter())
+        .expect("index must build across a wide m/z span at tight tolerance");
+
+    let linear = LinearEntropy::weighted(tolerance).expect("valid scorer config");
+    let direct = index.search(&query).expect("direct search should succeed");
+
+    for (spectrum_id, library_spectrum) in library.iter().enumerate() {
+        let (linear_score, linear_matches) = linear
+            .similarity(&query, library_spectrum)
+            .expect("LinearEntropy should succeed");
+        let id = u32::try_from(spectrum_id).expect("small library id");
+        let flash_result = direct.iter().find(|result| result.spectrum_id == id);
+        if linear_matches == 0 {
+            assert!(
+                flash_result.is_none_or(|result| result.score.abs() < 1e-12),
+                "spectrum {spectrum_id} must not be a hit at tight tolerance"
+            );
+        } else {
+            let result = flash_result.unwrap_or_else(|| {
+                panic!("missing spectrum {spectrum_id} with {linear_matches} matches")
+            });
+            assert!(
+                (result.score - linear_score).abs() < 1e-10,
+                "spectrum {spectrum_id}: flash {} vs linear {}",
+                result.score,
+                linear_score
+            );
+            assert_eq!(
+                result.n_matches, linear_matches,
+                "spectrum {spectrum_id} match count"
+            );
+        }
+    }
+
+    let hit_scores: Vec<f64> = direct
+        .iter()
+        .filter(|result| result.score >= 1e-12)
+        .map(|result| result.score)
+        .collect();
+    let lowest = hit_scores.iter().copied().fold(f64::MAX, f64::min);
+    let highest = hit_scores.iter().copied().fold(f64::MIN, f64::max);
+    for threshold in [0.0_f64, (lowest + highest) / 2.0, highest + 1.0] {
+        let expected = top_k_threshold_expected(
+            index.search(&query).expect("direct search should succeed"),
+            2,
+            threshold,
+        );
+        let actual = index
+            .search_top_k_threshold(&query, 2, threshold)
+            .expect("thresholded top-k should succeed");
+        assert_results_close(actual, expected, "tight-tolerance thresholded top-k");
+    }
+}
+
 #[test]
 fn pepmass_filter_limits_entropy_search_paths() {
     let library = [
