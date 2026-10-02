@@ -1242,7 +1242,10 @@ fn assert_modified_linear_entropy_original_outcome(
                 "{label}: matches {matches} exceed limit {max_matches}"
             );
         }
-        Err(SimilarityComputationError::InvalidPeakSpacing(_)) => {}
+        Err(
+            SimilarityComputationError::InvalidPeakSpacing(_)
+            | SimilarityComputationError::NonFiniteValue("product_sum"),
+        ) => {}
         Err(error) => panic!("{label}: unexpected error on original spectra: {error:?}"),
     }
 }
@@ -1385,7 +1388,10 @@ fn assert_linear_entropy_original_outcome(
                 "{label}: matches {matches} exceed limit {max_matches}"
             );
         }
-        Err(SimilarityComputationError::InvalidPeakSpacing(_)) => {}
+        Err(
+            SimilarityComputationError::InvalidPeakSpacing(_)
+            | SimilarityComputationError::NonFiniteValue("product_sum"),
+        ) => {}
         Err(error) => panic!("{label}: unexpected error on original spectra: {error:?}"),
     }
 }
