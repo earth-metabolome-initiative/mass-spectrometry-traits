@@ -70,6 +70,7 @@ fn perturb(template: &GenericSpectrum, seed: u64) -> GenericSpectrum {
 /// A modified analog of `template`: precursor and every fragment shifted by the
 /// same `delta`. Plain cosine is near zero (no shared m/z) while modified cosine
 /// is near one (every fragment matches under the precursor shift).
+#[cfg(feature = "minhash")]
 fn analog(template: &GenericSpectrum, delta: f64) -> GenericSpectrum {
     let mut spectrum =
         GenericSpectrum::with_capacity(template.precursor_mz() + delta, template.len())
