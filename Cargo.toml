@@ -9,6 +9,7 @@ readme = "README.md"
 
 [workspace]
 members = ["fuzz"]
+exclude = ["python"]
 
 [features]
 default = []

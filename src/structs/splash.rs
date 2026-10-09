@@ -203,6 +203,27 @@ where
     Ok(splash)
 }
 
+/// Generates a SPLASH code from raw `(m/z, intensity)` peaks and an explicit
+/// spectrum type.
+///
+/// This helper accepts the raw SPLASH input model directly, so zero-intensity
+/// peaks and duplicate m/z values are validated according to SPLASH rules
+/// rather than [`GenericSpectrum`](super::GenericSpectrum) mutation rules.
+///
+/// # Errors
+///
+/// Returns [`SplashError`] when the peak list is empty, all intensities are
+/// zero, or any peak value is invalid for SPLASH.
+pub fn splash_from_raw_peaks_with_type<I>(
+    peaks: I,
+    spectrum_type: SplashSpectrumType,
+) -> Result<String, SplashError>
+where
+    I: IntoIterator<Item = (f64, f64)>,
+{
+    splash_from_peaks_with_type(peaks, spectrum_type)
+}
+
 /// Validates raw input peaks and normalizes intensities to the SPLASH relative
 /// intensity scale.
 ///
