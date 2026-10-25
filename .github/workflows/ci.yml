@@ -25,7 +25,7 @@ env:
 jobs:
   fmt:
     name: fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,7 +40,7 @@ jobs:
 
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: fmt
     steps:
       - name: Checkout
@@ -78,7 +78,7 @@ jobs:
 
   clippy:
     name: clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: fmt
     steps:
       - name: Checkout
@@ -99,7 +99,7 @@ jobs:
 
   docs:
     name: docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: fmt
     steps:
       - name: Checkout
@@ -124,7 +124,7 @@ jobs:
   #
   # Pinned to ubuntu-22.04 because NVIDIA's CUDA apt repository only began
   # shipping `ubuntu2404` packages from CUDA 12.5 onwards. The 12.4.1 install
-  # path used here fails on ubuntu-latest (24.04).
+  # path used here fails on ubuntu-24.04.
   cuda-check:
     name: cuda-check
     runs-on: ubuntu-22.04
@@ -181,7 +181,7 @@ jobs:
   # exercise CUDA-specific wrapper integration, not portable kernel logic.
   cpu-runtime-test:
     name: cpu-runtime-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: fmt
     env:
       CPU_RUNTIME_FEATURES: burn,burn-cpu,proptest,rayon
@@ -217,7 +217,7 @@ jobs:
   # workers doesn't require updating those rules.
   ci-success:
     name: ci-success
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [test, clippy, docs, cuda-check, cpu-runtime-test]
     if: always()
     steps:
